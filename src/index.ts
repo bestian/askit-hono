@@ -1,8 +1,14 @@
 import { Hono } from 'hono'
 
+import {
+  findClosestMatchingSection,
+  formatAskAnswerHtml,
+} from './utils/search'
+
 type Bindings = {
   LINE_CHANNEL_ACCESS_TOKEN: string
   LINE_CHANNEL_SECRET: string
+  ASK_INDEX: R2Bucket
 }
 
 type LineMessageEvent = {
@@ -55,6 +61,34 @@ async function verifyLineSignature(
 
 app.get('/', (c) => {
   return c.text('Hello World!')
+})
+
+app.get('/ask/:question', async (c) => {
+  const raw = c.req.param('question')
+  let question: string
+  try {
+    question = decodeURIComponent(raw)
+  } catch {
+    question = raw
+  }
+
+  try {
+    const hit = await findClosestMatchingSection(c.env.ASK_INDEX, question)
+    if (!hit) {
+      return c.text('找不到符合條件的段落', 404)
+    }
+    const body = formatAskAnswerHtml(hit)
+    return new Response(
+      `<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8"/><title>Ask</title></head><body><p>${body}</p></body></html>`,
+      {
+        status: 200,
+        headers: { 'Content-Type': 'text/html; charset=UTF-8' },
+      },
+    )
+  } catch (e) {
+    console.error(e)
+    return c.text('查詢發生錯誤', 500)
+  }
 })
 
 app.post('/webhook', async (c) => {

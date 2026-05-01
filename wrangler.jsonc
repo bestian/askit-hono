@@ -1,0 +1,53 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "hono-line-bot-template",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // LINE_CHANNEL_ACCESS_TOKEN 與 LINE_CHANNEL_SECRET 應透過
+  // `wrangler secret put` 設定，不要寫入此檔案。
+  //
+  // LINE_CHANNEL_ACCESS_TOKEN and LINE_CHANNEL_SECRET should be set via
+  // `wrangler secret put`, not in this file.
+
+  "vars": {
+    // 可在此放置非機敏的環境變數
+    // Place non-sensitive environment variables here
+    // "EXAMPLE_VAR": "value"
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // 之後想擴充功能時，可取消註解對應的 binding（並補上 `,` 在 `vars` 後）。
+  // Uncomment the relevant binding below when you're ready to grow this bot.
+  // 完整文件 / Full docs: see README.md "Growing this template" section.
+  // ─────────────────────────────────────────────────────────────────────
+
+  // ── Workers AI（讓 bot 用 LLM 生成回覆 / let the bot reply with an LLM）──
+  // https://developers.cloudflare.com/workers-ai/
+  // "ai": {
+  //   "binding": "AI"
+  // }
+
+  // ── D1（SQLite — 儲存對話紀錄、使用者偏好 / chat history, user prefs）──
+  // https://developers.cloudflare.com/d1/
+  // 先建立 DB： npx wrangler d1 create <DB_NAME>
+  // 並把 database_id 填回此處
+  // "d1_databases": [
+  //   {
+  //     "binding": "DB",
+  //     "database_name": "<DB_NAME>",
+  //     "database_id": "<從 `wrangler d1 create` 輸出貼上 / paste from create output>"
+  //   }
+  // ]
+
+  // ── R2（物件儲存 — 收使用者上傳的圖片、語音 / store user uploads）──
+  // https://developers.cloudflare.com/r2/
+  // 先建立 bucket： npx wrangler r2 bucket create <BUCKET_NAME>
+  // "r2_buckets": [
+  //   {
+  //     "binding": "BUCKET",
+  //     "bucket_name": "<BUCKET_NAME>"
+  //   }
+  // ]
+}

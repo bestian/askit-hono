@@ -1,0 +1,5 @@
+# 本地開發用環境變數範例 / Example local dev environment variables
+# 複製此檔為 .dev.vars 並填入實際值（.dev.vars 已被 gitignore）
+# Copy this file to .dev.vars and fill in the real values (.dev.vars is gitignored)
+LINE_CHANNEL_ACCESS_TOKEN=your-line-channel-access-token-here
+LINE_CHANNEL_SECRET=your-line-channel-secret-here

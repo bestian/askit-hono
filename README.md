@@ -16,11 +16,11 @@
 | --- | --- |
 | `GET /` | Healthcheck，回 `Hello World!` |
 | `GET /ask/:question` | **暫時測試用**：把 question URL-decode 後跑搜尋，回傳 HTML 顯示最相近段落 + 原文連結。方便用瀏覽器或 curl 驗證索引與搜尋結果。 |
-| `POST /webhook` | LINE Messaging API webhook。**目前還只回 `Hello World!`**，尚未串上搜尋邏輯。 |
+| `POST /webhook` | LINE Messaging API webhook。收到 LINE 文字訊息後，使用與 `/ask/:question` 相同的搜尋 pipeline，並以純文字回覆最相近段落與原文連結。 |
 
-### 接下來要做的事
+### 回覆格式
 
-把 `/ask/:question` 的搜尋與 HTML 組裝邏輯搬進 `/webhook` 的事件處理器中：當使用者在 LINE 傳訊息，就用同一條 pipeline 找段落，再以 LINE Reply API 把結果（純文字或 Flex Message）回給使用者，正式讓 LINE Bot 可用。預期改動只在 `src/index.ts` 內 `/webhook` 對 `event.message.text` 的處理區塊；`src/utils/search.ts` 與索引格式不需變動。
+`/ask/:question` 會回 HTML，方便瀏覽器測試；`/webhook` 會回純文字，避免 LINE 顯示 HTML tag。
 
 ### 索引建置流程（不在 Worker 內執行）
 
@@ -229,7 +229,6 @@ curl 'https://YOUR-WORKER-URL/ask/AI%E6%9C%83%E4%B8%8D%E6%9C%83%E6%8E%A7%E5%88%B
 
 ### 已知議題 / TODO
 
-- **`/webhook` 還沒接搜尋邏輯**：目前固定回 `Hello World!`，待搬入 `findClosestMatchingSection` + `formatAskAnswerHtml` / 純文字版本。
 - **索引大小**：當前 `唐鳳%` 範圍下索引約 75 MB（105k 段落）。Workers isolate 記憶體上限 128MB，第一次 `JSON.parse` + `Fuse.parseIndex` 會吃不少；後續可能需要瘦身（拿掉 runtime 用不到的欄位、縮短 key 名、或分片）。
 - **isolate cache 不會自動失效**：`npm run build:index` 上傳後，已存在的 Worker isolate 還是用舊 cache，要等到自然回收。需要強制刷新可以加一條 admin 路由清掉 module-level cache，或部署時順便刷新。
 
@@ -251,11 +250,11 @@ Built with [Hono](https://hono.dev/) on Cloudflare Workers. The Worker does **no
 | --- | --- |
 | `GET /` | Healthcheck — returns `Hello World!` |
 | `GET /ask/:question` | **Temporary debug endpoint** — URL-decodes the question, runs the search, returns HTML with the closest section and a link to the source. Handy for testing from a browser or `curl`. |
-| `POST /webhook` | LINE Messaging API webhook. **Currently just replies `Hello World!`** — the search pipeline is not wired in yet. |
+| `POST /webhook` | LINE Messaging API webhook. For text messages, it uses the same search pipeline as `/ask/:question` and replies with the closest section plus a source link as plain text. |
 
-### Next step
+### Reply Format
 
-Move the search + HTML formatting logic from `/ask/:question` into the `/webhook` handler so that LINE messages trigger the same pipeline and the bot replies via the LINE Reply API (plain text or Flex Message). The change is local to the `event.message.text` block in `src/index.ts`; `src/utils/search.ts` and the index format stay as-is.
+`/ask/:question` returns HTML for browser testing; `/webhook` returns plain text so LINE does not display HTML tags.
 
 ### Index pipeline (runs offline, not in the Worker)
 
@@ -464,7 +463,6 @@ curl 'https://YOUR-WORKER-URL/ask/AI%E6%9C%83%E4%B8%8D%E6%9C%83%E6%8E%A7%E5%88%B
 
 ### Known issues / TODO
 
-- **`/webhook` is not yet wired to the search pipeline.** It currently always replies `Hello World!`. The plan is to call `findClosestMatchingSection` + `formatAskAnswerHtml` (or a plain-text variant) from inside the message handler.
 - **Index size.** The default `唐鳳%` range produces ~75 MB (~105k sections). Workers isolates have a 128 MB memory limit, so the first `JSON.parse` + `Fuse.parseIndex` is a meaningful cost. We may need to slim the payload (drop unused fields, shorter keys, or shard) once it actually starts hitting the ceiling.
 - **Module-level cache doesn't auto-invalidate.** After `npm run build:index` re-uploads, existing isolates keep serving from the in-memory cache until they recycle. If you need an immediate flush, expose an admin route that clears the module cache, or refresh on deploy.
 

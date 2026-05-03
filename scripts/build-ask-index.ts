@@ -7,8 +7,10 @@
  * 環境變數（皆為選填）：
  *   D1_DATABASE   D1 資料庫名稱（預設 sayit-database，需與 wrangler.jsonc 內 binding 對應）
  *   SPEAKER_LIKE  speakers.name 的 LIKE 條件（預設 '唐鳳%'）
- *   R2_BUCKET     R2 bucket 名稱（預設 sayit-speech-cache）
+ *   R2_BUCKET     R2 bucket 名稱（預設 askit-fuse-index-cache）
  *   R2_KEY        上傳到 R2 的 key（預設 ask-index/audrey-tang.json）
+ *   MAX_SECTION_CHARS  段落純文字字數上限（預設 100）
+ *   YEARS_BACK    只保留最近幾年的內容（預設 2，以 filename 開頭日期判斷）
  *   LOCAL=1       對 D1 下 --local（預設用 --remote 對線上資料庫查詢）
  *   SKIP_UPLOAD=1 只在本地產出 JSON，不上傳 R2
  */
@@ -25,9 +27,11 @@ import {
 } from '../src/utils/askIndexFormat'
 
 const D1_DATABASE = process.env.D1_DATABASE ?? 'sayit-database'
-const R2_BUCKET = process.env.R2_BUCKET ?? 'askit-fuse-index-cache-preview' // askit-fuse-index-cache
+const R2_BUCKET = process.env.R2_BUCKET ?? 'askit-fuse-index-cache' // or askit-fuse-index-cache-preview
 const SPEAKER_LIKE = process.env.SPEAKER_LIKE ?? '唐鳳%'
 const R2_KEY = process.env.R2_KEY ?? ASK_INDEX_R2_KEY
+const MAX_SECTION_CHARS = Number(process.env.MAX_SECTION_CHARS ?? '100')
+const YEARS_BACK = Number(process.env.YEARS_BACK ?? '2')
 const SKIP_UPLOAD = process.env.SKIP_UPLOAD === '1'
 const D1_FLAG = process.env.LOCAL === '1' ? '--local' : '--remote'
 
@@ -39,6 +43,32 @@ type WranglerD1Envelope = {
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+function dateYearsAgo(years: number): string {
+  const date = new Date()
+  date.setUTCFullYear(date.getUTCFullYear() - years)
+  return date.toISOString().slice(0, 10)
+}
+
+function htmlToPlainText(s: string): string {
+  return s
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<p[^>]*>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function textLength(s: string): number {
+  return Array.from(s).length
 }
 
 function runD1Query(sql: string): SectionRow[] {
@@ -78,21 +108,33 @@ function runD1Query(sql: string): SectionRow[] {
 async function main() {
   // SPEAKER_LIKE 直接內嵌進 SQL；避免 single quote 注入
   const speakerLikeForSql = SPEAKER_LIKE.replace(/'/g, "''")
+  const cutoffDate = dateYearsAgo(YEARS_BACK)
   const sql =
     `SELECT filename, nest_filename, section_id, section_speaker, ` +
     `section_content, display_name, name ` +
     `FROM sections ` +
     `WHERE name LIKE '${speakerLikeForSql}' ` +
     `AND section_content IS NOT NULL ` +
-    `AND TRIM(section_content) != ''`
+    `AND TRIM(section_content) != '' ` +
+    `AND filename GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' ` +
+    `AND substr(filename, 1, 10) >= '${cutoffDate}'`
 
-  const rows = runD1Query(sql)
+  const queriedRows = runD1Query(sql)
+  const rows = queriedRows.filter((row) => {
+    const plainText = htmlToPlainText(row.section_content ?? '')
+    return plainText !== '' && textLength(plainText) <= MAX_SECTION_CHARS
+  })
   console.log(
-    `[build-ask-index] Got ${rows.length} sections matching name LIKE '${SPEAKER_LIKE}'`,
+    `[build-ask-index] Got ${queriedRows.length} recent sections matching name LIKE '${SPEAKER_LIKE}' since ${cutoffDate}`,
+  )
+  console.log(
+    `[build-ask-index] Kept ${rows.length} sections with plain text <= ${MAX_SECTION_CHARS} chars`,
   )
 
   if (rows.length === 0) {
-    throw new Error('Refusing to build empty index — check SPEAKER_LIKE')
+    throw new Error(
+      'Refusing to build empty index — check SPEAKER_LIKE, YEARS_BACK, and MAX_SECTION_CHARS',
+    )
   }
 
   const keys = (ASK_FUSE_OPTIONS.keys ?? []) as string[]

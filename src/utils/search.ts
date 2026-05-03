@@ -114,6 +114,22 @@ export function escapeHtmlText(s: string): string {
     .replace(/"/g, '&quot;')
 }
 
+export function htmlToPlainText(s: string): string {
+  return s
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<p[^>]*>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 export function formatAskAnswerHtml(result: AskSearchResult): string {
   const href = buildArchiveTwSectionHref(
     result.filename,
@@ -121,4 +137,25 @@ export function formatAskAnswerHtml(result: AskSearchResult): string {
     result.nest_filename,
   )
   return `${escapeHtmlText(result.content)}\n\n出處：<a href="${escapeHtmlText(href)}" target="_blank" rel="noopener noreferrer">${escapeHtmlText(result.display_name)}</a>`
+}
+
+export function formatAskAnswerText(
+  result: AskSearchResult,
+  options?: { maxChars?: number },
+): string {
+  const href = buildArchiveTwSectionHref(
+    result.filename,
+    result.section_id,
+    result.nest_filename,
+  )
+  const source = `\n\n出處：${result.display_name}\n${href}`
+  const content = htmlToPlainText(result.content)
+  const maxChars = options?.maxChars
+  if (maxChars === undefined || content.length + source.length <= maxChars) {
+    return `${content}${source}`
+  }
+
+  const suffix = `...${source}`
+  const contentMaxChars = Math.max(0, maxChars - suffix.length)
+  return `${content.slice(0, contentMaxChars).trimEnd()}${suffix}`
 }

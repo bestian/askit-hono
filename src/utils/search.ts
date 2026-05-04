@@ -15,11 +15,27 @@ export type AskSearchResult = {
   section_speaker: string | null
 }
 
+type LineTextMessage = {
+  type: 'text'
+  text: string
+}
+
+type LineFlexMessage = {
+  type: 'flex'
+  altText: string
+  contents: Record<string, unknown>
+}
+
+export type LineReplyMessage = LineTextMessage | LineFlexMessage
+
 type LoadedIndex = {
   fuse: Fuse<SectionRow>
   rowCount: number
   generatedAt: string
 }
+
+const LINE_FLEX_BODY_MAX_CHARS = 280
+const LINE_FLEX_ALT_TEXT_MAX_CHARS = 1_500
 
 /**
  * Module-level cache：同個 Worker isolate 在多次請求間共用解析後的 Fuse index。
@@ -112,6 +128,17 @@ export function buildArchiveTwSectionHref(
   return `https://archive.tw/${path}#s${sectionId}`
 }
 
+export function buildArchiveTwOgImageUrl(
+  filename: string,
+  nestFilename: string | null | undefined,
+): string {
+  const enc = encodeURIComponent
+  const path = nestFilename
+    ? `${enc(filename)}/${enc(nestFilename)}`
+    : enc(filename)
+  return `https://archive.tw/og/${path}.png`
+}
+
 export function escapeHtmlText(s: string): string {
   return s
     .replace(/<p>/g, '\n')
@@ -136,6 +163,16 @@ export function htmlToPlainText(s: string): string {
     .replace(/&#39;/g, "'")
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+}
+
+function extractDisplayDate(filename: string): string {
+  const m = filename.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : ''
+}
+
+function truncatePlainText(s: string, maxChars: number): string {
+  if (s.length <= maxChars) return s
+  return `${s.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`
 }
 
 export function formatAskAnswerHtml(result: AskSearchResult): string {
@@ -166,4 +203,138 @@ export function formatAskAnswerText(
   const suffix = `...${source}`
   const contentMaxChars = Math.max(0, maxChars - suffix.length)
   return `${content.slice(0, contentMaxChars).trimEnd()}${suffix}`
+}
+
+export function formatAskAnswerFlex(result: AskSearchResult): LineReplyMessage {
+  const href = buildArchiveTwSectionHref(
+    result.filename,
+    result.section_id,
+    result.nest_filename,
+  )
+  const imageUrl = buildArchiveTwOgImageUrl(
+    result.filename,
+    result.nest_filename,
+  )
+  const content = truncatePlainText(
+    htmlToPlainText(result.content),
+    LINE_FLEX_BODY_MAX_CHARS,
+  )
+  const displayDate = extractDisplayDate(result.filename)
+  const altText = truncatePlainText(
+    `${content}\n\n出處：${result.display_name}`,
+    LINE_FLEX_ALT_TEXT_MAX_CHARS,
+  )
+
+  const details = [
+    {
+      type: 'box',
+      layout: 'baseline',
+      spacing: 'sm',
+      contents: [
+        {
+          type: 'text',
+          text: '出處',
+          color: '#aaaaaa',
+          size: 'sm',
+          flex: 1,
+        },
+        {
+          type: 'text',
+          text: result.display_name,
+          wrap: true,
+          color: '#666666',
+          size: 'sm',
+          flex: 5,
+        },
+      ],
+    },
+  ]
+
+  if (displayDate !== '') {
+    details.push({
+      type: 'box',
+      layout: 'baseline',
+      spacing: 'sm',
+      contents: [
+        {
+          type: 'text',
+          text: '日期',
+          color: '#aaaaaa',
+          size: 'sm',
+          flex: 1,
+        },
+        {
+          type: 'text',
+          text: displayDate,
+          wrap: true,
+          color: '#666666',
+          size: 'sm',
+          flex: 5,
+        },
+      ],
+    })
+  }
+
+  return {
+    type: 'flex',
+    altText,
+    contents: {
+      type: 'bubble',
+      hero: {
+        type: 'image',
+        url: imageUrl,
+        size: 'full',
+        aspectRatio: '20:13',
+        aspectMode: 'cover',
+        action: {
+          type: 'uri',
+          uri: href,
+        },
+      },
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        contents: [
+          {
+            type: 'text',
+            text: content,
+            weight: 'bold',
+            size: 'md',
+            wrap: true,
+          },
+          {
+            type: 'box',
+            layout: 'vertical',
+            margin: 'lg',
+            spacing: 'sm',
+            contents: details,
+          },
+        ],
+      },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: 'sm',
+        contents: [
+          {
+            type: 'button',
+            style: 'link',
+            height: 'sm',
+            action: {
+              type: 'uri',
+              label: '前往來源',
+              uri: href,
+            },
+          },
+          {
+            type: 'box',
+            layout: 'vertical',
+            contents: [],
+            margin: 'sm',
+          },
+        ],
+        flex: 0,
+      },
+    },
+  }
 }

@@ -68,6 +68,14 @@ function rowToResult(row: SectionRow): AskSearchResult {
   }
 }
 
+export function normalizeAskSearchQuestion(question: string): string {
+  return question
+    .replace(/(?:是什麼|什麼是)/g, '')
+    .replace(/\p{P}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 /**
  * 從 R2 預先建好的 Fuse index 找最相近的段落。
  * 索引由 `npm run build:index` 從 D1 sections view 預先產出並上傳。
@@ -80,7 +88,7 @@ export async function findClosestMatchingSection(
   },
 ): Promise<AskSearchResult | null> {
   const key = options?.r2Key ?? ASK_INDEX_R2_KEY
-  const q = question.trim()
+  const q = normalizeAskSearchQuestion(question)
   if (q === '') return null
 
   const { fuse, rowCount } = await getIndex(bucket, key)

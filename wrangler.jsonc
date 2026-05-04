@@ -26,7 +26,11 @@
       "bucket_name": "askit-fuse-index-cache",
       "preview_bucket_name": "askit-fuse-index-cache-preview"
     }
-  ]
+  ],
+
+  "assets": {
+    "directory": "./public"
+  }
 
   // ─────────────────────────────────────────────────────────────────────
   // 索引建置流程：

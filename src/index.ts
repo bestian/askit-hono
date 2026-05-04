@@ -2,8 +2,9 @@ import { Hono } from 'hono'
 
 import {
   findClosestMatchingSection,
+  formatAskAnswerFlex,
   formatAskAnswerHtml,
-  formatAskAnswerText,
+  type LineReplyMessage,
 } from './utils/search'
 
 type Bindings = {
@@ -26,7 +27,6 @@ type LineWebhookBody = {
 
 const LINE_REPLY_ENDPOINT = 'https://api.line.me/v2/bot/message/reply'
 const REPLY_TOKEN_TTL_MS = 50_000
-const LINE_TEXT_MESSAGE_MAX_CHARS = 5_000
 
 const app = new Hono<{ Bindings: Bindings }>()
 
@@ -141,20 +141,20 @@ app.post('/webhook', async (c) => {
     return c.text('Reply token expired', 400)
   }
 
-  let replyText: string
+  let replyMessage: LineReplyMessage
   try {
     const hit = await findClosestMatchingSection(c.env.ASK_INDEX, userText)
-    replyText = hit
-      ? formatAskAnswerText(hit, { maxChars: LINE_TEXT_MESSAGE_MAX_CHARS })
-      : '找不到符合條件的段落，請上\nhttps://archive.tw'
+    replyMessage = hit
+      ? formatAskAnswerFlex(hit)
+      : { type: 'text', text: '找不到符合條件的段落，請上\nhttps://archive.tw' }
   } catch (e) {
     console.error('搜尋發生錯誤:', e)
-    replyText = '查詢發生錯誤，請稍後再試'
+    replyMessage = { type: 'text', text: '查詢發生錯誤，請稍後再試' }
   }
 
   const reply = {
     replyToken,
-    messages: [{ type: 'text', text: replyText }],
+    messages: [replyMessage],
   }
   console.log(reply)
 

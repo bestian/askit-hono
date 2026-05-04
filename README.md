@@ -16,11 +16,11 @@
 | --- | --- |
 | `GET /` | Healthcheck，回 `Hello World!` |
 | `GET /ask/:question` | **暫時測試用**：把 question URL-decode 後跑搜尋，回傳 HTML 顯示最相近段落 + 原文連結。方便用瀏覽器或 curl 驗證索引與搜尋結果。 |
-| `POST /webhook` | LINE Messaging API webhook。收到 LINE 文字訊息後，使用與 `/ask/:question` 相同的搜尋 pipeline，並以純文字回覆最相近段落與原文連結。 |
+| `POST /webhook` | LINE Messaging API webhook。收到 LINE 文字訊息後，使用與 `/ask/:question` 相同的搜尋 pipeline，並以 Flex Message 回覆最相近段落、出處、日期與原文連結。 |
 
 ### 回覆格式
 
-`/ask/:question` 會回 HTML，方便瀏覽器測試；`/webhook` 會回純文字，避免 LINE 顯示 HTML tag。
+`/ask/:question` 會回 HTML，方便瀏覽器測試；`/webhook` 命中搜尋結果時會回 LINE Flex Message。Flex 的主文來自段落內容，出處來自 `display_name`，日期從 `filename` 的 `YYYY-MM-DD` 前綴解析，hero 圖使用 `https://archive.tw/og/{filename}.png`，按鈕連到原文 section URL。查無結果或搜尋錯誤時仍回純文字。
 
 ### 索引建置流程（不在 Worker 內執行）
 
@@ -60,6 +60,8 @@ Worker 端 `src/utils/search.ts` 第一次請求時從 R2 抓索引、用 `Fuse.
 ```
 
 ### 開始使用
+
+需要 Node.js 22 或更新版本（Wrangler 4.87+ 需要 Node 22）。本 repo 提供 `.nvmrc` 與 `.node-version`，可讓常見版本管理器自動切換。
 
 ```bash
 # 1. 安裝依賴
@@ -250,11 +252,11 @@ Built with [Hono](https://hono.dev/) on Cloudflare Workers. The Worker does **no
 | --- | --- |
 | `GET /` | Healthcheck — returns `Hello World!` |
 | `GET /ask/:question` | **Temporary debug endpoint** — URL-decodes the question, runs the search, returns HTML with the closest section and a link to the source. Handy for testing from a browser or `curl`. |
-| `POST /webhook` | LINE Messaging API webhook. For text messages, it uses the same search pipeline as `/ask/:question` and replies with the closest section plus a source link as plain text. |
+| `POST /webhook` | LINE Messaging API webhook. For text messages, it uses the same search pipeline as `/ask/:question` and replies with the closest section, source, date, and source link as a Flex Message. |
 
 ### Reply Format
 
-`/ask/:question` returns HTML for browser testing; `/webhook` returns plain text so LINE does not display HTML tags.
+`/ask/:question` returns HTML for browser testing; `/webhook` returns a LINE Flex Message when search finds a result. The Flex body uses the section content, source uses `display_name`, date is parsed from the `YYYY-MM-DD` prefix in `filename`, the hero image uses `https://archive.tw/og/{filename}.png`, and the button links to the source section URL. Missing results and search errors still return plain text.
 
 ### Index pipeline (runs offline, not in the Worker)
 
@@ -294,6 +296,8 @@ On first request, the Worker reads the index from R2 and rehydrates it via `Fuse
 ```
 
 ### Getting started
+
+Requires Node.js 22 or newer (Wrangler 4.87+ requires Node 22). This repo includes `.nvmrc` and `.node-version` for common version managers.
 
 ```bash
 # 1. Install dependencies

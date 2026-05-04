@@ -170,6 +170,10 @@ function extractDisplayDate(filename: string): string {
   return m ? `${m[1]}-${m[2]}-${m[3]}` : ''
 }
 
+function removeLeadingDisplayDate(displayName: string): string {
+  return displayName.replace(/^\d{4}-\d{2}-\d{2}\s+/, '')
+}
+
 function truncatePlainText(s: string, maxChars: number): string {
   if (s.length <= maxChars) return s
   return `${s.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`
@@ -220,8 +224,9 @@ export function formatAskAnswerFlex(result: AskSearchResult): LineReplyMessage {
     LINE_FLEX_BODY_MAX_CHARS,
   )
   const displayDate = extractDisplayDate(result.filename)
+  const displaySource = removeLeadingDisplayDate(result.display_name)
   const altText = truncatePlainText(
-    `${content}\n\n出處：${result.display_name}`,
+    `${content}\n\n出處：${displaySource}`,
     LINE_FLEX_ALT_TEXT_MAX_CHARS,
   )
 
@@ -240,7 +245,7 @@ export function formatAskAnswerFlex(result: AskSearchResult): LineReplyMessage {
         },
         {
           type: 'text',
-          text: result.display_name,
+          text: displaySource,
           wrap: true,
           color: '#666666',
           size: 'sm',
@@ -285,7 +290,7 @@ export function formatAskAnswerFlex(result: AskSearchResult): LineReplyMessage {
         url: imageUrl,
         size: 'full',
         aspectRatio: '20:13',
-        aspectMode: 'cover',
+        aspectMode: 'fit',
         action: {
           type: 'uri',
           uri: href,

@@ -30,6 +30,10 @@ type LineWebhookBody = {
 
 const LINE_REPLY_ENDPOINT = 'https://api.line.me/v2/bot/message/reply'
 const REPLY_TOKEN_TTL_MS = 50_000
+const ROBOTS_TXT = `User-agent: *
+Disallow: /ask/
+Disallow: /webhook
+`
 
 const app = new Hono<{ Bindings: Bindings }>()
 
@@ -74,6 +78,14 @@ app.get('/privacy', (c) => {
 
 app.get('/terms', (c) => {
   return c.html(renderTermsOfUsePage())
+})
+
+app.get('/robot.txt', (c) => {
+  return c.text(ROBOTS_TXT)
+})
+
+app.get('/robots.txt', (c) => {
+  return c.text(ROBOTS_TXT)
 })
 
 app.get('/ask/:question', async (c) => {

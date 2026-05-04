@@ -1,5 +1,8 @@
 import { Hono } from 'hono'
 
+import { renderHomePage } from './pages/home'
+import { renderPrivacyPolicyPage } from './pages/privacy'
+import { renderTermsOfUsePage } from './pages/terms'
 import {
   findClosestMatchingSection,
   formatAskAnswerFlex,
@@ -62,7 +65,15 @@ async function verifyLineSignature(
 }
 
 app.get('/', (c) => {
-  return c.text('Hello World!')
+  return c.html(renderHomePage())
+})
+
+app.get('/privacy', (c) => {
+  return c.html(renderPrivacyPolicyPage())
+})
+
+app.get('/terms', (c) => {
+  return c.html(renderTermsOfUsePage())
 })
 
 app.get('/ask/:question', async (c) => {
@@ -116,16 +127,12 @@ app.post('/webhook', async (c) => {
     return c.text('Invalid JSON payload', 400)
   }
 
-  console.log('webhook 請求內容:', body)
-
   const event = body.events?.[0]
   if (!event) {
     return c.text('OK', 200)
   }
 
-  console.log('回應Token:', event.replyToken)
-  console.log('事件類型:', event.type)
-  console.log('訊息類型:', event.message?.type)
+  console.log('有事件被觸發')
 
   if (event.type !== 'message' || event.message?.type !== 'text') {
     return c.text('OK', 200)
@@ -133,7 +140,6 @@ app.post('/webhook', async (c) => {
 
   const replyToken = event.replyToken
   const userText = event.message.text ?? ''
-  console.log('使用者提問:', '問題：' + userText)
 
   const timeDiff = Date.now() - event.timestamp
   if (timeDiff > REPLY_TOKEN_TTL_MS) {
@@ -156,7 +162,6 @@ app.post('/webhook', async (c) => {
     replyToken,
     messages: [replyMessage],
   }
-  console.log(reply)
 
   const response = await fetch(LINE_REPLY_ENDPOINT, {
     method: 'POST',

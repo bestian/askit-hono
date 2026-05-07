@@ -5,8 +5,10 @@ import { renderPrivacyPolicyPage } from './pages/privacy'
 import { renderTermsOfUsePage } from './pages/terms'
 import {
   findClosestMatchingSection,
+  findRandomSection,
   formatAskAnswerFlex,
   formatAskAnswerHtml,
+  isRandomAskQuestion,
   type LineReplyMessage,
 } from './utils/search'
 
@@ -98,7 +100,9 @@ app.get('/ask/:question', async (c) => {
   }
 
   try {
-    const hit = await findClosestMatchingSection(c.env.ASK_INDEX, question)
+    const hit = isRandomAskQuestion(question)
+      ? await findRandomSection(c.env.ASK_INDEX)
+      : await findClosestMatchingSection(c.env.ASK_INDEX, question)
     if (!hit) {
       return c.text('找不到符合條件的段落', 404)
     }
@@ -161,7 +165,9 @@ app.post('/webhook', async (c) => {
 
   let replyMessage: LineReplyMessage
   try {
-    const hit = await findClosestMatchingSection(c.env.ASK_INDEX, userText)
+    const hit = isRandomAskQuestion(userText)
+      ? await findRandomSection(c.env.ASK_INDEX)
+      : await findClosestMatchingSection(c.env.ASK_INDEX, userText)
     replyMessage = hit
       ? formatAskAnswerFlex(hit)
       : { type: 'text', text: '找不到符合條件的段落，請上\nhttps://archive.tw' }

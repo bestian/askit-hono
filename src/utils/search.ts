@@ -30,6 +30,7 @@ export type LineReplyMessage = LineTextMessage | LineFlexMessage
 
 type LoadedIndex = {
   fuse: Fuse<SectionRow>
+  rows: SectionRow[]
   rowCount: number
   generatedAt: string
 }
@@ -56,6 +57,7 @@ async function loadIndexFromR2(
   const fuse = createAskFuseFromPayload(payload)
   return {
     fuse,
+    rows: payload.rows,
     rowCount: payload.rowCount,
     generatedAt: payload.generatedAt,
   }
@@ -92,6 +94,11 @@ export function normalizeAskSearchQuestion(question: string): string {
     .trim()
 }
 
+export function isRandomAskQuestion(question: string): boolean {
+  const q = question.trim().toLowerCase()
+  return q === '隨機' || q === '隨機一篇' || q === 'random' || q === 'Random'
+}
+
 /**
  * 從 R2 預先建好的 Fuse index 找最相近的段落。
  * 索引由 `npm run build:index` 從 D1 sections view 預先產出並上傳。
@@ -114,6 +121,20 @@ export async function findClosestMatchingSection(
   const top = hits[0]
   if (!top) return null
   return rowToResult(top.item)
+}
+
+export async function findRandomSection(
+  bucket: R2Bucket,
+  options?: {
+    r2Key?: string
+  },
+): Promise<AskSearchResult | null> {
+  const key = options?.r2Key ?? ASK_INDEX_R2_KEY
+  const { rows } = await getIndex(bucket, key)
+  if (rows.length === 0) return null
+
+  const randomIndex = Math.floor(Math.random() * rows.length)
+  return rowToResult(rows[randomIndex])
 }
 
 export function buildArchiveTwSectionHref(

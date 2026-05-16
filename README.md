@@ -16,6 +16,8 @@
 | --- | --- |
 | `GET /` | Healthcheck，回 `Hello World!` |
 | `GET /ask/:question` | **暫時測試用**：把 question URL-decode 後跑搜尋，回傳 HTML 顯示最相近段落 + 原文連結。方便用瀏覽器或 curl 驗證索引與搜尋結果。 |
+| `GET /cag/:question` | 以同一份 R2 索引取回多段 SayIt 來源，組成 CAG prompt，呼叫 Cloudflare Workers AI（預設 Kimi K2.6），並串流 Markdown 回答與 `archive.tw#s...` footnote。 |
+| `POST /cag` | JSON 版本的 CAG endpoint：`{ "question": "...", "topK": 6 }`，同樣串流 Markdown。 |
 | `POST /webhook` | LINE Messaging API webhook。收到 LINE 文字訊息後，使用與 `/ask/:question` 相同的搜尋 pipeline，並以 Flex Message 回覆最相近段落、出處、日期與原文連結。 |
 
 ### 回覆格式
@@ -93,6 +95,19 @@ npm run build:index
 | `R2_KEY` | `ask-index/audrey-tang.json` | R2 物件 key |
 | `LOCAL=1` | — | 對 D1 下 `--local`（預設 `--remote` 用線上資料庫） |
 | `SKIP_UPLOAD=1` | — | 只在 `build/` 產出 JSON 不上傳 |
+
+#### CAG + Workers AI
+
+`/cag/:question` 是把 DS4 CAG 實驗搬進 Cloudflare runtime 的部分：
+retrieve 仍然使用 build-time R2 Fuse index，runtime 不查 D1；生成改由 Workers AI
+binding `AI` 執行，預設模型由 `ASK_MODEL` 控制。
+
+```bash
+curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%EF%BC%9A%E5%9C%B0%E7%A5%9E%E9%A6%99%E7%81%AB%E5%A6%82%E4%BD%95?top_k=6'
+```
+
+輸出是 streaming Markdown。模型若輸出 `[1]` 這類來源標記，Worker 會轉成
+`[^1]` 並在結尾補上 footnote，連到對應的 `archive.tw/<speech>#s<section_id>`。
 
 #### 本機開發
 
@@ -252,6 +267,8 @@ Built with [Hono](https://hono.dev/) on Cloudflare Workers. The Worker does **no
 | --- | --- |
 | `GET /` | Healthcheck — returns `Hello World!` |
 | `GET /ask/:question` | **Temporary debug endpoint** — URL-decodes the question, runs the search, returns HTML with the closest section and a link to the source. Handy for testing from a browser or `curl`. |
+| `GET /cag/:question` | Retrieves multiple SayIt sections from the same R2 index, builds a CAG prompt, calls Cloudflare Workers AI (Kimi K2.6 by default), and streams Markdown with `archive.tw#s...` footnotes. |
+| `POST /cag` | JSON CAG endpoint: `{ "question": "...", "topK": 6 }`, also streaming Markdown. |
 | `POST /webhook` | LINE Messaging API webhook. For text messages, it uses the same search pipeline as `/ask/:question` and replies with the closest section, source, date, and source link as a Flex Message. |
 
 ### Reply Format
@@ -329,6 +346,21 @@ Optional environment variables:
 | `R2_KEY` | `ask-index/audrey-tang.json` | R2 object key |
 | `LOCAL=1` | — | Use `--local` against D1 (defaults to `--remote`) |
 | `SKIP_UPLOAD=1` | — | Write the JSON to `build/` only, skip the R2 upload |
+
+#### CAG + Workers AI
+
+`/cag/:question` is the Cloudflare-native slice of the DS4 CAG experiment:
+retrieval still uses the build-time R2 Fuse index, so runtime does not query D1;
+generation runs through the Workers AI `AI` binding. The default model is
+controlled by `ASK_MODEL`.
+
+```bash
+curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%EF%BC%9A%E5%9C%B0%E7%A5%9E%E9%A6%99%E7%81%AB%E5%A6%82%E4%BD%95?top_k=6'
+```
+
+The response is streaming Markdown. If the model emits source markers like
+`[1]`, the Worker rewrites them to `[^1]` and appends footnotes linked to the
+matching `archive.tw/<speech>#s<section_id>` source.
 
 #### Run locally
 

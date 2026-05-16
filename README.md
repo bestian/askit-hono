@@ -41,7 +41,7 @@ speakers.name LIKE ─┤  (scripts/build-ask-index.ts)
    R2: askit-fuse-index-cache/ask-index/audrey-tang.json
 ```
 
-Worker 端 `src/utils/search.ts` 第一次請求時從 R2 抓索引、用 `Fuse.parseIndex` 還原，之後同個 isolate 都共用。索引更新只要重跑 `npm run build:index`，不需要 redeploy worker（但已存在的 isolate 還會用 cache，最多等到自然回收）。
+Worker 端 `src/utils/search.ts` 第一次請求時從 R2 抓索引、用 `Fuse.parseIndex` 還原，之後同個 isolate 都共用。一般索引更新只要重跑 `npm run build:index`；若要讓 CAG 立刻讀到最新索引，重建 R2 物件後也部署一次 Worker，讓 runtime cache 一起刷新。
 
 ### 專案結構
 
@@ -85,14 +85,22 @@ npx wrangler r2 bucket create askit-fuse-index-cache-preview
 npm run build:index
 ```
 
+長 lore / CAG 用的索引會保留更長段落、往回抓 30 年：
+
+```bash
+npm run build:index:lore
+```
+
 可用環境變數覆蓋：
 
 | 變數 | 預設 | 說明 |
 | --- | --- | --- |
 | `D1_DATABASE` | `sayit-database` | D1 資料庫名稱（要與 sayit-hono 相同） |
 | `SPEAKER_LIKE` | `唐鳳%` | `speakers.name LIKE` 條件 |
-| `R2_BUCKET` | `askit-fuse-index-cache-preview` | 上傳到的 R2 bucket |
+| `R2_BUCKET` | `askit-fuse-index-cache` | 上傳到的 R2 bucket |
 | `R2_KEY` | `ask-index/audrey-tang.json` | R2 物件 key |
+| `MAX_SECTION_CHARS` | `100` | 只保留純文字長度不超過此值的段落；`build:index:lore` 設為 `2200` |
+| `YEARS_BACK` | `2` | 只保留最近幾年的逐字稿；`build:index:lore` 設為 `30` |
 | `LOCAL=1` | — | 對 D1 下 `--local`（預設 `--remote` 用線上資料庫） |
 | `SKIP_UPLOAD=1` | — | 只在 `build/` 產出 JSON 不上傳 |
 
@@ -109,6 +117,28 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 輸出是 streaming Markdown。模型若輸出 `[1]` 這類來源標記，Worker 會轉成
 `[^1]` 並在結尾補上 footnote，連到對應的 `archive.tw/<speech>#s<section_id>`。
 
+#### 隨 transcript / sayit-hono 更新 CAG
+
+本 repo 的 `.github/workflows/refresh-cag-index.yml` 提供三種入口：
+
+- `repository_dispatch` 的 `sayit-updated` event：給 `transcript` repo 在成功上傳 Markdown 並部署 `sayit-hono` 後觸發。
+- `workflow_dispatch`：手動重建索引；可勾選 `deploy` 讓 Worker 也一起部署，刷新 isolate cache。
+- 每日 schedule：漏掉 dispatch 時的保底。
+
+建議在 `transcript` repo 的 `Sync markdown on push` workflow、`rebuild-search-index` job 成功部署 `sayit-hono` 後加上：
+
+```yaml
+- name: Refresh AskIt CAG index
+  env:
+    GH_TOKEN: ${{ secrets.ASKIT_REBUILD_TOKEN }}
+  run: |
+    gh api repos/bestian/askit-hono/dispatches \
+      -f event_type=sayit-updated \
+      -F client_payload[transcript_sha]="${GITHUB_SHA}"
+```
+
+`ASKIT_REBUILD_TOKEN` 需要能對 `bestian/askit-hono` 發送 repository dispatch；細粒度 PAT 可給該 repo `Contents: read/write` 權限。dispatch 進來後，askit-hono workflow 會 `npm run build:index:lore` 上傳新的 R2 索引，dry-run 驗證 Worker bundle，最後部署 Worker 以刷新 runtime cache。
+
 #### 本機開發
 
 前置作業：建立 `.dev.vars` 並填入 LINE 的 Channel access token 與 Channel secret（[詳細說明](#兩個必要的-secret)）。
@@ -117,11 +147,18 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 cp .dev.vars.example .dev.vars
 # 編輯 .dev.vars，填入實際值
 
-npm run dev        # 本地 R2 模擬（你需要事先把索引匯入本地）
-npm run preview    # wrangler dev --remote，連到雲端 R2 實際索引（推薦）
+npm run dev        # 本機 Worker + 遠端 R2 / Workers AI binding
+npm run preview    # wrangler dev --remote，整個 Worker 也跑在 Cloudflare
 ```
 
-> 注意：`npm run dev` 走 miniflare 本地 R2 模擬，剛上傳的雲端索引在這裡讀不到，會回 `404 找不到 R2 物件`。要真的測搜尋請用 `npm run preview`。
+> 注意：`ASK_INDEX` R2 binding 與 `AI` binding 在 `wrangler.jsonc` 裡設為 `remote: true`，所以本機測 `/cag` 會讀雲端 preview R2 bucket 並呼叫 Workers AI。這會用到 Cloudflare 帳號配額。若 preview bucket 還沒有索引，可先執行：
+
+```bash
+npx wrangler r2 object put 'askit-fuse-index-cache-preview/ask-index/audrey-tang.json' \
+  --file build/audrey-tang.json \
+  --content-type 'application/json; charset=utf-8' \
+  --remote
+```
 
 開發時可用 `/ask/:question` 直接以瀏覽器或 curl 測：
 
@@ -244,10 +281,16 @@ curl -X POST https://YOUR-WORKER-URL/webhook \
 curl 'https://YOUR-WORKER-URL/ask/AI%E6%9C%83%E4%B8%8D%E6%9C%83%E6%8E%A7%E5%88%B6%E6%88%91%E5%80%91'
 ```
 
+CAG 串流可用：
+
+```bash
+curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%EF%BC%9A%E5%9C%B0%E7%A5%9E%E9%A6%99%E7%81%AB%E5%A6%82%E4%BD%95?top_k=6'
+```
+
 ### 已知議題 / TODO
 
 - **索引大小**：當前 `唐鳳%` 範圍下索引約 75 MB（105k 段落）。Workers isolate 記憶體上限 128MB，第一次 `JSON.parse` + `Fuse.parseIndex` 會吃不少；後續可能需要瘦身（拿掉 runtime 用不到的欄位、縮短 key 名、或分片）。
-- **isolate cache 不會自動失效**：`npm run build:index` 上傳後，已存在的 Worker isolate 還是用舊 cache，要等到自然回收。需要強制刷新可以加一條 admin 路由清掉 module-level cache，或部署時順便刷新。
+- **isolate cache 不會自動失效**：`npm run build:index` 上傳後，已存在的 Worker isolate 還是用舊 cache，要等到自然回收。`refresh-cag-index.yml` 的 dispatch 路徑會在更新 R2 後部署 Worker，作為目前的刷新機制。
 
 ### 授權
 
@@ -292,7 +335,7 @@ speakers.name LIKE ─┤  (scripts/build-ask-index.ts)
    R2: askit-fuse-index-cache/ask-index/audrey-tang.json
 ```
 
-On first request, the Worker reads the index from R2 and rehydrates it via `Fuse.parseIndex`. The parsed index is cached at module scope so subsequent requests in the same isolate skip the load. To refresh, just rerun `npm run build:index` — no redeploy needed (existing isolates keep the old cache until they recycle).
+On first request, the Worker reads the index from R2 and rehydrates it via `Fuse.parseIndex`. The parsed index is cached at module scope so subsequent requests in the same isolate skip the load. A normal refresh only needs `npm run build:index`; for CAG freshness, rebuild the R2 object and deploy the Worker once so runtime caches roll forward immediately.
 
 ### Project structure
 
@@ -336,14 +379,22 @@ npx wrangler r2 bucket create askit-fuse-index-cache-preview
 npm run build:index
 ```
 
+The long-lore CAG profile keeps longer sections and looks back 30 years:
+
+```bash
+npm run build:index:lore
+```
+
 Optional environment variables:
 
 | Var | Default | Notes |
 | --- | --- | --- |
 | `D1_DATABASE` | `sayit-database` | D1 database name (must match sayit-hono) |
 | `SPEAKER_LIKE` | `唐鳳%` | `speakers.name LIKE` condition |
-| `R2_BUCKET` | `askit-fuse-index-cache-preview` | Target R2 bucket |
+| `R2_BUCKET` | `askit-fuse-index-cache` | Target R2 bucket |
 | `R2_KEY` | `ask-index/audrey-tang.json` | R2 object key |
+| `MAX_SECTION_CHARS` | `100` | Keep sections whose plain-text length is at most this value; `build:index:lore` uses `2200` |
+| `YEARS_BACK` | `2` | Keep transcripts from the last N years; `build:index:lore` uses `30` |
 | `LOCAL=1` | — | Use `--local` against D1 (defaults to `--remote`) |
 | `SKIP_UPLOAD=1` | — | Write the JSON to `build/` only, skip the R2 upload |
 
@@ -362,6 +413,28 @@ The response is streaming Markdown. If the model emits source markers like
 `[1]`, the Worker rewrites them to `[^1]` and appends footnotes linked to the
 matching `archive.tw/<speech>#s<section_id>` source.
 
+#### Keeping CAG fresh after transcript pushes
+
+This repo includes `.github/workflows/refresh-cag-index.yml` with three entrypoints:
+
+- `repository_dispatch` event `sayit-updated`: intended for the `transcript` repo after Markdown upload and `sayit-hono` deploy succeed.
+- `workflow_dispatch`: manual index refresh; set `deploy=true` to deploy the Worker too and flush isolate caches.
+- Daily schedule: a backstop if a dispatch is missed.
+
+Recommended final step in the `transcript` repo's `Sync markdown on push` workflow, after the `rebuild-search-index` job deploys `sayit-hono`:
+
+```yaml
+- name: Refresh AskIt CAG index
+  env:
+    GH_TOKEN: ${{ secrets.ASKIT_REBUILD_TOKEN }}
+  run: |
+    gh api repos/bestian/askit-hono/dispatches \
+      -f event_type=sayit-updated \
+      -F client_payload[transcript_sha]="${GITHUB_SHA}"
+```
+
+`ASKIT_REBUILD_TOKEN` must be able to send repository dispatches to `bestian/askit-hono`; a fine-grained PAT with `Contents: read/write` for that repo works. Once the dispatch arrives, askit-hono runs `npm run build:index:lore`, uploads the refreshed R2 index, dry-run validates the Worker bundle, then deploys the Worker to refresh the runtime cache.
+
 #### Run locally
 
 Prerequisite: create `.dev.vars` with your LINE channel access token and channel secret (see [Two required secrets](#two-required-secrets)).
@@ -370,11 +443,18 @@ Prerequisite: create `.dev.vars` with your LINE channel access token and channel
 cp .dev.vars.example .dev.vars
 # Edit .dev.vars and paste real values
 
-npm run dev        # local R2 mock (you would need to seed it locally)
-npm run preview    # wrangler dev --remote — talks to the real R2 (recommended)
+npm run dev        # local Worker + remote R2 / Workers AI bindings
+npm run preview    # wrangler dev --remote — the Worker itself also runs on Cloudflare
 ```
 
-> Note: `npm run dev` uses miniflare's local R2 emulator; the index you uploaded to the cloud bucket is not visible there and you'll see `404 R2 object not found`. Use `npm run preview` to actually exercise the search.
+> Note: `ASK_INDEX` and `AI` are marked `remote: true` in `wrangler.jsonc`, so local `/cag` tests read the cloud preview R2 bucket and call Workers AI. That uses your Cloudflare account quota. If the preview bucket does not have an index yet, seed it first:
+
+```bash
+npx wrangler r2 object put 'askit-fuse-index-cache-preview/ask-index/audrey-tang.json' \
+  --file build/audrey-tang.json \
+  --content-type 'application/json; charset=utf-8' \
+  --remote
+```
 
 You can hit `/ask/:question` directly while developing:
 
@@ -497,10 +577,16 @@ You can also exercise the search directly:
 curl 'https://YOUR-WORKER-URL/ask/AI%E6%9C%83%E4%B8%8D%E6%9C%83%E6%8E%A7%E5%88%B6%E6%88%91%E5%80%91'
 ```
 
+Streaming CAG test:
+
+```bash
+curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%EF%BC%9A%E5%9C%B0%E7%A5%9E%E9%A6%99%E7%81%AB%E5%A6%82%E4%BD%95?top_k=6'
+```
+
 ### Known issues / TODO
 
 - **Index size.** The default `唐鳳%` range produces ~75 MB (~105k sections). Workers isolates have a 128 MB memory limit, so the first `JSON.parse` + `Fuse.parseIndex` is a meaningful cost. We may need to slim the payload (drop unused fields, shorter keys, or shard) once it actually starts hitting the ceiling.
-- **Module-level cache doesn't auto-invalidate.** After `npm run build:index` re-uploads, existing isolates keep serving from the in-memory cache until they recycle. If you need an immediate flush, expose an admin route that clears the module cache, or refresh on deploy.
+- **Module-level cache doesn't auto-invalidate.** After `npm run build:index` re-uploads, existing isolates keep serving from the in-memory cache until they recycle. The dispatch path in `refresh-cag-index.yml` deploys the Worker after updating R2 and uses that as the current flush mechanism.
 
 ### License
 

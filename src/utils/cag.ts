@@ -276,6 +276,7 @@ export async function streamCagAnswer(
       4_096,
     ),
     temperature: 0.2,
+    chat_template_kwargs: { thinking: false },
   })
 
   const body = aiResultToStream(stream)

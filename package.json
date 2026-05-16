@@ -12,7 +12,8 @@
     "deploy": "npx wrangler deploy",
     "tail": "npx wrangler tail",
     "typecheck": "tsc --noEmit",
-    "build:index": "tsx --tsconfig scripts/tsconfig.json scripts/build-ask-index.ts"
+    "build:index": "tsx --tsconfig scripts/tsconfig.json scripts/build-ask-index.ts",
+    "build:index:lore": "MAX_SECTION_CHARS=2200 YEARS_BACK=30 npm run build:index"
   },
   "dependencies": {
     "fuse.js": "^7.3.0",

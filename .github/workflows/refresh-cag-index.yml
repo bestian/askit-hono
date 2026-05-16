@@ -1,10 +1,10 @@
-name: Refresh CAG index
+name: Refresh Ask index
 
 on:
   workflow_dispatch:
     inputs:
       deploy:
-        description: Deploy the Worker after refreshing the R2 index as an optional cache reset
+        description: Deploy the Worker after refreshing the R2 ask index as an optional cache reset
         required: true
         type: boolean
         default: false
@@ -19,7 +19,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: refresh-cag-index-${{ github.ref }}
+  group: refresh-ask-index-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -47,8 +47,8 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Refresh long-lore index in R2
-        run: npm run build:index:lore
+      - name: Refresh R2 index
+        run: npm run build:index
 
       - name: Validate Worker bundle
         run: npx wrangler deploy --dry-run --outdir /tmp/askit-hono-dry-run

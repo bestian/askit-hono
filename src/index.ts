@@ -3,7 +3,7 @@ import { Hono } from 'hono'
 import { renderHomePage } from './pages/home'
 import { renderPrivacyPolicyPage } from './pages/privacy'
 import { renderTermsOfUsePage } from './pages/terms'
-import { DEFAULT_CAG_MODEL, streamCagAnswer } from './utils/cag'
+import { DEFAULT_CAG_MODEL, getCagStatus, streamCagAnswer } from './utils/cag'
 import {
   findClosestMatchingSection,
   findRandomSection,
@@ -17,6 +17,7 @@ type Bindings = {
   LINE_CHANNEL_ACCESS_TOKEN: string
   LINE_CHANNEL_SECRET: string
   ASK_MODEL?: string
+  ASK_ARCHIVE_BASE_URL?: string
   ASK_INDEX: R2Bucket
   AI: {
     run: (model: string, input: Record<string, unknown>) => Promise<unknown>
@@ -134,9 +135,17 @@ app.get('/ask/:question', async (c) => {
   }
 })
 
+app.get('/cag/status', (c) => {
+  return c.json(getCagStatus({
+    archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
+    model: c.env.ASK_MODEL || DEFAULT_CAG_MODEL,
+  }))
+})
+
 app.get('/cag/:question', async (c) => {
   const question = decodeRouteParam(c.req.param('question'))
-  return streamCagAnswer(c.env.AI, c.env.ASK_INDEX, question, {
+  return streamCagAnswer(c.env.AI, question, {
+    archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
     model: c.req.query('model') || c.env.ASK_MODEL || DEFAULT_CAG_MODEL,
     topK: parsePositiveInteger(c.req.query('top_k') ?? c.req.query('topK'), 6),
     maxCompletionTokens: parsePositiveInteger(
@@ -173,7 +182,8 @@ app.post('/cag', async (c) => {
     ? payload.model
     : c.env.ASK_MODEL || DEFAULT_CAG_MODEL
 
-  return streamCagAnswer(c.env.AI, c.env.ASK_INDEX, question, {
+  return streamCagAnswer(c.env.AI, question, {
+    archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
     model,
     topK,
     maxCompletionTokens,

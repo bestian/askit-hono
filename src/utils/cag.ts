@@ -1,8 +1,5 @@
 import {
-  buildArchiveTwSectionHref,
-  findClosestMatchingSections,
   htmlToPlainText,
-  type AskSearchResult,
 } from './search'
 
 type WorkersAiBinding = {
@@ -18,30 +15,58 @@ export type CagOptions = {
   model?: string
   topK?: number
   maxCompletionTokens?: number
+  archiveBaseUrl?: string
 }
 
 export const DEFAULT_CAG_MODEL = '@cf/moonshotai/kimi-k2.6'
+export const DEFAULT_ARCHIVE_BASE_URL = 'https://archive.tw'
 const DEFAULT_TOP_K = 6
 const MAX_TOP_K = 12
 const DEFAULT_MAX_COMPLETION_TOKENS = 900
 const MAX_CONTEXT_SECTION_CHARS = 2_200
+const MAX_SEARCH_VARIANTS = 6
+
+type ArchiveSearchResult = {
+  title?: string
+  url?: string
+  date?: string
+  speaker?: string
+  snippet?: string
+}
+
+type ArchiveSearchResponse = {
+  results?: ArchiveSearchResult[]
+}
+
+type ArchiveSectionResponse = {
+  filename?: string
+  nest_filename?: string | null
+  section_id?: number | string
+  section_content?: string | null
+  previous_content?: string | null
+  next_content?: string | null
+  display_name?: string | null
+  name?: string | null
+}
+
+export type CagSource = {
+  content: string
+  href: string
+  label: string
+  sectionId: number | null
+}
+
+export type CagStatus = {
+  retriever: 'archive-search'
+  archiveBaseUrl: string
+  model: string
+  maxTopK: number
+  maxContextSectionChars: number
+}
 
 function clampInteger(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min
   return Math.max(min, Math.min(max, Math.floor(value)))
-}
-
-function sourceLabel(hit: AskSearchResult): string {
-  const speaker = hit.name?.trim()
-  return speaker ? `${hit.display_name} — ${speaker}` : hit.display_name
-}
-
-function sourceHref(hit: AskSearchResult): string {
-  return buildArchiveTwSectionHref(
-    hit.filename,
-    hit.section_id,
-    hit.nest_filename,
-  )
 }
 
 function truncateContextText(value: string): string {
@@ -49,18 +74,18 @@ function truncateContextText(value: string): string {
   return `${value.slice(0, MAX_CONTEXT_SECTION_CHARS).trimEnd()}\n[... excerpt trimmed ...]`
 }
 
-function footnoteForHit(hit: AskSearchResult): string {
-  return `[${sourceLabel(hit)}](${sourceHref(hit)})`
+function footnoteForSource(source: CagSource): string {
+  return `[${source.label}](${source.href})`
 }
 
-function buildCagMessages(question: string, hits: AskSearchResult[]): ChatMessage[] {
-  const lore = hits
-    .map((hit, index) => {
+function buildCagMessages(question: string, sources: CagSource[]): ChatMessage[] {
+  const lore = sources
+    .map((source, index) => {
       const n = index + 1
-      const content = truncateContextText(htmlToPlainText(hit.content))
+      const content = truncateContextText(htmlToPlainText(source.content))
       return [
-        `[${n}] ${sourceLabel(hit)}`,
-        `url: ${sourceHref(hit)}`,
+        `[${n}] ${source.label}`,
+        `url: ${source.href}`,
         '```text',
         content,
         '```',
@@ -76,6 +101,7 @@ function buildCagMessages(question: string, hits: AskSearchResult[]): ChatMessag
         'Do not invent details outside the excerpts.',
         'When stating a concrete fact, cite the source number as [1], [2], etc.',
         'If the excerpts do not support an answer, say so clearly.',
+        'Cite the section that directly supports each claim.',
         'Use Traditional Chinese when the user asks in Chinese or includes #zh-tw.',
       ].join(' '),
     },
@@ -92,6 +118,184 @@ function buildCagMessages(question: string, hits: AskSearchResult[]): ChatMessag
       ].join('\n'),
     },
   ]
+}
+
+function normalizeArchiveBaseUrl(value: string | undefined): string {
+  const raw = (value || DEFAULT_ARCHIVE_BASE_URL).trim()
+  try {
+    const url = new URL(raw)
+    url.pathname = url.pathname.replace(/\/+$/, '')
+    url.search = ''
+    url.hash = ''
+    return url.toString().replace(/\/$/, '')
+  } catch {
+    return DEFAULT_ARCHIVE_BASE_URL
+  }
+}
+
+function stripQuestionDirectives(question: string): string {
+  return question
+    .replace(/#[\p{Letter}\p{Number}_-]+/gu, ' ')
+    .replace(/^\s*(?:請|麻煩)?\s*用\s+[\s\S]{0,40}?回答[:：]\s*/u, '')
+    .replace(/^\s*(?:請|麻煩)?\s*(?:回答|說明|解釋|summarize|answer)\s*[:：]?\s*/iu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function pushUnique(values: string[], value: string) {
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (normalized && !values.includes(normalized)) values.push(normalized)
+}
+
+export function buildCagQueryVariants(question: string): string[] {
+  const cleaned = stripQuestionDirectives(question)
+    .replace(/[?？!！。.,，;；:：()[\]{}「」『』"“”'‘’]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  const variants: string[] = []
+  pushUnique(variants, cleaned)
+
+  const withoutQuestionWords = cleaned
+    .replace(/(如何|怎麼|怎么|為何|爲何|什麼|什么|請問|請|回答|說明|解釋)/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  pushUnique(variants, withoutQuestionWords)
+
+  const hanRuns = [...withoutQuestionWords.matchAll(/\p{Script=Han}{2,}/gu)]
+    .map((match) => match[0])
+  for (const run of hanRuns) {
+    if (run.length <= 2) {
+      pushUnique(variants, run)
+      continue
+    }
+    pushUnique(variants, run)
+    for (let i = 0; i < run.length - 1; i += 2) {
+      pushUnique(variants, run.slice(i, i + 2))
+    }
+    for (let i = 1; i < run.length - 1; i += 2) {
+      pushUnique(variants, run.slice(i, i + 2))
+    }
+  }
+
+  const latinTokens = withoutQuestionWords.match(/[A-Za-z0-9][A-Za-z0-9._-]{1,}/g) ?? []
+  for (const token of latinTokens) pushUnique(variants, token)
+
+  return variants.slice(0, MAX_SEARCH_VARIANTS)
+}
+
+export function parseArchiveSectionId(href: string): number | null {
+  const match = href.match(/#s(\d+)\b/)
+  if (!match) return null
+  const value = Number(match[1])
+  return Number.isInteger(value) ? value : null
+}
+
+function absoluteArchiveHref(baseUrl: string, href: string | undefined): string | null {
+  if (!href) return null
+  try {
+    return new URL(href, baseUrl).toString()
+  } catch {
+    return null
+  }
+}
+
+async function fetchArchiveJson<T>(url: URL): Promise<T | null> {
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json' },
+    })
+    if (!response.ok) return null
+    return (await response.json()) as T
+  } catch (e) {
+    console.error('archive fetch failed:', e)
+    return null
+  }
+}
+
+async function searchArchive(
+  baseUrl: string,
+  query: string,
+  limit: number,
+): Promise<ArchiveSearchResult[]> {
+  const url = new URL('/api/search.json', baseUrl)
+  url.searchParams.set('q', query)
+  url.searchParams.set('limit', String(limit))
+  const payload = await fetchArchiveJson<ArchiveSearchResponse>(url)
+  return Array.isArray(payload?.results) ? payload.results : []
+}
+
+async function hydrateArchiveSection(
+  baseUrl: string,
+  hit: ArchiveSearchResult,
+): Promise<CagSource | null> {
+  const href = absoluteArchiveHref(baseUrl, hit.url)
+  if (!href) return null
+
+  const sectionId = parseArchiveSectionId(href)
+  if (!sectionId) {
+    const snippet = hit.snippet?.trim()
+    if (!snippet) return null
+    const label = [hit.title, hit.speaker].filter(Boolean).join(' — ') || href
+    return { content: snippet, href, label, sectionId: null }
+  }
+
+  const url = new URL(`/api/section/${sectionId}`, baseUrl)
+  const section = await fetchArchiveJson<ArchiveSectionResponse>(url)
+  const parts = [
+    section?.previous_content,
+    section?.section_content,
+    section?.next_content,
+  ]
+    .map((value) => htmlToPlainText(value ?? ''))
+    .filter(Boolean)
+  const content = parts.length > 0 ? parts.join('\n\n') : (hit.snippet ?? '')
+  if (content.trim() === '') return null
+
+  const displayName = section?.display_name?.trim() || hit.title?.trim() || href
+  const speaker = section?.name?.trim() || hit.speaker?.trim()
+  const label = speaker ? `${displayName} — ${speaker}` : displayName
+  return { content, href, label, sectionId }
+}
+
+export async function retrieveCagSources(
+  question: string,
+  options?: { topK?: number; archiveBaseUrl?: string },
+): Promise<CagSource[]> {
+  const topK = clampInteger(options?.topK ?? DEFAULT_TOP_K, 1, MAX_TOP_K)
+  const baseUrl = normalizeArchiveBaseUrl(options?.archiveBaseUrl)
+  const variants = buildCagQueryVariants(question)
+  const perQueryLimit = Math.max(topK * 2, 8)
+
+  const searchResults = await Promise.all(
+    variants.map((variant) => searchArchive(baseUrl, variant, perQueryLimit)),
+  )
+  const seen = new Set<string>()
+  const hits: ArchiveSearchResult[] = []
+  for (const result of searchResults.flat()) {
+    const href = absoluteArchiveHref(baseUrl, result.url)
+    if (!href || seen.has(href)) continue
+    seen.add(href)
+    hits.push(result)
+  }
+
+  const hydrated = await Promise.all(
+    hits.slice(0, Math.max(topK * 3, 12)).map((hit) => hydrateArchiveSection(baseUrl, hit)),
+  )
+  return hydrated.filter((source): source is CagSource => source !== null).slice(0, topK)
+}
+
+export function getCagStatus(options?: {
+  archiveBaseUrl?: string
+  model?: string
+}): CagStatus {
+  return {
+    retriever: 'archive-search',
+    archiveBaseUrl: normalizeArchiveBaseUrl(options?.archiveBaseUrl),
+    model: options?.model || DEFAULT_CAG_MODEL,
+    maxTopK: MAX_TOP_K,
+    maxContextSectionChars: MAX_CONTEXT_SECTION_CHARS,
+  }
 }
 
 function aiResultToStream(result: unknown): ReadableStream<Uint8Array> {
@@ -192,7 +396,7 @@ function workersAiEventStreamToText(): TransformStream<Uint8Array, string> {
   })
 }
 
-function markdownCitationFootnotes(footnotes: string[]): TransformStream<string, string> {
+export function markdownCitationFootnotes(footnotes: string[]): TransformStream<string, string> {
   const used = new Set<number>()
   let state: 'text' | 'citation' = 'text'
   let digits = ''
@@ -252,13 +456,15 @@ function markdownCitationFootnotes(footnotes: string[]): TransformStream<string,
 
 export async function streamCagAnswer(
   ai: WorkersAiBinding,
-  bucket: R2Bucket,
   question: string,
   options?: CagOptions,
 ): Promise<Response> {
   const topK = clampInteger(options?.topK ?? DEFAULT_TOP_K, 1, MAX_TOP_K)
-  const hits = await findClosestMatchingSections(bucket, question, { limit: topK })
-  if (hits.length === 0) {
+  const sources = await retrieveCagSources(question, {
+    topK,
+    archiveBaseUrl: options?.archiveBaseUrl,
+  })
+  if (sources.length === 0) {
     return new Response('找不到符合條件的逐字稿段落', {
       status: 404,
       headers: { 'Content-Type': 'text/plain; charset=UTF-8' },
@@ -266,7 +472,7 @@ export async function streamCagAnswer(
   }
 
   const model = options?.model || DEFAULT_CAG_MODEL
-  const messages = buildCagMessages(question, hits)
+  const messages = buildCagMessages(question, sources)
   const stream = await ai.run(model, {
     messages,
     stream: true,
@@ -281,7 +487,7 @@ export async function streamCagAnswer(
 
   const body = aiResultToStream(stream)
     .pipeThrough(workersAiEventStreamToText())
-    .pipeThrough(markdownCitationFootnotes(hits.map(footnoteForHit)))
+    .pipeThrough(markdownCitationFootnotes(sources.map(footnoteForSource)))
     .pipeThrough(new TextEncoderStream())
 
   return new Response(body, {

@@ -8,7 +8,7 @@
 
 讓使用者向 LINE Bot 提問（例如「AI 會不會控制我們」），Bot 從 [SayIt](https://archive.tw)（亦即 sayit-hono 專案）的逐字稿中找出指定講者（預設「唐鳳」）說過、最相近的一段話回覆，並附上原文連結。
 
-實作上以 [Hono](https://hono.dev/) 跑在 Cloudflare Workers，不在 runtime 查 D1，而是靠 build-time script 從 D1 預先撈段落、用 [Fuse.js](https://www.fusejs.io/) 建好索引、上傳到 R2；Worker 啟動時從 R2 讀回索引做 fuzzy 搜尋。
+實作上以 [Hono](https://hono.dev/) 跑在 Cloudflare Workers。LINE `/webhook` 與 `/ask/:question` 走 build-time R2 Fuse 索引；`/cag` 則直接使用 `archive.tw` 的搜尋 API 與 section API 做 long-lore retrieval，避免 Worker 冷啟動時載入巨大索引。
 
 ### 功能與路由
 
@@ -16,7 +16,8 @@
 | --- | --- |
 | `GET /` | Healthcheck，回 `Hello World!` |
 | `GET /ask/:question` | **暫時測試用**：把 question URL-decode 後跑搜尋，回傳 HTML 顯示最相近段落 + 原文連結。方便用瀏覽器或 curl 驗證索引與搜尋結果。 |
-| `GET /cag/:question` | 以同一份 R2 索引取回多段 SayIt 來源，組成 CAG prompt，呼叫 Cloudflare Workers AI（預設 Kimi K2.6），並串流 Markdown 回答與 `archive.tw#s...` footnote。 |
+| `GET /cag/status` | 顯示 CAG retriever、archive base URL、模型與 top-k 上限。 |
+| `GET /cag/:question` | 從 `archive.tw/api/search.json` 找相關段落，再用 `/api/section/:id` 取回前後文，組成 CAG prompt，呼叫 Cloudflare Workers AI（預設 Kimi K2.6），並串流 Markdown 回答與 `archive.tw#s...` footnote。 |
 | `POST /cag` | JSON 版本的 CAG endpoint：`{ "question": "...", "topK": 6 }`，同樣串流 Markdown。 |
 | `POST /webhook` | LINE Messaging API webhook。收到 LINE 文字訊息後，使用與 `/ask/:question` 相同的搜尋 pipeline，並以 Flex Message 回覆最相近段落、出處、日期與原文連結。 |
 
@@ -85,12 +86,6 @@ npx wrangler r2 bucket create askit-fuse-index-cache-preview
 npm run build:index
 ```
 
-長 lore / CAG 用的索引會保留更長段落、往回抓 30 年：
-
-```bash
-npm run build:index:lore
-```
-
 可用環境變數覆蓋：
 
 | 變數 | 預設 | 說明 |
@@ -100,8 +95,8 @@ npm run build:index:lore
 | `R2_BUCKET` | `askit-fuse-index-cache` | 上傳到的 R2 bucket |
 | `R2_KEY` | `ask-index/audrey-tang.json` | R2 物件 key |
 | `R2_MANIFEST_KEY` | `ask-index/audrey-tang.manifest.json` | 小型 sidecar manifest key，會在索引 JSON 上傳成功後才上傳 |
-| `MAX_SECTION_CHARS` | `100` | 只保留純文字長度不超過此值的段落；`build:index:lore` 設為 `2200` |
-| `YEARS_BACK` | `2` | 只保留最近幾年的逐字稿；`build:index:lore` 設為 `30` |
+| `MAX_SECTION_CHARS` | `100` | 只保留純文字長度不超過此值的段落 |
+| `YEARS_BACK` | `2` | 只保留最近幾年的逐字稿 |
 | `LOCAL=1` | — | 對 D1 下 `--local`（預設 `--remote` 用線上資料庫） |
 | `SKIP_UPLOAD=1` | — | 只在 `build/` 產出 JSON 不上傳 |
 
@@ -110,8 +105,9 @@ npm run build:index:lore
 #### CAG + Workers AI
 
 `/cag/:question` 是把 DS4 CAG 實驗搬進 Cloudflare runtime 的部分：
-retrieve 仍然使用 build-time R2 Fuse index，runtime 不查 D1；生成改由 Workers AI
-binding `AI` 執行，預設模型由 `ASK_MODEL` 控制。
+retrieve 使用 `ASK_ARCHIVE_BASE_URL`（預設 `https://archive.tw`）的 `/api/search.json`
+做第一階段搜尋，再用 `/api/section/:id` 取回命中段落與前後文；生成由 Workers AI
+binding `AI` 執行，預設模型由 `ASK_MODEL` 控制。這避免把 30 年 long-lore 索引塞進 Worker isolate。
 
 ```bash
 curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%EF%BC%9A%E5%9C%B0%E7%A5%9E%E9%A6%99%E7%81%AB%E5%A6%82%E4%BD%95?top_k=6'
@@ -120,18 +116,18 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 輸出是 streaming Markdown。模型若輸出 `[1]` 這類來源標記，Worker 會轉成
 `[^1]` 並在結尾補上 footnote，連到對應的 `archive.tw/<speech>#s<section_id>`。
 
-#### 隨 transcript / sayit-hono 更新 CAG
+#### 隨 transcript / sayit-hono 更新
 
-本 repo 的 `.github/workflows/refresh-cag-index.yml` 提供三種入口：
+本 repo 的 `.github/workflows/refresh-cag-index.yml` 會刷新 `/ask` / LINE webhook 用的 R2 Fuse 索引；`/cag` 直接讀 `archive.tw` API，所以在 `sayit-hono` 部署成功後自然讀到新內容。workflow 提供三種入口：
 
 - `repository_dispatch` 的 `sayit-updated` event：給 `transcript` repo 在成功上傳 Markdown 並部署 `sayit-hono` 後觸發。
 - `workflow_dispatch`：手動重建索引；可勾選 `deploy` 讓 Worker 也一起部署，作為立即 cache reset。
 - 每日 schedule：漏掉 dispatch 時的保底。
 
-建議在 `transcript` repo 的 `Sync markdown on push` workflow、`rebuild-search-index` job 成功部署 `sayit-hono` 後加上：
+建議在 `transcript` repo 的 `Sync markdown on push` workflow、`rebuild-search-index` job 成功部署 `sayit-hono` 後加上，讓 `/ask` 與 LINE 索引也跟著更新：
 
 ```yaml
-- name: Refresh AskIt CAG index
+- name: Refresh AskIt index
   env:
     GH_TOKEN: ${{ secrets.ASKIT_REBUILD_TOKEN }}
   run: |
@@ -140,7 +136,7 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
       -F client_payload[transcript_sha]="${GITHUB_SHA}"
 ```
 
-`ASKIT_REBUILD_TOKEN` 需要能對 `bestian/askit-hono` 發送 repository dispatch；細粒度 PAT 可給該 repo `Contents: read/write` 權限。dispatch 進來後，askit-hono workflow 會 `npm run build:index:lore` 上傳新的 R2 索引與 manifest，然後 dry-run 驗證 Worker bundle。線上 Worker 最多在約一分鐘內看到 manifest 變更並重載 index；部署只保留為手動 cache reset。
+`ASKIT_REBUILD_TOKEN` 需要能對 `bestian/askit-hono` 發送 repository dispatch；細粒度 PAT 可給該 repo `Contents: read/write` 權限。dispatch 進來後，askit-hono workflow 會 `npm run build:index` 上傳新的 R2 索引與 manifest，然後 dry-run 驗證 Worker bundle。線上 Worker 最多在約一分鐘內看到 manifest 變更並重載 `/ask` index；部署只保留為手動 cache reset。
 
 #### 本機開發
 
@@ -154,7 +150,7 @@ npm run dev        # 本機 Worker + 遠端 R2 / Workers AI binding
 npm run preview    # wrangler dev --remote，整個 Worker 也跑在 Cloudflare
 ```
 
-> 注意：`ASK_INDEX` R2 binding 與 `AI` binding 在 `wrangler.jsonc` 裡設為 `remote: true`，所以本機測 `/cag` 會讀雲端 preview R2 bucket 並呼叫 Workers AI。這會用到 Cloudflare 帳號配額。若 preview bucket 還沒有索引，可先執行：
+> 注意：`ASK_INDEX` R2 binding 與 `AI` binding 在 `wrangler.jsonc` 裡設為 `remote: true`。本機測 `/ask` 會讀雲端 preview R2 bucket；本機測 `/cag` 會呼叫 `archive.tw` API 與 Workers AI。這會用到 Cloudflare 帳號配額。若 preview bucket 還沒有 `/ask` 索引，可先執行：
 
 ```bash
 npx wrangler r2 object put 'askit-fuse-index-cache-preview/ask-index/audrey-tang.json' \
@@ -309,7 +305,7 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 
 A LINE bot that, when a user asks a question (e.g. "Will AI control us?"), finds the closest matching paragraph from a chosen speaker's transcripts on [SayIt](https://archive.tw) (the sayit-hono project) — defaulting to **Audrey Tang** — and replies with the excerpt plus a link to the source.
 
-Built with [Hono](https://hono.dev/) on Cloudflare Workers. The Worker does **not** query D1 at runtime; instead, a build-time script pulls sections from D1, builds a [Fuse.js](https://www.fusejs.io/) index, and uploads it to R2. The Worker loads the prebuilt index from R2 on first request and runs fuzzy search against it.
+Built with [Hono](https://hono.dev/) on Cloudflare Workers. LINE `/webhook` and `/ask/:question` use a build-time R2 Fuse index. `/cag` uses `archive.tw` search and section APIs for long-lore retrieval, so the Worker does not cold-load a giant transcript index.
 
 ### Routes
 
@@ -317,7 +313,8 @@ Built with [Hono](https://hono.dev/) on Cloudflare Workers. The Worker does **no
 | --- | --- |
 | `GET /` | Healthcheck — returns `Hello World!` |
 | `GET /ask/:question` | **Temporary debug endpoint** — URL-decodes the question, runs the search, returns HTML with the closest section and a link to the source. Handy for testing from a browser or `curl`. |
-| `GET /cag/:question` | Retrieves multiple SayIt sections from the same R2 index, builds a CAG prompt, calls Cloudflare Workers AI (Kimi K2.6 by default), and streams Markdown with `archive.tw#s...` footnotes. |
+| `GET /cag/status` | Shows the CAG retriever, archive base URL, model, and top-k limit. |
+| `GET /cag/:question` | Searches `archive.tw/api/search.json`, hydrates hits through `/api/section/:id`, builds a CAG prompt, calls Cloudflare Workers AI (Kimi K2.6 by default), and streams Markdown with `archive.tw#s...` footnotes. |
 | `POST /cag` | JSON CAG endpoint: `{ "question": "...", "topK": 6 }`, also streaming Markdown. |
 | `POST /webhook` | LINE Messaging API webhook. For text messages, it uses the same search pipeline as `/ask/:question` and replies with the closest section, source, date, and source link as a Flex Message. |
 
@@ -386,12 +383,6 @@ npx wrangler r2 bucket create askit-fuse-index-cache-preview
 npm run build:index
 ```
 
-The long-lore CAG profile keeps longer sections and looks back 30 years:
-
-```bash
-npm run build:index:lore
-```
-
 Optional environment variables:
 
 | Var | Default | Notes |
@@ -401,8 +392,8 @@ Optional environment variables:
 | `R2_BUCKET` | `askit-fuse-index-cache` | Target R2 bucket |
 | `R2_KEY` | `ask-index/audrey-tang.json` | R2 object key |
 | `R2_MANIFEST_KEY` | `ask-index/audrey-tang.manifest.json` | Tiny sidecar manifest key, uploaded only after the index JSON succeeds |
-| `MAX_SECTION_CHARS` | `100` | Keep sections whose plain-text length is at most this value; `build:index:lore` uses `2200` |
-| `YEARS_BACK` | `2` | Keep transcripts from the last N years; `build:index:lore` uses `30` |
+| `MAX_SECTION_CHARS` | `100` | Keep sections whose plain-text length is at most this value |
+| `YEARS_BACK` | `2` | Keep transcripts from the last N years |
 | `LOCAL=1` | — | Use `--local` against D1 (defaults to `--remote`) |
 | `SKIP_UPLOAD=1` | — | Write the JSON to `build/` only, skip the R2 upload |
 
@@ -411,9 +402,11 @@ Upload order is "large index JSON first, manifest second." The Worker treats the
 #### CAG + Workers AI
 
 `/cag/:question` is the Cloudflare-native slice of the DS4 CAG experiment:
-retrieval still uses the build-time R2 Fuse index, so runtime does not query D1;
-generation runs through the Workers AI `AI` binding. The default model is
-controlled by `ASK_MODEL`.
+retrieval uses `ASK_ARCHIVE_BASE_URL` (`https://archive.tw` by default) for
+`/api/search.json`, then hydrates each section through `/api/section/:id` to get
+neighbor context. Generation runs through the Workers AI `AI` binding. The
+default model is controlled by `ASK_MODEL`. This avoids loading a 30-year
+long-lore index into the Worker isolate.
 
 ```bash
 curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%EF%BC%9A%E5%9C%B0%E7%A5%9E%E9%A6%99%E7%81%AB%E5%A6%82%E4%BD%95?top_k=6'
@@ -423,18 +416,18 @@ The response is streaming Markdown. If the model emits source markers like
 `[1]`, the Worker rewrites them to `[^1]` and appends footnotes linked to the
 matching `archive.tw/<speech>#s<section_id>` source.
 
-#### Keeping CAG fresh after transcript pushes
+#### Keeping Transcript Updates Fresh
 
-This repo includes `.github/workflows/refresh-cag-index.yml` with three entrypoints:
+This repo includes `.github/workflows/refresh-cag-index.yml` to refresh the R2 Fuse index used by `/ask` and the LINE webhook. `/cag` reads the `archive.tw` APIs directly, so it sees new content once `sayit-hono` deploys. The workflow has three entrypoints:
 
 - `repository_dispatch` event `sayit-updated`: intended for the `transcript` repo after Markdown upload and `sayit-hono` deploy succeed.
 - `workflow_dispatch`: manual index refresh; set `deploy=true` to deploy the Worker too as an immediate cache reset.
 - Daily schedule: a backstop if a dispatch is missed.
 
-Recommended final step in the `transcript` repo's `Sync markdown on push` workflow, after the `rebuild-search-index` job deploys `sayit-hono`:
+Recommended final step in the `transcript` repo's `Sync markdown on push` workflow, after the `rebuild-search-index` job deploys `sayit-hono`, so `/ask` and LINE stay fresh too:
 
 ```yaml
-- name: Refresh AskIt CAG index
+- name: Refresh AskIt index
   env:
     GH_TOKEN: ${{ secrets.ASKIT_REBUILD_TOKEN }}
   run: |
@@ -443,7 +436,7 @@ Recommended final step in the `transcript` repo's `Sync markdown on push` workfl
       -F client_payload[transcript_sha]="${GITHUB_SHA}"
 ```
 
-`ASKIT_REBUILD_TOKEN` must be able to send repository dispatches to `bestian/askit-hono`; a fine-grained PAT with `Contents: read/write` for that repo works. Once the dispatch arrives, askit-hono runs `npm run build:index:lore`, uploads the refreshed R2 index and manifest, then dry-run validates the Worker bundle. The live Worker sees the manifest change and reloads the index within roughly one minute; deploy is kept only as a manual cache reset.
+`ASKIT_REBUILD_TOKEN` must be able to send repository dispatches to `bestian/askit-hono`; a fine-grained PAT with `Contents: read/write` for that repo works. Once the dispatch arrives, askit-hono runs `npm run build:index`, uploads the refreshed R2 index and manifest, then dry-run validates the Worker bundle. The live Worker sees the manifest change and reloads the `/ask` index within roughly one minute; deploy is kept only as a manual cache reset.
 
 #### Run locally
 
@@ -457,7 +450,7 @@ npm run dev        # local Worker + remote R2 / Workers AI bindings
 npm run preview    # wrangler dev --remote — the Worker itself also runs on Cloudflare
 ```
 
-> Note: `ASK_INDEX` and `AI` are marked `remote: true` in `wrangler.jsonc`, so local `/cag` tests read the cloud preview R2 bucket and call Workers AI. That uses your Cloudflare account quota. If the preview bucket does not have an index yet, seed it first:
+> Note: `ASK_INDEX` and `AI` are marked `remote: true` in `wrangler.jsonc`. Local `/ask` tests read the cloud preview R2 bucket; local `/cag` tests call `archive.tw` APIs and Workers AI. That uses your Cloudflare account quota. If the preview bucket does not have the `/ask` index yet, seed it first:
 
 ```bash
 npx wrangler r2 object put 'askit-fuse-index-cache-preview/ask-index/audrey-tang.json' \

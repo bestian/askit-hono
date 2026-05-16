@@ -41,7 +41,7 @@ speakers.name LIKE ─┤  (scripts/build-ask-index.ts)
    R2: askit-fuse-index-cache/ask-index/audrey-tang.json
 ```
 
-Worker 端 `src/utils/search.ts` 第一次請求時從 R2 抓索引、用 `Fuse.parseIndex` 還原，之後同個 isolate 都共用。一般索引更新只要重跑 `npm run build:index`；若要讓 CAG 立刻讀到最新索引，重建 R2 物件後也部署一次 Worker，讓 runtime cache 一起刷新。
+Worker 端 `src/utils/search.ts` 第一次請求時從 R2 抓索引、用 `Fuse.parseIndex` 還原，之後同個 isolate 都共用。build script 也會上傳一個很小的 manifest sidecar（預設 `ask-index/audrey-tang.manifest.json`）；Worker 會定期讀 manifest，發現 `indexSha256` 變更時自動重載大索引，不需要每次 transcript 更新都 redeploy。
 
 ### 專案結構
 
@@ -99,10 +99,13 @@ npm run build:index:lore
 | `SPEAKER_LIKE` | `唐鳳%` | `speakers.name LIKE` 條件 |
 | `R2_BUCKET` | `askit-fuse-index-cache` | 上傳到的 R2 bucket |
 | `R2_KEY` | `ask-index/audrey-tang.json` | R2 物件 key |
+| `R2_MANIFEST_KEY` | `ask-index/audrey-tang.manifest.json` | 小型 sidecar manifest key，會在索引 JSON 上傳成功後才上傳 |
 | `MAX_SECTION_CHARS` | `100` | 只保留純文字長度不超過此值的段落；`build:index:lore` 設為 `2200` |
 | `YEARS_BACK` | `2` | 只保留最近幾年的逐字稿；`build:index:lore` 設為 `30` |
 | `LOCAL=1` | — | 對 D1 下 `--local`（預設 `--remote` 用線上資料庫） |
 | `SKIP_UPLOAD=1` | — | 只在 `build/` 產出 JSON 不上傳 |
+
+上傳順序是「大索引 JSON 先、manifest 後」。Worker 只把 manifest 當作版本訊號，所以不會在 R2 還沒拿到新索引時切換。
 
 #### CAG + Workers AI
 
@@ -122,7 +125,7 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 本 repo 的 `.github/workflows/refresh-cag-index.yml` 提供三種入口：
 
 - `repository_dispatch` 的 `sayit-updated` event：給 `transcript` repo 在成功上傳 Markdown 並部署 `sayit-hono` 後觸發。
-- `workflow_dispatch`：手動重建索引；可勾選 `deploy` 讓 Worker 也一起部署，刷新 isolate cache。
+- `workflow_dispatch`：手動重建索引；可勾選 `deploy` 讓 Worker 也一起部署，作為立即 cache reset。
 - 每日 schedule：漏掉 dispatch 時的保底。
 
 建議在 `transcript` repo 的 `Sync markdown on push` workflow、`rebuild-search-index` job 成功部署 `sayit-hono` 後加上：
@@ -137,7 +140,7 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
       -F client_payload[transcript_sha]="${GITHUB_SHA}"
 ```
 
-`ASKIT_REBUILD_TOKEN` 需要能對 `bestian/askit-hono` 發送 repository dispatch；細粒度 PAT 可給該 repo `Contents: read/write` 權限。dispatch 進來後，askit-hono workflow 會 `npm run build:index:lore` 上傳新的 R2 索引，dry-run 驗證 Worker bundle，最後部署 Worker 以刷新 runtime cache。
+`ASKIT_REBUILD_TOKEN` 需要能對 `bestian/askit-hono` 發送 repository dispatch；細粒度 PAT 可給該 repo `Contents: read/write` 權限。dispatch 進來後，askit-hono workflow 會 `npm run build:index:lore` 上傳新的 R2 索引與 manifest，然後 dry-run 驗證 Worker bundle。線上 Worker 最多在約一分鐘內看到 manifest 變更並重載 index；部署只保留為手動 cache reset。
 
 #### 本機開發
 
@@ -156,6 +159,10 @@ npm run preview    # wrangler dev --remote，整個 Worker 也跑在 Cloudflare
 ```bash
 npx wrangler r2 object put 'askit-fuse-index-cache-preview/ask-index/audrey-tang.json' \
   --file build/audrey-tang.json \
+  --content-type 'application/json; charset=utf-8' \
+  --remote
+npx wrangler r2 object put 'askit-fuse-index-cache-preview/ask-index/audrey-tang.manifest.json' \
+  --file build/audrey-tang.manifest.json \
   --content-type 'application/json; charset=utf-8' \
   --remote
 ```
@@ -290,7 +297,7 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 ### 已知議題 / TODO
 
 - **索引大小**：當前 `唐鳳%` 範圍下索引約 75 MB（105k 段落）。Workers isolate 記憶體上限 128MB，第一次 `JSON.parse` + `Fuse.parseIndex` 會吃不少；後續可能需要瘦身（拿掉 runtime 用不到的欄位、縮短 key 名、或分片）。
-- **isolate cache 不會自動失效**：`npm run build:index` 上傳後，已存在的 Worker isolate 還是用舊 cache，要等到自然回收。`refresh-cag-index.yml` 的 dispatch 路徑會在更新 R2 後部署 Worker，作為目前的刷新機制。
+- **manifest 輪詢不是瞬間同步**：`npm run build:index` 上傳後，已存在的 Worker isolate 最多等約一分鐘才會看到 manifest 變更並重載 index。需要立刻刷新時，可手動跑 workflow 並勾選 `deploy`。
 
 ### 授權
 
@@ -335,7 +342,7 @@ speakers.name LIKE ─┤  (scripts/build-ask-index.ts)
    R2: askit-fuse-index-cache/ask-index/audrey-tang.json
 ```
 
-On first request, the Worker reads the index from R2 and rehydrates it via `Fuse.parseIndex`. The parsed index is cached at module scope so subsequent requests in the same isolate skip the load. A normal refresh only needs `npm run build:index`; for CAG freshness, rebuild the R2 object and deploy the Worker once so runtime caches roll forward immediately.
+On first request, the Worker reads the index from R2 and rehydrates it via `Fuse.parseIndex`. The parsed index is cached at module scope so subsequent requests in the same isolate skip the load. The build script also uploads a tiny manifest sidecar, defaulting to `ask-index/audrey-tang.manifest.json`; the Worker periodically reads that manifest and reloads the large index when `indexSha256` changes, so transcript refreshes do not require a Worker redeploy.
 
 ### Project structure
 
@@ -393,10 +400,13 @@ Optional environment variables:
 | `SPEAKER_LIKE` | `唐鳳%` | `speakers.name LIKE` condition |
 | `R2_BUCKET` | `askit-fuse-index-cache` | Target R2 bucket |
 | `R2_KEY` | `ask-index/audrey-tang.json` | R2 object key |
+| `R2_MANIFEST_KEY` | `ask-index/audrey-tang.manifest.json` | Tiny sidecar manifest key, uploaded only after the index JSON succeeds |
 | `MAX_SECTION_CHARS` | `100` | Keep sections whose plain-text length is at most this value; `build:index:lore` uses `2200` |
 | `YEARS_BACK` | `2` | Keep transcripts from the last N years; `build:index:lore` uses `30` |
 | `LOCAL=1` | — | Use `--local` against D1 (defaults to `--remote`) |
 | `SKIP_UPLOAD=1` | — | Write the JSON to `build/` only, skip the R2 upload |
+
+Upload order is "large index JSON first, manifest second." The Worker treats the manifest as the version signal, so it does not switch before R2 has the new index object.
 
 #### CAG + Workers AI
 
@@ -418,7 +428,7 @@ matching `archive.tw/<speech>#s<section_id>` source.
 This repo includes `.github/workflows/refresh-cag-index.yml` with three entrypoints:
 
 - `repository_dispatch` event `sayit-updated`: intended for the `transcript` repo after Markdown upload and `sayit-hono` deploy succeed.
-- `workflow_dispatch`: manual index refresh; set `deploy=true` to deploy the Worker too and flush isolate caches.
+- `workflow_dispatch`: manual index refresh; set `deploy=true` to deploy the Worker too as an immediate cache reset.
 - Daily schedule: a backstop if a dispatch is missed.
 
 Recommended final step in the `transcript` repo's `Sync markdown on push` workflow, after the `rebuild-search-index` job deploys `sayit-hono`:
@@ -433,7 +443,7 @@ Recommended final step in the `transcript` repo's `Sync markdown on push` workfl
       -F client_payload[transcript_sha]="${GITHUB_SHA}"
 ```
 
-`ASKIT_REBUILD_TOKEN` must be able to send repository dispatches to `bestian/askit-hono`; a fine-grained PAT with `Contents: read/write` for that repo works. Once the dispatch arrives, askit-hono runs `npm run build:index:lore`, uploads the refreshed R2 index, dry-run validates the Worker bundle, then deploys the Worker to refresh the runtime cache.
+`ASKIT_REBUILD_TOKEN` must be able to send repository dispatches to `bestian/askit-hono`; a fine-grained PAT with `Contents: read/write` for that repo works. Once the dispatch arrives, askit-hono runs `npm run build:index:lore`, uploads the refreshed R2 index and manifest, then dry-run validates the Worker bundle. The live Worker sees the manifest change and reloads the index within roughly one minute; deploy is kept only as a manual cache reset.
 
 #### Run locally
 
@@ -452,6 +462,10 @@ npm run preview    # wrangler dev --remote — the Worker itself also runs on Cl
 ```bash
 npx wrangler r2 object put 'askit-fuse-index-cache-preview/ask-index/audrey-tang.json' \
   --file build/audrey-tang.json \
+  --content-type 'application/json; charset=utf-8' \
+  --remote
+npx wrangler r2 object put 'askit-fuse-index-cache-preview/ask-index/audrey-tang.manifest.json' \
+  --file build/audrey-tang.manifest.json \
   --content-type 'application/json; charset=utf-8' \
   --remote
 ```
@@ -586,7 +600,7 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 ### Known issues / TODO
 
 - **Index size.** The default `唐鳳%` range produces ~75 MB (~105k sections). Workers isolates have a 128 MB memory limit, so the first `JSON.parse` + `Fuse.parseIndex` is a meaningful cost. We may need to slim the payload (drop unused fields, shorter keys, or shard) once it actually starts hitting the ceiling.
-- **Module-level cache doesn't auto-invalidate.** After `npm run build:index` re-uploads, existing isolates keep serving from the in-memory cache until they recycle. The dispatch path in `refresh-cag-index.yml` deploys the Worker after updating R2 and uses that as the current flush mechanism.
+- **Manifest polling is not instant.** After `npm run build:index` re-uploads, existing isolates can take roughly one minute to see the manifest change and reload the index. For immediate reset, run the manual workflow with `deploy=true`.
 
 ### License
 

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       deploy:
-        description: Deploy the Worker after refreshing the R2 index
+        description: Deploy the Worker after refreshing the R2 index as an optional cache reset
         required: true
         type: boolean
         default: false
@@ -54,5 +54,5 @@ jobs:
         run: npx wrangler deploy --dry-run --outdir /tmp/askit-hono-dry-run
 
       - name: Deploy Worker to refresh runtime cache
-        if: ${{ github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && inputs.deploy) }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy }}
         run: npm run deploy

@@ -13,6 +13,7 @@ export type AskSearchResult = {
   section_id: number
   display_name: string
   section_speaker: string | null
+  name: string | null
 }
 
 type LineTextMessage = {
@@ -83,6 +84,7 @@ function rowToResult(row: SectionRow): AskSearchResult {
     section_id: Number(row.section_id),
     display_name: row.display_name ?? row.filename,
     section_speaker: row.section_speaker,
+    name: row.name,
   }
 }
 
@@ -121,6 +123,36 @@ export async function findClosestMatchingSection(
   const top = hits[0]
   if (!top) return null
   return rowToResult(top.item)
+}
+
+export async function findClosestMatchingSections(
+  bucket: R2Bucket,
+  question: string,
+  options?: {
+    r2Key?: string
+    limit?: number
+  },
+): Promise<AskSearchResult[]> {
+  const key = options?.r2Key ?? ASK_INDEX_R2_KEY
+  const limit = Math.max(1, Math.min(16, Math.floor(options?.limit ?? 6)))
+  const q = normalizeAskSearchQuestion(question)
+  if (q === '') return []
+
+  const { fuse, rowCount } = await getIndex(bucket, key)
+  if (rowCount === 0) return []
+
+  const hits = fuse.search(q, { limit: limit * 3 })
+  const seen = new Set<string>()
+  const results: AskSearchResult[] = []
+  for (const hit of hits) {
+    const result = rowToResult(hit.item)
+    const key = `${result.filename}/${result.nest_filename ?? ''}#${result.section_id}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    results.push(result)
+    if (results.length >= limit) break
+  }
+  return results
 }
 
 export async function findRandomSection(

@@ -14,7 +14,8 @@
   "vars": {
     // 可在此放置非機敏的環境變數
     // Place non-sensitive environment variables here
-    "ASK_MODEL": "@cf/moonshotai/kimi-k2.6"
+    "ASK_MODEL": "@cf/moonshotai/kimi-k2.6",
+    "ASK_ARCHIVE_BASE_URL": "https://archive.tw"
   },
 
   // R2：載入預先建好的 Fuse.js 索引（由 `npm run build:index` 產出並上傳）。

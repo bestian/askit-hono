@@ -3,3 +3,5 @@
 # Copy this file to .dev.vars and fill in the real values (.dev.vars is gitignored)
 LINE_CHANNEL_ACCESS_TOKEN=your-line-channel-access-token-here
 LINE_CHANNEL_SECRET=your-line-channel-secret-here
+ASK_MODEL=@cf/moonshotai/kimi-k2.6
+ASK_ARCHIVE_BASE_URL=https://archive.tw

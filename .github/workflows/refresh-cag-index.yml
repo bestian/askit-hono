@@ -1,0 +1,58 @@
+name: Refresh Ask index
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy the Worker after refreshing the R2 ask index as an optional cache reset
+        required: true
+        type: boolean
+        default: false
+  repository_dispatch:
+    types:
+      - sayit-updated
+  schedule:
+    # Backstop in case the upstream transcript dispatch is missed.
+    - cron: "30 13 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh-ask-index-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      R2_BUCKET: askit-fuse-index-cache
+      R2_KEY: ask-index/audrey-tang.json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Refresh R2 index
+        run: npm run build:index
+
+      - name: Validate Worker bundle
+        run: npx wrangler deploy --dry-run --outdir /tmp/askit-hono-dry-run
+
+      - name: Deploy Worker to refresh runtime cache
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy }}
+        run: npm run deploy

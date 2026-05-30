@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import { renderHomePage } from './pages/home'
 import { renderPrivacyPolicyPage } from './pages/privacy'
 import { renderTermsOfUsePage } from './pages/terms'
+import { DEFAULT_CAG_MODEL, getCagStatus, streamCagAnswer } from './utils/cag'
 import {
   findClosestMatchingSection,
   findRandomSection,
@@ -15,7 +16,12 @@ import {
 type Bindings = {
   LINE_CHANNEL_ACCESS_TOKEN: string
   LINE_CHANNEL_SECRET: string
+  ASK_MODEL?: string
+  ASK_ARCHIVE_BASE_URL?: string
   ASK_INDEX: R2Bucket
+  AI: {
+    run: (model: string, input: Record<string, unknown>) => Promise<unknown>
+  }
 }
 
 type LineMessageEvent = {
@@ -34,10 +40,25 @@ const LINE_REPLY_ENDPOINT = 'https://api.line.me/v2/bot/message/reply'
 const REPLY_TOKEN_TTL_MS = 50_000
 const ROBOTS_TXT = `User-agent: *
 Disallow: /ask/
+Disallow: /cag/
 Disallow: /webhook
 `
 
 const app = new Hono<{ Bindings: Bindings }>()
+
+function decodeRouteParam(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
+function parsePositiveInteger(value: string | undefined, fallback: number): number {
+  if (!value) return fallback
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback
+}
 
 // HMAC-SHA256(channelSecret, rawBody), base64-encoded.
 // LINE 平台會在 x-line-signature 帶上同樣的值，需以等長時間比對防止 timing attack。
@@ -91,13 +112,7 @@ app.get('/robots.txt', (c) => {
 })
 
 app.get('/ask/:question', async (c) => {
-  const raw = c.req.param('question')
-  let question: string
-  try {
-    question = decodeURIComponent(raw)
-  } catch {
-    question = raw
-  }
+  const question = decodeRouteParam(c.req.param('question'))
 
   try {
     const hit = isRandomAskQuestion(question)
@@ -118,6 +133,61 @@ app.get('/ask/:question', async (c) => {
     console.error(e)
     return c.text('查詢發生錯誤', 500)
   }
+})
+
+app.get('/cag/status', (c) => {
+  return c.json(getCagStatus({
+    archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
+    model: c.env.ASK_MODEL || DEFAULT_CAG_MODEL,
+  }))
+})
+
+app.get('/cag/:question', async (c) => {
+  const question = decodeRouteParam(c.req.param('question'))
+  return streamCagAnswer(c.env.AI, question, {
+    archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
+    model: c.req.query('model') || c.env.ASK_MODEL || DEFAULT_CAG_MODEL,
+    topK: parsePositiveInteger(c.req.query('top_k') ?? c.req.query('topK'), 6),
+    maxCompletionTokens: parsePositiveInteger(
+      c.req.query('max_tokens') ?? c.req.query('maxTokens'),
+      900,
+    ),
+  })
+})
+
+app.post('/cag', async (c) => {
+  let payload: { question?: unknown; topK?: unknown; top_k?: unknown; model?: unknown; maxTokens?: unknown; max_tokens?: unknown }
+  try {
+    payload = await c.req.json()
+  } catch {
+    return c.text('Invalid JSON payload', 400)
+  }
+
+  const question = typeof payload.question === 'string' ? payload.question : ''
+  if (question.trim() === '') {
+    return c.text('question is required', 400)
+  }
+
+  const topK = typeof payload.topK === 'number'
+    ? payload.topK
+    : typeof payload.top_k === 'number'
+      ? payload.top_k
+      : 6
+  const maxCompletionTokens = typeof payload.maxTokens === 'number'
+    ? payload.maxTokens
+    : typeof payload.max_tokens === 'number'
+      ? payload.max_tokens
+      : 900
+  const model = typeof payload.model === 'string'
+    ? payload.model
+    : c.env.ASK_MODEL || DEFAULT_CAG_MODEL
+
+  return streamCagAnswer(c.env.AI, question, {
+    archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
+    model,
+    topK,
+    maxCompletionTokens,
+  })
 })
 
 app.post('/webhook', async (c) => {

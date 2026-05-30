@@ -14,7 +14,8 @@
   "vars": {
     // 可在此放置非機敏的環境變數
     // Place non-sensitive environment variables here
-    // "EXAMPLE_VAR": "value"
+    "ASK_MODEL": "@cf/moonshotai/kimi-k2.6",
+    "ASK_ARCHIVE_BASE_URL": "https://archive.tw"
   },
 
   // R2：載入預先建好的 Fuse.js 索引（由 `npm run build:index` 產出並上傳）。
@@ -24,9 +25,17 @@
     {
       "binding": "ASK_INDEX",
       "bucket_name": "askit-fuse-index-cache",
-      "preview_bucket_name": "askit-fuse-index-cache-preview"
+      "preview_bucket_name": "askit-fuse-index-cache-preview",
+      "remote": true
     }
   ],
+
+  // Workers AI：/cag/:question 使用此 binding 呼叫 Kimi K2.6。
+  // Workers AI: /cag/:question uses this binding to call Kimi K2.6.
+  "ai": {
+    "binding": "AI",
+    "remote": true
+  },
 
   "assets": {
     "directory": "./public"

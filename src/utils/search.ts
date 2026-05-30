@@ -1,6 +1,8 @@
 import type Fuse from 'fuse.js'
 import {
   ASK_INDEX_R2_KEY,
+  manifestKeyForIndexKey,
+  type AskIndexManifest,
   type AskIndexPayload,
   type SectionRow,
   createAskFuseFromPayload,
@@ -13,6 +15,7 @@ export type AskSearchResult = {
   section_id: number
   display_name: string
   section_speaker: string | null
+  name: string | null
 }
 
 type LineTextMessage = {
@@ -33,20 +36,53 @@ type LoadedIndex = {
   rows: SectionRow[]
   rowCount: number
   generatedAt: string
+  indexKey: string
+  indexSha256: string | null
 }
 
 const LINE_FLEX_BODY_MAX_CHARS = 280
 const LINE_FLEX_ALT_TEXT_MAX_CHARS = 1_500
+const INDEX_MANIFEST_CHECK_MS = 60_000
 
 /**
  * Module-level cache：同個 Worker isolate 在多次請求間共用解析後的 Fuse index。
- * 鍵為 R2 key，因此換不同講者索引時可以共存。
+ * 鍵為邏輯 R2 key；小 manifest 會定期檢查，變更時重新載入大 index。
  */
-const indexCache = new Map<string, Promise<LoadedIndex>>()
+type IndexCacheEntry = {
+  checkedAt: number
+  fingerprint: string
+  promise: Promise<LoadedIndex>
+}
+
+const indexCache = new Map<string, IndexCacheEntry>()
+
+function fingerprintForIndex(
+  indexKey: string,
+  manifest: AskIndexManifest | null,
+): string {
+  if (!manifest) return `static:${indexKey}`
+  return [
+    'manifest',
+    manifest.indexKey,
+    manifest.indexSha256,
+    manifest.generatedAt,
+    manifest.rowCount,
+  ].join(':')
+}
+
+async function loadManifestFromR2(
+  bucket: R2Bucket,
+  key: string,
+): Promise<AskIndexManifest | null> {
+  const obj = await bucket.get(key)
+  if (!obj) return null
+  return JSON.parse(await obj.text()) as AskIndexManifest
+}
 
 async function loadIndexFromR2(
   bucket: R2Bucket,
   key: string,
+  manifest: AskIndexManifest | null,
 ): Promise<LoadedIndex> {
   const obj = await bucket.get(key)
   if (!obj) {
@@ -60,18 +96,48 @@ async function loadIndexFromR2(
     rows: payload.rows,
     rowCount: payload.rowCount,
     generatedAt: payload.generatedAt,
+    indexKey: key,
+    indexSha256: manifest?.indexSha256 ?? null,
   }
 }
 
 async function getIndex(bucket: R2Bucket, key: string): Promise<LoadedIndex> {
   const cached = indexCache.get(key)
-  if (cached) return cached
+  const now = Date.now()
+  if (cached && now - cached.checkedAt < INDEX_MANIFEST_CHECK_MS) {
+    return cached.promise
+  }
 
-  const promise = loadIndexFromR2(bucket, key).catch((e) => {
+  let manifest: AskIndexManifest | null = null
+  try {
+    manifest = await loadManifestFromR2(bucket, manifestKeyForIndexKey(key))
+  } catch (e) {
+    console.error('載入索引 manifest 失敗:', e)
+    if (cached) {
+      cached.checkedAt = now
+      return cached.promise
+    }
+  }
+
+  const indexKey = manifest?.indexKey ?? key
+  const fingerprint = fingerprintForIndex(indexKey, manifest)
+  if (cached && cached.fingerprint === fingerprint) {
+    cached.checkedAt = now
+    return cached.promise
+  }
+
+  const previous = cached
+  const promise = loadIndexFromR2(bucket, indexKey, manifest).catch((e) => {
+    if (previous) {
+      console.error('重新載入索引失敗，沿用既有 cache:', e)
+      previous.checkedAt = now
+      indexCache.set(key, previous)
+      return previous.promise
+    }
     indexCache.delete(key)
     throw e
   })
-  indexCache.set(key, promise)
+  indexCache.set(key, { checkedAt: now, fingerprint, promise })
   return promise
 }
 
@@ -83,6 +149,7 @@ function rowToResult(row: SectionRow): AskSearchResult {
     section_id: Number(row.section_id),
     display_name: row.display_name ?? row.filename,
     section_speaker: row.section_speaker,
+    name: row.name,
   }
 }
 
@@ -121,6 +188,36 @@ export async function findClosestMatchingSection(
   const top = hits[0]
   if (!top) return null
   return rowToResult(top.item)
+}
+
+export async function findClosestMatchingSections(
+  bucket: R2Bucket,
+  question: string,
+  options?: {
+    r2Key?: string
+    limit?: number
+  },
+): Promise<AskSearchResult[]> {
+  const key = options?.r2Key ?? ASK_INDEX_R2_KEY
+  const limit = Math.max(1, Math.min(16, Math.floor(options?.limit ?? 6)))
+  const q = normalizeAskSearchQuestion(question)
+  if (q === '') return []
+
+  const { fuse, rowCount } = await getIndex(bucket, key)
+  if (rowCount === 0) return []
+
+  const hits = fuse.search(q, { limit: limit * 3 })
+  const seen = new Set<string>()
+  const results: AskSearchResult[] = []
+  for (const hit of hits) {
+    const result = rowToResult(hit.item)
+    const key = `${result.filename}/${result.nest_filename ?? ''}#${result.section_id}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    results.push(result)
+    if (results.length >= limit) break
+  }
+  return results
 }
 
 export async function findRandomSection(

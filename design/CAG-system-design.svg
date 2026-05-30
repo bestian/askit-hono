@@ -1,0 +1,201 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="1080" viewBox="0 0 1180 1080" font-family="-apple-system, 'Helvetica Neue', 'PingFang TC', Arial, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#059669"/>
+    </marker>
+    <style>
+      .title { font-size: 26px; font-weight: 700; fill: #0f172a; }
+      .sub { font-size: 13px; fill: #64748b; }
+      .lbl { font-size: 13px; font-weight: 700; fill: #0f172a; }
+      .txt { font-size: 12px; fill: #334155; }
+      .mono { font-size: 11.5px; font-family: 'SF Mono', Menlo, Consolas, monospace; fill: #1e293b; }
+      .edge { font-size: 11px; fill: #475569; }
+      .badge { font-size: 11px; font-weight: 700; }
+      .secT { font-size: 13px; font-weight: 700; letter-spacing: .5px; }
+    </style>
+  </defs>
+
+  <rect width="1180" height="1080" fill="#f8fafc"/>
+  <text x="40" y="48" class="title">askit-hono · CAG 系統架構 (PR #12)</text>
+  <text x="40" y="70" class="sub">/cag Workers AI 檢索增強生成 · /ask R2 Fuse 索引 · 索引自動刷新管線</text>
+
+  <!-- ===== Clients ===== -->
+  <g>
+    <rect x="120" y="100" width="200" height="56" rx="10" fill="#fff" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="220" y="125" text-anchor="middle" class="lbl">瀏覽器 / curl</text>
+    <text x="220" y="143" text-anchor="middle" class="txt">GET /ask · /cag</text>
+
+    <rect x="360" y="100" width="200" height="56" rx="10" fill="#fff" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="460" y="125" text-anchor="middle" class="lbl">LINE Platform</text>
+    <text x="460" y="143" text-anchor="middle" class="txt">POST /webhook (簽章)</text>
+  </g>
+
+  <!-- ===== Routing layer ===== -->
+  <rect x="120" y="195" width="940" height="92" rx="12" fill="#eef2ff" stroke="#6366f1" stroke-width="1.5"/>
+  <text x="140" y="220" class="secT" fill="#4338ca">HONO 路由層 · src/index.ts</text>
+  <g>
+    <rect x="140" y="232" width="150" height="42" rx="8" fill="#fff" stroke="#a5b4fc"/>
+    <text x="215" y="250" text-anchor="middle" class="mono">/ask/:question</text>
+    <text x="215" y="266" text-anchor="middle" class="txt">單段落 fuzzy</text>
+
+    <rect x="300" y="232" width="150" height="42" rx="8" fill="#fff" stroke="#a5b4fc"/>
+    <text x="375" y="250" text-anchor="middle" class="mono">/webhook</text>
+    <text x="375" y="266" text-anchor="middle" class="txt">LINE Flex 回覆</text>
+
+    <rect x="600" y="232" width="180" height="42" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="690" y="250" text-anchor="middle" class="mono">/cag/:question · POST</text>
+    <text x="690" y="266" text-anchor="middle" class="txt">串流 CAG 答覆</text>
+
+    <rect x="800" y="232" width="120" height="42" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="860" y="250" text-anchor="middle" class="mono">/cag/status</text>
+    <text x="860" y="266" text-anchor="middle" class="txt">設定回報</text>
+
+    <rect x="930" y="232" width="115" height="42" rx="8" fill="#fff" stroke="#a5b4fc"/>
+    <text x="987" y="250" text-anchor="middle" class="mono">/robots.txt</text>
+    <text x="987" y="266" text-anchor="middle" class="txt">擋爬</text>
+  </g>
+
+  <!-- client -> routing edges -->
+  <line x1="220" y1="156" x2="220" y2="195" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="460" y1="156" x2="375" y2="195" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ===== Left column: Ask / Fuse flow ===== -->
+  <rect x="120" y="330" width="430" height="300" rx="12" fill="#f0fdf4" stroke="#22c55e" stroke-width="1.5"/>
+  <text x="140" y="356" class="secT" fill="#15803d">/ask 流程 · src/utils/search.ts (既有)</text>
+
+  <rect x="150" y="372" width="370" height="62" rx="8" fill="#fff" stroke="#86efac"/>
+  <text x="166" y="392" class="lbl">getIndex() · 模組層快取</text>
+  <text x="166" y="410" class="txt">每 60s 讀 manifest，比對 fingerprint</text>
+  <text x="166" y="426" class="mono">sha256 : generatedAt : rowCount</text>
+
+  <rect x="150" y="448" width="175" height="56" rx="8" fill="#fff" stroke="#86efac"/>
+  <text x="237" y="470" text-anchor="middle" class="lbl">Fuse.search</text>
+  <text x="237" y="488" text-anchor="middle" class="txt">最佳 1 段</text>
+
+  <rect x="345" y="448" width="175" height="56" rx="8" fill="#fff" stroke="#86efac"/>
+  <text x="432" y="470" text-anchor="middle" class="lbl">隨機 / random</text>
+  <text x="432" y="488" text-anchor="middle" class="txt">findRandomSection</text>
+
+  <rect x="150" y="518" width="370" height="56" rx="8" fill="#fff" stroke="#86efac"/>
+  <text x="166" y="540" class="lbl">輸出</text>
+  <text x="166" y="558" class="txt">HTML (/ask) · LINE Flex bubble (/webhook)</text>
+
+  <text x="335" y="606" text-anchor="middle" class="txt">執行期不碰 D1，只從 R2 讀 Fuse 索引</text>
+
+  <!-- ===== Right column: CAG flow ===== -->
+  <rect x="600" y="330" width="460" height="430" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="620" y="356" class="secT" fill="#1d4ed8">/cag 流程 · src/utils/cag.ts · streamCagAnswer()</text>
+
+  <rect x="625" y="372" width="410" height="60" rx="8" fill="#fff" stroke="#93c5fd"/>
+  <text x="641" y="392" class="lbl">① buildCagQueryVariants()</text>
+  <text x="641" y="410" class="txt">去除 #directives / 問句詞 → 中文 2-gram + 拉丁 token</text>
+  <text x="641" y="425" class="txt">最多 6 個檢索變體</text>
+
+  <rect x="625" y="444" width="410" height="60" rx="8" fill="#fff" stroke="#93c5fd"/>
+  <text x="641" y="464" class="lbl">② retrieveCagSources() → archive.tw</text>
+  <text x="641" y="482" class="mono">/api/search.json ×N (平行, 去重)</text>
+  <text x="641" y="498" class="mono">/api/section/:id → prev + content + next</text>
+
+  <rect x="625" y="516" width="410" height="52" rx="8" fill="#fff" stroke="#93c5fd"/>
+  <text x="641" y="536" class="lbl">③ buildCagMessages()</text>
+  <text x="641" y="554" class="txt">system: 只用引文作答 [n] · user: &lt;lore&gt; topK 段 &lt;/lore&gt;</text>
+
+  <rect x="625" y="580" width="410" height="58" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="641" y="600" class="lbl">④ AI.run() · Workers AI</text>
+  <text x="641" y="618" class="mono">@cf/moonshotai/kimi-k2.6 · stream</text>
+  <text x="641" y="633" class="txt">thinking:false · temp 0.2 · max_tokens 夾限</text>
+
+  <rect x="625" y="650" width="410" height="66" rx="8" fill="#fff" stroke="#93c5fd"/>
+  <text x="641" y="670" class="lbl">⑤ 三段 TransformStream pipe</text>
+  <text x="641" y="687" class="mono">SSE→text · [n]→[^n] + 註腳 · TextEncoder</text>
+  <text x="641" y="703" class="txt">text/markdown · no-store · 邊生成邊送</text>
+
+  <text x="830" y="740" text-anchor="middle" class="txt">空集合 → 404「找不到符合條件的逐字稿段落」</text>
+
+  <!-- routing -> flows -->
+  <line x1="350" y1="287" x2="350" y2="330" stroke="#059669" stroke-width="1.5" marker-end="url(#arrowGreen)"/>
+  <line x1="745" y1="287" x2="780" y2="330" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arrowBlue)"/>
+
+  <!-- CAG internal flow arrows -->
+  <line x1="830" y1="432" x2="830" y2="444" stroke="#2563eb" stroke-width="1.3" marker-end="url(#arrowBlue)"/>
+  <line x1="830" y1="504" x2="830" y2="516" stroke="#2563eb" stroke-width="1.3" marker-end="url(#arrowBlue)"/>
+  <line x1="830" y1="568" x2="830" y2="580" stroke="#2563eb" stroke-width="1.3" marker-end="url(#arrowBlue)"/>
+  <line x1="830" y1="638" x2="830" y2="650" stroke="#2563eb" stroke-width="1.3" marker-end="url(#arrowBlue)"/>
+
+  <!-- ask internal arrows -->
+  <line x1="335" y1="434" x2="335" y2="448" stroke="#059669" stroke-width="1.3" marker-end="url(#arrowGreen)"/>
+  <line x1="335" y1="504" x2="335" y2="518" stroke="#059669" stroke-width="1.3" marker-end="url(#arrowGreen)"/>
+
+  <!-- ===== External backends ===== -->
+  <rect x="120" y="660" width="200" height="60" rx="10" fill="#fff7ed" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="220" y="684" text-anchor="middle" class="lbl">R2 bucket</text>
+  <text x="220" y="702" text-anchor="middle" class="mono">askit-fuse-index-cache</text>
+
+  <rect x="360" y="660" width="200" height="60" rx="10" fill="#fff7ed" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="460" y="684" text-anchor="middle" class="lbl">archive.tw API</text>
+  <text x="460" y="702" text-anchor="middle" class="txt">SayIt 公開逐字稿</text>
+
+  <!-- ask -> R2 -->
+  <line x1="220" y1="574" x2="220" y2="660" stroke="#059669" stroke-width="1.5" marker-end="url(#arrowGreen)"/>
+  <text x="228" y="620" class="edge">讀 index + manifest</text>
+  <!-- cag -> archive -->
+  <line x1="625" y1="474" x2="560" y2="676" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arrowBlue)"/>
+  <text x="565" y="560" class="edge" transform="rotate(0)">即時檢索</text>
+
+  <!-- ===== Index build / refresh pipeline ===== -->
+  <rect x="120" y="790" width="940" height="250" rx="12" fill="#faf5ff" stroke="#a855f7" stroke-width="1.5"/>
+  <text x="140" y="816" class="secT" fill="#7e22ce">索引建置與自動刷新 · scripts/build-ask-index.ts · .github/workflows/refresh-cag-index.yml</text>
+
+  <!-- triggers -->
+  <rect x="140" y="832" width="250" height="92" rx="8" fill="#fff" stroke="#d8b4fe"/>
+  <text x="156" y="852" class="lbl">觸發 (refresh-cag-index.yml)</text>
+  <text x="156" y="872" class="mono">repository_dispatch: sayit-updated</text>
+  <text x="156" y="890" class="mono">schedule: 30 13 * * * (backstop)</text>
+  <text x="156" y="908" class="mono">workflow_dispatch (手動, 可 deploy)</text>
+
+  <!-- build steps -->
+  <rect x="420" y="832" width="290" height="92" rx="8" fill="#fff" stroke="#d8b4fe"/>
+  <text x="436" y="852" class="lbl">npm run build:index</text>
+  <text x="436" y="872" class="mono">D1 sections (name LIKE '唐鳳%')</text>
+  <text x="436" y="890" class="txt">→ 過濾 ≤100字 / 近 2 年</text>
+  <text x="436" y="908" class="mono">→ Fuse.createIndex → JSON + manifest</text>
+
+  <!-- upload -->
+  <rect x="740" y="832" width="300" height="92" rx="8" fill="#fff" stroke="#d8b4fe"/>
+  <text x="756" y="852" class="lbl">wrangler r2 object put</text>
+  <text x="756" y="872" class="mono">audrey-tang.json</text>
+  <text x="756" y="890" class="mono">audrey-tang.manifest.json (sidecar)</text>
+  <text x="756" y="908" class="txt">+ deploy --dry-run 驗證</text>
+
+  <line x1="390" y1="878" x2="420" y2="878" stroke="#9333ea" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="710" y1="878" x2="740" y2="878" stroke="#9333ea" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- D1 source -->
+  <rect x="420" y="952" width="290" height="44" rx="8" fill="#fff7ed" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="565" y="979" text-anchor="middle" class="mono">D1 · sayit-database (sections)</text>
+  <line x1="565" y1="952" x2="565" y2="924" stroke="#9333ea" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- upload -> R2 (curved up) -->
+  <path d="M 890 832 C 890 760 300 760 220 720" fill="none" stroke="#9333ea" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+  <text x="600" y="752" text-anchor="middle" class="edge">上傳 → R2 (執行期經 manifest fingerprint 熱重載)</text>
+
+  <!-- legend -->
+  <g>
+    <rect x="760" y="100" width="300" height="78" rx="10" fill="#fff" stroke="#cbd5e1"/>
+    <text x="775" y="120" class="lbl">圖例</text>
+    <rect x="775" y="130" width="16" height="12" rx="3" fill="#f0fdf4" stroke="#22c55e"/>
+    <text x="798" y="140" class="txt">/ask · Fuse 既有流程</text>
+    <rect x="775" y="150" width="16" height="12" rx="3" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="798" y="160" class="txt">/cag · Workers AI 新增 (PR #12)</text>
+    <rect x="940" y="130" width="16" height="12" rx="3" fill="#faf5ff" stroke="#a855f7"/>
+    <text x="963" y="140" class="txt">索引刷新管線</text>
+    <rect x="940" y="150" width="16" height="12" rx="3" fill="#fff7ed" stroke="#f59e0b"/>
+    <text x="963" y="160" class="txt">外部資料源</text>
+  </g>
+</svg>

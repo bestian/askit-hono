@@ -9,12 +9,14 @@
  *   SPEAKER_LIKE  speakers.name 的 LIKE 條件（預設 '唐鳳%'）
  *   R2_BUCKET     R2 bucket 名稱（預設 askit-fuse-index-cache）
  *   R2_KEY        上傳到 R2 的 key（預設 ask-index/audrey-tang.json）
+ *   R2_MANIFEST_KEY  上傳 sidecar manifest 的 key（預設 ask-index/audrey-tang.manifest.json）
  *   MAX_SECTION_CHARS  段落純文字字數上限（預設 100）
  *   YEARS_BACK    只保留最近幾年的內容（預設 2，以 filename 開頭日期判斷）
  *   LOCAL=1       對 D1 下 --local（預設用 --remote 對線上資料庫查詢）
  *   SKIP_UPLOAD=1 只在本地產出 JSON，不上傳 R2
  */
 import { execSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import Fuse from 'fuse.js'
@@ -22,6 +24,8 @@ import {
   ASK_FUSE_OPTIONS,
   ASK_INDEX_R2_KEY,
   ASK_INDEX_VERSION,
+  manifestKeyForIndexKey,
+  type AskIndexManifest,
   type AskIndexPayload,
   type SectionRow,
 } from '../src/utils/askIndexFormat'
@@ -30,6 +34,8 @@ const D1_DATABASE = process.env.D1_DATABASE ?? 'sayit-database'
 const R2_BUCKET = process.env.R2_BUCKET ?? 'askit-fuse-index-cache' // or askit-fuse-index-cache-preview
 const SPEAKER_LIKE = process.env.SPEAKER_LIKE ?? '唐鳳%'
 const R2_KEY = process.env.R2_KEY ?? ASK_INDEX_R2_KEY
+const R2_MANIFEST_KEY =
+  process.env.R2_MANIFEST_KEY ?? manifestKeyForIndexKey(R2_KEY)
 const MAX_SECTION_CHARS = Number(process.env.MAX_SECTION_CHARS ?? '100')
 const YEARS_BACK = Number(process.env.YEARS_BACK ?? '2')
 const SKIP_UPLOAD = process.env.SKIP_UPLOAD === '1'
@@ -139,10 +145,11 @@ async function main() {
 
   const keys = (ASK_FUSE_OPTIONS.keys ?? []) as string[]
   const fuseIndex = Fuse.createIndex<SectionRow>(keys, rows)
+  const generatedAt = new Date().toISOString()
 
   const payload: AskIndexPayload = {
     v: ASK_INDEX_VERSION,
-    generatedAt: new Date().toISOString(),
+    generatedAt,
     speakerLike: SPEAKER_LIKE,
     rowCount: rows.length,
     rows,
@@ -154,8 +161,30 @@ async function main() {
   const outPath = path.join(outDir, path.basename(R2_KEY))
   const json = JSON.stringify(payload)
   await writeFile(outPath, json)
-  const sizeMB = (Buffer.byteLength(json) / 1024 / 1024).toFixed(2)
+  const indexBytes = Buffer.byteLength(json)
+  const indexSha256 = createHash('sha256').update(json).digest('hex')
+  const sizeMB = (indexBytes / 1024 / 1024).toFixed(2)
   console.log(`[build-ask-index] Wrote ${outPath} (${sizeMB} MB)`)
+
+  const manifest: AskIndexManifest = {
+    v: ASK_INDEX_VERSION,
+    generatedAt,
+    indexKey: R2_KEY,
+    indexSha256,
+    indexBytes,
+    speakerLike: SPEAKER_LIKE,
+    rowCount: rows.length,
+    queriedRowCount: queriedRows.length,
+    maxSectionChars: MAX_SECTION_CHARS,
+    yearsBack: YEARS_BACK,
+    cutoffDate,
+    d1Database: D1_DATABASE,
+    local: D1_FLAG === '--local',
+  }
+  const manifestPath = path.join(outDir, path.basename(R2_MANIFEST_KEY))
+  const manifestJson = `${JSON.stringify(manifest, null, 2)}\n`
+  await writeFile(manifestPath, manifestJson)
+  console.log(`[build-ask-index] Wrote ${manifestPath}`)
 
   if (SKIP_UPLOAD) {
     console.log('[build-ask-index] SKIP_UPLOAD=1, not uploading to R2')
@@ -171,6 +200,15 @@ async function main() {
     `--content-type "application/json; charset=utf-8" ` +
     `--remote`
   execSync(upCmd, { stdio: 'inherit' })
+  console.log(
+    `[build-ask-index] Uploading manifest to R2 ${R2_BUCKET}/${R2_MANIFEST_KEY} ...`,
+  )
+  const manifestCmd =
+    `npx wrangler r2 object put ${shellQuote(`${R2_BUCKET}/${R2_MANIFEST_KEY}`)} ` +
+    `--file ${shellQuote(manifestPath)} ` +
+    `--content-type "application/json; charset=utf-8" ` +
+    `--remote`
+  execSync(manifestCmd, { stdio: 'inherit' })
   console.log('[build-ask-index] Done.')
 }
 

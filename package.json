@@ -12,6 +12,7 @@
     "deploy": "npx wrangler deploy",
     "tail": "npx wrangler tail",
     "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
     "build:index": "tsx --tsconfig scripts/tsconfig.json scripts/build-ask-index.ts"
   },
   "dependencies": {

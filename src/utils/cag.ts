@@ -1,6 +1,10 @@
 import {
   htmlToPlainText,
 } from './search'
+import {
+  retrieveCagSourcesFromVectorize,
+  type VectorizeBinding,
+} from './vectorize'
 
 type WorkersAiBinding = {
   run: (model: string, input: Record<string, unknown>) => Promise<unknown>
@@ -11,12 +15,25 @@ type ChatMessage = {
   content: string
 }
 
+/** 檢索來源：archive.tw 即時搜尋 或 Cloudflare Vectorize 語意索引。 */
+export type CagRetriever = 'archive' | 'vectorize'
+
 export type CagOptions = {
   model?: string
   topK?: number
+  /**
+   * 可被引用／顯示的來源數（預設等於 topK）。
+   * 設小於 topK 時：前 citableTopK 筆為可引用來源（編號 [1..K]、回傳給呼叫端顯示），
+   * 其餘 topK−citableTopK 筆僅作為模型的背景脈絡，不編號、不顯示。
+   */
+  citableTopK?: number
   maxCompletionTokens?: number
   archiveBaseUrl?: string
   answerInstruction?: string
+  /** 檢索器，預設 'archive'；'vectorize' 需一併提供 vectorize binding。 */
+  retriever?: CagRetriever
+  /** Vectorize binding（retriever='vectorize' 時使用）。 */
+  vectorize?: VectorizeBinding
 }
 
 export const DEFAULT_CAG_MODEL = '@cf/moonshotai/kimi-k2.6'
@@ -63,7 +80,9 @@ export type CagAnswer = {
 }
 
 export type CagStatus = {
-  retriever: 'archive-search'
+  retriever: CagRetriever
+  /** runtime 是否真的綁了 VECTORIZE binding；false 時即使 retriever=vectorize 也會回退 archive。 */
+  vectorizeBound: boolean
   archiveBaseUrl: string
   model: string
   maxTopK: number
@@ -87,6 +106,7 @@ function footnoteForSource(source: CagSource): string {
 function buildCagMessages(
   question: string,
   sources: CagSource[],
+  background: CagSource[] = [],
   answerInstruction = 'Answer concisely. Prefer exact wording from the excerpts where useful.',
 ): ChatMessage[] {
   const lore = sources
@@ -103,30 +123,40 @@ function buildCagMessages(
     })
     .join('\n\n')
 
+  // 背景參考：提供額外脈絡給模型理解，但「不編號、不可被引用」。
+  const backgroundText = background
+    .map((source) => {
+      const content = truncateContextText(htmlToPlainText(source.content))
+      return ['```text', content, '```'].join('\n')
+    })
+    .join('\n\n')
+
+  const systemLines = [
+    'You answer questions using only the SayIt transcript excerpts supplied by the user.',
+    'Do not invent details outside the excerpts.',
+    'When stating a concrete fact, cite a numbered source from <lore> as [1], [2], etc.',
+    'If the excerpts do not support an answer, say so clearly.',
+    'Cite the section that directly supports each claim.',
+  ]
+  if (background.length > 0) {
+    systemLines.push(
+      'The <background> block is unnumbered context to help you understand the topic;',
+      'use it to inform your answer but never cite it and never invent source numbers for it.',
+    )
+  }
+  systemLines.push(
+    'Use Traditional Chinese when the user asks in Chinese or includes #zh-tw.',
+  )
+
+  const userLines = ['<lore>', lore, '</lore>']
+  if (background.length > 0) {
+    userLines.push('', '<background>', backgroundText, '</background>')
+  }
+  userLines.push('', `Question: ${question}`, '', answerInstruction)
+
   return [
-    {
-      role: 'system',
-      content: [
-        'You answer questions using only the cited SayIt transcript excerpts supplied by the user.',
-        'Do not invent details outside the excerpts.',
-        'When stating a concrete fact, cite the source number as [1], [2], etc.',
-        'If the excerpts do not support an answer, say so clearly.',
-        'Cite the section that directly supports each claim.',
-        'Use Traditional Chinese when the user asks in Chinese or includes #zh-tw.',
-      ].join(' '),
-    },
-    {
-      role: 'user',
-      content: [
-        '<lore>',
-        lore,
-        '</lore>',
-        '',
-        `Question: ${question}`,
-        '',
-        answerInstruction,
-      ].join('\n'),
-    },
+    { role: 'system', content: systemLines.join(' ') },
+    { role: 'user', content: userLines.join('\n') },
   ]
 }
 
@@ -295,12 +325,46 @@ export async function retrieveCagSources(
   return hydrated.filter((source): source is CagSource => source !== null).slice(0, topK)
 }
 
+/**
+ * 依設定挑選檢索器。retriever='vectorize' 時先查 Vectorize；
+ * 若無 binding、查詢失敗或回空集合，則優雅回退 archive.tw 檢索，
+ * 確保索引尚未建好 / 暫時無命中時 CAG 仍可運作。
+ */
+async function resolveCagSources(
+  ai: WorkersAiBinding,
+  question: string,
+  options: {
+    topK: number
+    archiveBaseUrl?: string
+    retriever?: CagRetriever
+    vectorize?: VectorizeBinding
+  },
+): Promise<CagSource[]> {
+  if (options.retriever === 'vectorize' && options.vectorize) {
+    const sources = await retrieveCagSourcesFromVectorize(
+      ai,
+      options.vectorize,
+      question,
+      { topK: options.topK },
+    )
+    if (sources.length > 0) return sources
+    // 空集合 → 回退 archive
+  }
+  return retrieveCagSources(question, {
+    topK: options.topK,
+    archiveBaseUrl: options.archiveBaseUrl,
+  })
+}
+
 export function getCagStatus(options?: {
   archiveBaseUrl?: string
   model?: string
+  retriever?: CagRetriever
+  vectorizeBound?: boolean
 }): CagStatus {
   return {
-    retriever: 'archive-search',
+    retriever: options?.retriever ?? 'archive',
+    vectorizeBound: options?.vectorizeBound ?? false,
     archiveBaseUrl: normalizeArchiveBaseUrl(options?.archiveBaseUrl),
     model: options?.model || DEFAULT_CAG_MODEL,
     maxTopK: MAX_TOP_K,
@@ -527,22 +591,39 @@ async function runCagCompletion(
   })
 }
 
+/**
+ * 將檢索到的來源切成「可引用」與「背景」兩段。
+ * citableTopK 未設或 ≥ 來源數時，全部可引用（沿用舊行為、無背景段）。
+ */
+function splitCitedAndBackground(
+  sources: CagSource[],
+  citableTopK: number | undefined,
+): { cited: CagSource[]; background: CagSource[] } {
+  if (citableTopK === undefined) return { cited: sources, background: [] }
+  const count = clampInteger(citableTopK, 1, sources.length)
+  return { cited: sources.slice(0, count), background: sources.slice(count) }
+}
+
 export async function generateCagAnswer(
   ai: WorkersAiBinding,
   question: string,
   options?: CagOptions,
 ): Promise<CagAnswer | null> {
   const topK = clampInteger(options?.topK ?? DEFAULT_TOP_K, 1, MAX_TOP_K)
-  const sources = await retrieveCagSources(question, {
+  const sources = await resolveCagSources(ai, question, {
     topK,
     archiveBaseUrl: options?.archiveBaseUrl,
+    retriever: options?.retriever,
+    vectorize: options?.vectorize,
   })
   if (sources.length === 0) return null
 
+  const { cited, background } = splitCitedAndBackground(sources, options?.citableTopK)
   const model = options?.model || DEFAULT_CAG_MODEL
   const messages = buildCagMessages(
     question,
-    sources,
+    cited,
+    background,
     options?.answerInstruction,
   )
   const result = await runCagCompletion(
@@ -553,7 +634,8 @@ export async function generateCagAnswer(
     false,
   )
   const answer = (await aiResultToText(result)).trim()
-  return { answer, sources }
+  // 只回傳可引用來源，呼叫端據此顯示出處、引註編號 [1..K] 一一對應。
+  return { answer, sources: cited }
 }
 
 export async function streamCagAnswer(
@@ -562,9 +644,11 @@ export async function streamCagAnswer(
   options?: CagOptions,
 ): Promise<Response> {
   const topK = clampInteger(options?.topK ?? DEFAULT_TOP_K, 1, MAX_TOP_K)
-  const sources = await retrieveCagSources(question, {
+  const sources = await resolveCagSources(ai, question, {
     topK,
     archiveBaseUrl: options?.archiveBaseUrl,
+    retriever: options?.retriever,
+    vectorize: options?.vectorize,
   })
   if (sources.length === 0) {
     return new Response('找不到符合條件的逐字稿段落', {
@@ -573,10 +657,12 @@ export async function streamCagAnswer(
     })
   }
 
+  const { cited, background } = splitCitedAndBackground(sources, options?.citableTopK)
   const model = options?.model || DEFAULT_CAG_MODEL
   const messages = buildCagMessages(
     question,
-    sources,
+    cited,
+    background,
     options?.answerInstruction,
   )
   const stream = await runCagCompletion(
@@ -589,7 +675,7 @@ export async function streamCagAnswer(
 
   const body = aiResultToStream(stream)
     .pipeThrough(workersAiEventStreamToText())
-    .pipeThrough(markdownCitationFootnotes(sources.map(footnoteForSource)))
+    .pipeThrough(markdownCitationFootnotes(cited.map(footnoteForSource)))
     .pipeThrough(new TextEncoderStream())
 
   return new Response(body, {

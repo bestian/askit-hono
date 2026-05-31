@@ -15,7 +15,11 @@
     // 可在此放置非機敏的環境變數
     // Place non-sensitive environment variables here
     "ASK_MODEL": "@cf/moonshotai/kimi-k2.6",
-    "ASK_ARCHIVE_BASE_URL": "https://archive.tw"
+    "ASK_ARCHIVE_BASE_URL": "https://archive.tw",
+    // CAG 預設檢索器：'vectorize'（語意，issue #15）或 'archive'（archive.tw 即時搜尋）。
+    // 索引尚未建好 / 無 VECTORIZE binding / 查無結果時，程式會自動回退 archive。
+    // 亦可用 /cag?retriever=archive 之類的查詢參數逐次覆寫，方便 A/B 比較。
+    "CAG_RETRIEVER": "vectorize"
   },
 
   // R2：載入預先建好的 Fuse.js 索引（由 `npm run build:index` 產出並上傳）。
@@ -30,12 +34,21 @@
     }
   ],
 
-  // Workers AI：/cag/:question 使用此 binding 呼叫 Kimi K2.6。
+  // Workers AI：/cag/:question 使用此 binding 呼叫 Kimi K2.6，
+  // 並（啟用 Vectorize 後）用 @cf/google/embeddinggemma-300m 將問句嵌入成查詢向量。
   // Workers AI: /cag/:question uses this binding to call Kimi K2.6.
   "ai": {
     "binding": "AI",
     "remote": true
   },
+
+  // Vectorize：語意檢索索引（issue #15）。需先建立索引，再解除下方註解並 deploy：
+  //   npm run vectorize:create   # = wrangler vectorize create askit-audrey-tang --dimensions=768 --metric=cosine
+  //   npm run vectorize:sync     # 從 D1 回填向量（可中斷續跑）
+  // 未綁定（或查無結果）時，CAG 會自動回退 archive.tw 檢索，故可安全地先合併、之後再啟用。
+  // "vectorize": [
+  //   { "binding": "VECTORIZE", "index_name": "askit-audrey-tang" }
+  // ],
 
   "assets": {
     "directory": "./public"

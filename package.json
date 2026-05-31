@@ -13,7 +13,9 @@
     "tail": "npx wrangler tail",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
-    "build:index": "tsx --tsconfig scripts/tsconfig.json scripts/build-ask-index.ts"
+    "build:index": "tsx --tsconfig scripts/tsconfig.json scripts/build-ask-index.ts",
+    "vectorize:create": "wrangler vectorize create askit-audrey-tang --dimensions=768 --metric=cosine",
+    "vectorize:sync": "tsx --tsconfig scripts/tsconfig.json scripts/vectorize-sync.ts"
   },
   "dependencies": {
     "fuse.js": "^7.3.0",

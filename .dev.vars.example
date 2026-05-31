@@ -5,3 +5,11 @@ LINE_CHANNEL_ACCESS_TOKEN=your-line-channel-access-token-here
 LINE_CHANNEL_SECRET=your-line-channel-secret-here
 ASK_MODEL=@cf/moonshotai/kimi-k2.6
 ASK_ARCHIVE_BASE_URL=https://archive.tw
+# CAG 預設檢索器（vectorize|archive）；可不設，預設 vectorize（無索引時自動回退 archive）
+CAG_RETRIEVER=vectorize
+
+# ── Vectorize 同步腳本（npm run vectorize:sync）所需 ──
+# Cloudflare 帳號 ID 與 API token；token 權限需含：
+#   Workers AI (Read + Edit)、Vectorize (Edit)、D1 (Edit)
+CLOUDFLARE_ACCOUNT_ID=your-cloudflare-account-id
+CLOUDFLARE_API_TOKEN=your-cloudflare-api-token

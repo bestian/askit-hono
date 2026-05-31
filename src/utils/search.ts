@@ -626,7 +626,8 @@ export function formatCagAnswerFlex(
           {
             type: 'text',
             text: content,
-            size: 'sm',
+            weight: 'bold',
+            size: 'md',
             wrap: true,
           },
           {

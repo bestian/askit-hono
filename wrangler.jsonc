@@ -42,13 +42,12 @@
     "remote": true
   },
 
-  // Vectorize：語意檢索索引（issue #15）。需先建立索引，再解除下方註解並 deploy：
-  //   npm run vectorize:create   # = wrangler vectorize create askit-audrey-tang --dimensions=768 --metric=cosine
-  //   npm run vectorize:sync     # 從 D1 回填向量（可中斷續跑）
-  // 未綁定（或查無結果）時，CAG 會自動回退 archive.tw 檢索，故可安全地先合併、之後再啟用。
-  // "vectorize": [
-  //   { "binding": "VECTORIZE", "index_name": "askit-audrey-tang" }
-  // ],
+  // Vectorize：語意檢索索引（issue #15）。索引已建立並回填 2163 筆向量（768/cosine）。
+  //   重建：npm run vectorize:create；增量/回填：npm run vectorize:sync
+  // 查無結果時 CAG 仍會自動回退 archive.tw 檢索。
+  "vectorize": [
+    { "binding": "VECTORIZE", "index_name": "askit-audrey-tang" }
+  ],
 
   "assets": {
     "directory": "./public"

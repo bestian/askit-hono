@@ -181,12 +181,9 @@ function ensureProgressTable(outDir: string): Promise<void> {
       return
     }
 
-    if (DRY_RUN) {
-      console.log(`[vectorize-sync] (DRY_RUN) 將建立記帳表 ${PROGRESS_TABLE}`)
-      return
-    }
-
     // 不存在才建立；用 IF NOT EXISTS 再加一層保險，永不 DROP / 永不覆寫。
+    // 註：即使 DRY_RUN 也會建立這張（空的、加護欄的）記帳表，後續成員預覽才讀得到；
+    // 真正有成本/不可逆的動作（嵌入、upsert、標記）仍受 DRY_RUN 阻擋。
     const createSql = path.join(outDir, 'vectorize-progress-create.sql')
     await writeFile(
       createSql,

@@ -103,6 +103,22 @@ function footnoteForSource(source: CagSource): string {
   return `[${source.label}](${source.href})`
 }
 
+function sourceBlock(
+  source: CagSource,
+  options: { id?: number; tag: 'source' | 'background_source' },
+): string {
+  const content = truncateContextText(htmlToPlainText(source.content))
+  const attrs = options.id === undefined ? '' : ` id="${options.id}"`
+
+  return [
+    `<${options.tag}${attrs}>`,
+    '```text',
+    content,
+    '```',
+    `</${options.tag}>`,
+  ].join('\n')
+}
+
 function buildCagMessages(
   question: string,
   sources: CagSource[],
@@ -110,33 +126,26 @@ function buildCagMessages(
   answerInstruction = 'Answer concisely. Prefer exact wording from the excerpts where useful.',
 ): ChatMessage[] {
   const lore = sources
-    .map((source, index) => {
-      const n = index + 1
-      const content = truncateContextText(htmlToPlainText(source.content))
-      return [
-        `[${n}] ${source.label}`,
-        `url: ${source.href}`,
-        '```text',
-        content,
-        '```',
-      ].join('\n')
-    })
+    .map((source, index) => sourceBlock(source, {
+      id: index + 1,
+      tag: 'source',
+    }))
     .join('\n\n')
 
-  // 背景參考：提供額外脈絡給模型理解，但「不編號、不可被引用」。
+  // 背景參考：逐筆保留來源邊界，但「不編號、不可被引用」。
   const backgroundText = background
-    .map((source) => {
-      const content = truncateContextText(htmlToPlainText(source.content))
-      return ['```text', content, '```'].join('\n')
-    })
+    .map((source) => sourceBlock(source, { tag: 'background_source' }))
     .join('\n\n')
 
   const systemLines = [
     'You answer questions using only the SayIt transcript excerpts supplied by the user.',
+    'Treat every <source> and <background_source> as an independent excerpt that may come from a different article, interview, date, or speaker.',
+    'Do not merge adjacent sources into one continuous transcript and do not infer continuity across source boundaries.',
     'Do not invent details outside the excerpts.',
     'When stating a concrete fact, cite a numbered source from <lore> as [1], [2], etc.',
     'If the excerpts do not support an answer, say so clearly.',
     'Cite the section that directly supports each claim.',
+    'When sources are unrelated, analyze them separately instead of forcing a single combined narrative.',
   ]
   if (background.length > 0) {
     systemLines.push(

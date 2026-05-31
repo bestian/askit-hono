@@ -8,7 +8,7 @@
 
 讓使用者向 LINE Bot 提問（例如「AI 會不會控制我們」），Bot 從 [SayIt](https://archive.tw)（亦即 sayit-hono 專案）的逐字稿中找出指定講者（預設「唐鳳」）說過、最相近的一段話回覆，並附上原文連結。
 
-實作上以 [Hono](https://hono.dev/) 跑在 Cloudflare Workers。LINE `/webhook` 與 `/ask/:question` 走 build-time R2 Fuse 索引；`/cag` 則直接使用 `archive.tw` 的搜尋 API 與 section API 做 long-lore retrieval，避免 Worker 冷啟動時載入巨大索引。
+實作上以 [Hono](https://hono.dev/) 跑在 Cloudflare Workers。`/ask/:question` 走 build-time R2 Fuse 索引；`/cag` 與 LINE `/webhook` 則直接使用 `archive.tw` 的搜尋 API 與 section API 做 long-lore retrieval（CAG），再呼叫 Workers AI 生成帶引註的回答，避免 Worker 冷啟動時載入巨大索引。由於 CAG 生成需數秒，`/webhook` 採三段式非同步回覆（見下）。
 
 ### 功能與路由
 
@@ -19,11 +19,21 @@
 | `GET /cag/status` | 顯示 CAG retriever、archive base URL、模型與 top-k 上限。 |
 | `GET /cag/:question` | 從 `archive.tw/api/search.json` 找相關段落，再用 `/api/section/:id` 取回前後文，組成 CAG prompt，呼叫 Cloudflare Workers AI（預設 Kimi K2.6），並串流 Markdown 回答與 `archive.tw#s...` footnote。 |
 | `POST /cag` | JSON 版本的 CAG endpoint：`{ "question": "...", "topK": 6 }`，同樣串流 Markdown。 |
-| `POST /webhook` | LINE Messaging API webhook。收到 LINE 文字訊息後，使用與 `/ask/:question` 相同的搜尋 pipeline，並以 Flex Message 回覆最相近段落、出處、日期與原文連結。 |
+| `POST /webhook` | LINE Messaging API webhook。收到文字訊息後以 **CAG**（`archive.tw` 檢索 + Workers AI）生成帶引註的回答，並以 Flex Message 回覆答案與來源。因生成需數秒，採三段式非同步回覆（見「LINE webhook 的 CAG 三段式回覆」）；CAG 失敗或查無結果時退回 R2 Fuse 前兩則最相近段落。 |
 
 ### 回覆格式
 
-`/ask/:question` 會回 HTML，方便瀏覽器測試；`/webhook` 命中搜尋結果時會回 LINE Flex Message。Flex 的主文來自段落內容，出處來自 `display_name`，日期從 `filename` 的 `YYYY-MM-DD` 前綴解析，hero 圖使用 `https://archive.tw/og/{filename}.png`，按鈕連到原文 section URL。查無結果或搜尋錯誤時仍回純文字。
+`/ask/:question` 會回 HTML，方便瀏覽器測試；`/webhook` 則回 LINE Flex Message：主文是 CAG 生成的答案（逐句斷行、附 `[1][2]` 引註），下方最多兩欄來源卡片，含出處、日期與原文連結（hero 圖用 `https://archive.tw/og/...png`）。查無結果或錯誤時回純文字。
+
+### LINE webhook 的 CAG 三段式回覆
+
+CAG 需先檢索 `archive.tw` 再讓 Workers AI 生成，通常要數秒到十幾秒，超過 LINE 對 webhook「**2 秒內必須回 2xx**」的限制；而 LINE Reply API 不支援串流、reply token 為一次性。因此 `/webhook` 採三段式非同步回覆：
+
+1. **立即 ack**：驗證簽章後 2 秒內回 `200 OK`，把慢工作交給 `c.executionCtx.waitUntil()` 在背景執行（回應後最多約 30 秒預算）。回 200 這步**不消耗 reply token**。
+2. **載入動畫**：對 1:1 聊天呼叫 `chat/loading/start` 顯示「輸入中…」，蓋住等待時間（不是訊息、不消耗 token）。
+3. **生成並回覆一次**：`generateCagAnswer()`（非串流，`top_k=2`、`max_tokens=240`）取得答案與來源，補完句尾、逐句斷行後，用 reply token 呼叫**一次** Reply API 送出 Flex；CAG 失敗或查無結果時退回 R2 Fuse 前兩則。
+
+> reply token 約 1 分鐘有效，CAG 通常 4～16 秒完成，仍在窗內；若要更保險可改用 Push API（無時限，但計入訊息配額）。
 
 ### 索引建置流程（不在 Worker 內執行）
 
@@ -263,7 +273,7 @@ LINE 平台會用你的 Channel secret 對 raw request body 計算 HMAC-SHA256�
 
 ### 測試
 
-從 LINE App 直接傳訊息給 bot 是最可靠的方式（前提：把 `/webhook` 邏輯換成搜尋回覆之後）。`curl` 測 webhook：
+從 LINE App 直接傳訊息給 bot 是最可靠的測試方式。`curl` 測 webhook（簽章驗證）：
 
 ```bash
 SECRET="your-channel-secret"
@@ -276,7 +286,7 @@ curl -X POST https://YOUR-WORKER-URL/webhook \
   -d "$BODY"
 ```
 
-> 上述 `events` 為空陣列時 Worker 會回 `200 OK`。若塞入假的 `replyToken` 真的呼叫 Reply API，LINE 會回 400，Worker 端則回 `502 LINE API error`。
+> 上述 `events` 為空陣列時 Worker 會回 `200 OK`。注意：`/webhook` 一律在 2 秒內回 `200`（符合 LINE 的 webhook 回應時限），CAG 生成與 Reply 呼叫改在 `ctx.waitUntil` 背景執行；因此即使塞入假的 `replyToken`，也只會在背景記錄 Reply 失敗，不再回 `502`。要驗證實際回覆，請從 LINE App 傳訊息。
 
 搜尋本身可獨立測：
 
@@ -305,7 +315,7 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 
 A LINE bot that, when a user asks a question (e.g. "Will AI control us?"), finds the closest matching paragraph from a chosen speaker's transcripts on [SayIt](https://archive.tw) (the sayit-hono project) — defaulting to **Audrey Tang** — and replies with the excerpt plus a link to the source.
 
-Built with [Hono](https://hono.dev/) on Cloudflare Workers. LINE `/webhook` and `/ask/:question` use a build-time R2 Fuse index. `/cag` uses `archive.tw` search and section APIs for long-lore retrieval, so the Worker does not cold-load a giant transcript index.
+Built with [Hono](https://hono.dev/) on Cloudflare Workers. `/ask/:question` uses a build-time R2 Fuse index. `/cag` and the LINE `/webhook` retrieve from the `archive.tw` search and section APIs (CAG) and call Workers AI to generate a cited answer, so the Worker does not cold-load a giant transcript index. Because CAG generation takes several seconds, `/webhook` replies asynchronously in three stages (see below).
 
 ### Routes
 
@@ -316,11 +326,21 @@ Built with [Hono](https://hono.dev/) on Cloudflare Workers. LINE `/webhook` and 
 | `GET /cag/status` | Shows the CAG retriever, archive base URL, model, and top-k limit. |
 | `GET /cag/:question` | Searches `archive.tw/api/search.json`, hydrates hits through `/api/section/:id`, builds a CAG prompt, calls Cloudflare Workers AI (Kimi K2.6 by default), and streams Markdown with `archive.tw#s...` footnotes. |
 | `POST /cag` | JSON CAG endpoint: `{ "question": "...", "topK": 6 }`, also streaming Markdown. |
-| `POST /webhook` | LINE Messaging API webhook. For text messages, it uses the same search pipeline as `/ask/:question` and replies with the closest section, source, date, and source link as a Flex Message. |
+| `POST /webhook` | LINE Messaging API webhook. For text messages it generates a cited answer via **CAG** (`archive.tw` retrieval + Workers AI) and replies with a Flex Message (answer + up to two source cards). Generation takes seconds, so it replies asynchronously in three stages (see "Three-stage CAG reply over the LINE webhook"); on CAG failure or no results it falls back to the top-2 R2 Fuse sections. |
 
 ### Reply Format
 
-`/ask/:question` returns HTML for browser testing; `/webhook` returns a LINE Flex Message when search finds a result. The Flex body uses the section content, source uses `display_name`, date is parsed from the `YYYY-MM-DD` prefix in `filename`, the hero image uses `https://archive.tw/og/{filename}.png`, and the button links to the source section URL. Missing results and search errors still return plain text.
+`/ask/:question` returns HTML for browser testing; `/webhook` returns a LINE Flex Message whose body is the CAG-generated answer (one sentence per line, with `[1][2]` citations), followed by up to two source cards (source, date, and a link to the section; hero image from `https://archive.tw/og/...png`). Missing results and errors return plain text.
+
+### Three-stage CAG reply over the LINE webhook
+
+CAG must first search `archive.tw` and then have Workers AI generate, which usually takes several to a dozen-plus seconds — beyond LINE's "**must return 2xx within 2 seconds**" webhook limit. The LINE Reply API also cannot stream, and a reply token is single-use. So `/webhook` replies asynchronously in three stages:
+
+1. **Ack immediately** — after verifying the signature, return `200 OK` within 2s and hand the slow work to `c.executionCtx.waitUntil()` (up to ~30s budget after the response). Returning 200 does **not** consume the reply token.
+2. **Loading animation** — for 1:1 chats, call `chat/loading/start` to show a typing indicator (not a message, does not consume the token).
+3. **Generate, then reply once** — `generateCagAnswer()` (non-streaming, `top_k=2`, `max_tokens=240`) produces the answer and sources; after completing the final sentence and breaking lines per sentence, the reply token is used to call the Reply API **once** with a Flex message. On CAG failure or no results it falls back to the top-2 R2 Fuse sections.
+
+> A reply token is valid for ~1 minute and CAG typically finishes in 4–16s, so it stays within the window; for extra robustness you can switch to the Push API (no expiry, but it counts against the message quota).
 
 ### Index pipeline (runs offline, not in the Worker)
 

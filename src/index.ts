@@ -5,11 +5,13 @@ import { renderPrivacyPolicyPage } from './pages/privacy'
 import { renderTermsOfUsePage } from './pages/terms'
 import {
   type CagAnswer,
+  type CagRetriever,
   DEFAULT_CAG_MODEL,
   generateCagAnswer,
   getCagStatus,
   streamCagAnswer,
 } from './utils/cag'
+import type { VectorizeBinding } from './utils/vectorize'
 import {
   findClosestMatchingSection,
   findClosestMatchingSections,
@@ -26,10 +28,26 @@ type Bindings = {
   LINE_CHANNEL_SECRET: string
   ASK_MODEL?: string
   ASK_ARCHIVE_BASE_URL?: string
+  // CAG 檢索器預設值：'vectorize'（語意）或 'archive'（archive.tw 即時搜尋）。
+  // 未設定時預設 'vectorize'，並在無 VECTORIZE binding / 查無結果時自動回退 archive。
+  CAG_RETRIEVER?: string
   ASK_INDEX: R2Bucket
   AI: {
     run: (model: string, input: Record<string, unknown>) => Promise<unknown>
   }
+  // Vectorize 語意索引 binding；尚未建立索引前可不綁（程式會回退 archive）。
+  VECTORIZE?: VectorizeBinding
+}
+
+const DEFAULT_CAG_RETRIEVER: CagRetriever = 'vectorize'
+
+function resolveCagRetriever(
+  ...values: (string | undefined)[]
+): CagRetriever {
+  for (const value of values) {
+    if (value === 'vectorize' || value === 'archive') return value
+  }
+  return DEFAULT_CAG_RETRIEVER
 }
 
 type LineMessageEvent = {
@@ -47,10 +65,13 @@ type LineWebhookBody = {
 const LINE_REPLY_ENDPOINT = 'https://api.line.me/v2/bot/message/reply'
 const LINE_LOADING_ENDPOINT = 'https://api.line.me/v2/bot/chat/loading/start'
 const REPLY_TOKEN_TTL_MS = 50_000
-// CAG 在 webhook 走非同步回覆（ctx.waitUntil），慢工作須在回 200 之後約 30 秒內完成，
-// 故壓低 top-k 與輸出 token 數留安全邊際；max_tokens=240 以免回答被截斷。
-// top-k=2 對齊 formatCagAnswerFlex 只顯示 2 欄來源（排版整齊），prompt 較小也較快。
-const WEBHOOK_CAG_TOP_K = 2
+// CAG 在 webhook 走非同步回覆（ctx.waitUntil），慢工作須在回 200 之後約 30 秒內完成。
+// 檢索 top-k=6 餵給模型當「背景脈絡」以提升答案品質，但只引用／顯示前 2 筆最相符來源
+// （對齊 formatCagAnswerFlex 的 2 欄出處、引註 [1][2] 一一對應）。
+// 預設檢索器為 Vectorize，來源是 ≤100 字短段落，6 筆 prompt 仍小、延遲可控。
+// max_tokens=240 控制回答長度、避免被截斷。
+const WEBHOOK_CAG_TOP_K = 6
+const WEBHOOK_CAG_CITE_TOP_K = 2
 const WEBHOOK_CAG_MAX_COMPLETION_TOKENS = 240
 // LINE 載入動畫秒數需為 5～60 的 5 倍數，且僅 1:1 聊天有效。
 const WEBHOOK_LOADING_SECONDS = 30
@@ -80,6 +101,13 @@ function parsePositiveInteger(value: string | undefined, fallback: number): numb
   if (!value) return fallback
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback
+}
+
+// 未提供時回 undefined（沿用「全部可引用」的預設行為）。
+function parseOptionalPositiveInteger(value: string | undefined): number | undefined {
+  if (!value) return undefined
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined
 }
 
 // HMAC-SHA256(channelSecret, rawBody), base64-encoded.
@@ -220,8 +248,11 @@ async function replyWithCag(
       archiveBaseUrl: env.ASK_ARCHIVE_BASE_URL,
       model: env.ASK_MODEL || DEFAULT_CAG_MODEL,
       topK: WEBHOOK_CAG_TOP_K,
+      citableTopK: WEBHOOK_CAG_CITE_TOP_K,
       maxCompletionTokens: WEBHOOK_CAG_MAX_COMPLETION_TOKENS,
       answerInstruction: WEBHOOK_CAG_ANSWER_INSTRUCTION,
+      retriever: resolveCagRetriever(env.CAG_RETRIEVER),
+      vectorize: env.VECTORIZE,
     })
   } catch (e) {
     console.error('CAG 生成失敗，改用 Fuse fallback:', e)
@@ -283,6 +314,8 @@ app.get('/cag/status', (c) => {
   return c.json(getCagStatus({
     archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
     model: c.env.ASK_MODEL || DEFAULT_CAG_MODEL,
+    retriever: resolveCagRetriever(c.req.query('retriever'), c.env.CAG_RETRIEVER),
+    vectorizeBound: Boolean(c.env.VECTORIZE),
   }))
 })
 
@@ -292,15 +325,20 @@ app.get('/cag/:question', async (c) => {
     archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
     model: c.req.query('model') || c.env.ASK_MODEL || DEFAULT_CAG_MODEL,
     topK: parsePositiveInteger(c.req.query('top_k') ?? c.req.query('topK'), 6),
+    citableTopK: parseOptionalPositiveInteger(
+      c.req.query('cite_top_k') ?? c.req.query('citeTopK'),
+    ),
     maxCompletionTokens: parsePositiveInteger(
       c.req.query('max_tokens') ?? c.req.query('maxTokens'),
       900,
     ),
+    retriever: resolveCagRetriever(c.req.query('retriever'), c.env.CAG_RETRIEVER),
+    vectorize: c.env.VECTORIZE,
   })
 })
 
 app.post('/cag', async (c) => {
-  let payload: { question?: unknown; topK?: unknown; top_k?: unknown; model?: unknown; maxTokens?: unknown; max_tokens?: unknown }
+  let payload: { question?: unknown; topK?: unknown; top_k?: unknown; citableTopK?: unknown; cite_top_k?: unknown; model?: unknown; maxTokens?: unknown; max_tokens?: unknown; retriever?: unknown }
   try {
     payload = await c.req.json()
   } catch {
@@ -325,12 +363,23 @@ app.post('/cag', async (c) => {
   const model = typeof payload.model === 'string'
     ? payload.model
     : c.env.ASK_MODEL || DEFAULT_CAG_MODEL
+  const citableTopK = typeof payload.citableTopK === 'number'
+    ? payload.citableTopK
+    : typeof payload.cite_top_k === 'number'
+      ? payload.cite_top_k
+      : undefined
 
   return streamCagAnswer(c.env.AI, question, {
     archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
     model,
     topK,
+    citableTopK,
     maxCompletionTokens,
+    retriever: resolveCagRetriever(
+      typeof payload.retriever === 'string' ? payload.retriever : undefined,
+      c.env.CAG_RETRIEVER,
+    ),
+    vectorize: c.env.VECTORIZE,
   })
 })
 

@@ -15,7 +15,11 @@
     // 可在此放置非機敏的環境變數
     // Place non-sensitive environment variables here
     "ASK_MODEL": "@cf/moonshotai/kimi-k2.6",
-    "ASK_ARCHIVE_BASE_URL": "https://archive.tw"
+    "ASK_ARCHIVE_BASE_URL": "https://archive.tw",
+    // CAG 預設檢索器：'vectorize'（語意，issue #15）或 'archive'（archive.tw 即時搜尋）。
+    // 索引尚未建好 / 無 VECTORIZE binding / 查無結果時，程式會自動回退 archive。
+    // 亦可用 /cag?retriever=archive 之類的查詢參數逐次覆寫，方便 A/B 比較。
+    "CAG_RETRIEVER": "vectorize"
   },
 
   // R2：載入預先建好的 Fuse.js 索引（由 `npm run build:index` 產出並上傳）。
@@ -30,12 +34,20 @@
     }
   ],
 
-  // Workers AI：/cag/:question 使用此 binding 呼叫 Kimi K2.6。
+  // Workers AI：/cag/:question 使用此 binding 呼叫 Kimi K2.6，
+  // 並（啟用 Vectorize 後）用 @cf/google/embeddinggemma-300m 將問句嵌入成查詢向量。
   // Workers AI: /cag/:question uses this binding to call Kimi K2.6.
   "ai": {
     "binding": "AI",
     "remote": true
   },
+
+  // Vectorize：語意檢索索引（issue #15）。索引已建立並回填 2163 筆向量（768/cosine）。
+  //   重建：npm run vectorize:create；增量/回填：npm run vectorize:sync
+  // 查無結果時 CAG 仍會自動回退 archive.tw 檢索。
+  "vectorize": [
+    { "binding": "VECTORIZE", "index_name": "askit-audrey-tang" }
+  ],
 
   "assets": {
     "directory": "./public"

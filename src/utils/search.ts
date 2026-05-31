@@ -530,7 +530,7 @@ export function formatCagAnswerFlex(
   answer: string,
   sources: CagSource[],
 ): LineReplyMessage {
-  const displaySources = sources.slice(0, 2)
+  const displaySources = sources.slice(0, 6)
   const content = truncatePlainText(
     markdownToLinePlainText(answer),
     LINE_CAG_BODY_MAX_CHARS,
@@ -541,7 +541,7 @@ export function formatCagAnswerFlex(
   }
 
   const altText = truncatePlainText(content, LINE_FLEX_ALT_TEXT_MAX_CHARS)
-  const sourceColumns = displaySources.map((source, index) => {
+  const sourceBlocks = displaySources.map((source, index) => {
     const displaySource = removeSourceSpeaker(source.label)
     const displayDate = extractDisplayDateFromHref(source.href)
     const details = [
@@ -632,9 +632,17 @@ export function formatCagAnswerFlex(
           },
           {
             type: 'box',
-            layout: 'horizontal',
+            layout: 'vertical',
             spacing: 'sm',
-            contents: sourceColumns,
+            contents: Array.from(
+              { length: Math.ceil(sourceBlocks.length / 2) },
+              (_, rowIndex) => ({
+                type: 'box',
+                layout: 'horizontal',
+                spacing: 'sm',
+                contents: sourceBlocks.slice(rowIndex * 2, rowIndex * 2 + 2),
+              }),
+            ),
           },
         ],
       },

@@ -66,12 +66,12 @@ const LINE_REPLY_ENDPOINT = 'https://api.line.me/v2/bot/message/reply'
 const LINE_LOADING_ENDPOINT = 'https://api.line.me/v2/bot/chat/loading/start'
 const REPLY_TOKEN_TTL_MS = 50_000
 // CAG 在 webhook 走非同步回覆（ctx.waitUntil），慢工作須在回 200 之後約 30 秒內完成。
-// 檢索 top-k=2 餵給模型當「背景脈絡」以提升答案品質，但只引用／顯示前 2 筆最相符來源
-// （對齊 formatCagAnswerFlex 的 2 欄出處、引註 [1][2] 一一對應）。
-// 預設檢索器為 Vectorize，來源是 ≤100 字短段落，2 筆 prompt 仍小、延遲可控。
+// 檢索 top-k=6 餵給模型當「背景脈絡」以提升答案品質，但只引用／顯示前 6 筆最相符來源
+// （對齊 formatCagAnswerFlex 的 4 格出處、引註 [1][2][3][4][5][6] 一一對應）。
+// 預設檢索器為 Vectorize，來源是 ≤100 字短段落，6 筆 prompt 仍小、延遲可控。
 // max_tokens=240 控制回答長度、避免被截斷。
-const WEBHOOK_CAG_TOP_K = 2
-const WEBHOOK_CAG_CITE_TOP_K = 2
+const WEBHOOK_CAG_TOP_K = 4
+const WEBHOOK_CAG_CITE_TOP_K = 4
 const WEBHOOK_CAG_MAX_COMPLETION_TOKENS = 240
 // LINE 載入動畫秒數需為 5～60 的 5 倍數，且僅 1:1 聊天有效。
 const WEBHOOK_LOADING_SECONDS = 30

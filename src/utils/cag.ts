@@ -16,6 +16,7 @@ export type CagOptions = {
   topK?: number
   maxCompletionTokens?: number
   archiveBaseUrl?: string
+  answerInstruction?: string
 }
 
 export const DEFAULT_CAG_MODEL = '@cf/moonshotai/kimi-k2.6'
@@ -56,6 +57,11 @@ export type CagSource = {
   sectionId: number | null
 }
 
+export type CagAnswer = {
+  answer: string
+  sources: CagSource[]
+}
+
 export type CagStatus = {
   retriever: 'archive-search'
   archiveBaseUrl: string
@@ -78,7 +84,11 @@ function footnoteForSource(source: CagSource): string {
   return `[${source.label}](${source.href})`
 }
 
-function buildCagMessages(question: string, sources: CagSource[]): ChatMessage[] {
+function buildCagMessages(
+  question: string,
+  sources: CagSource[],
+  answerInstruction = 'Answer concisely. Prefer exact wording from the excerpts where useful.',
+): ChatMessage[] {
   const lore = sources
     .map((source, index) => {
       const n = index + 1
@@ -114,7 +124,7 @@ function buildCagMessages(question: string, sources: CagSource[]): ChatMessage[]
         '',
         `Question: ${question}`,
         '',
-        'Answer concisely. Prefer exact wording from the excerpts where useful.',
+        answerInstruction,
       ].join('\n'),
     },
   ]
@@ -323,35 +333,78 @@ function aiResultToStream(result: unknown): ReadableStream<Uint8Array> {
   return new Response(text).body!
 }
 
+async function streamToText(stream: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  let text = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    text += decoder.decode(value, { stream: true })
+  }
+  return text + decoder.decode()
+}
+
+async function stringStreamToText(stream: ReadableStream<string>): Promise<string> {
+  const reader = stream.getReader()
+  let text = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    text += value
+  }
+  return text
+}
+
+function extractAiText(result: unknown): string | null {
+  if (typeof result === 'string') return result
+  if (!result || typeof result !== 'object') return null
+
+  const obj = result as Record<string, unknown>
+  if (typeof obj.response === 'string') return obj.response
+  if (typeof obj.output_text === 'string') return obj.output_text
+  if (typeof obj.text === 'string') return obj.text
+  if (typeof obj.result === 'string') return obj.result
+
+  const nestedResult = obj.result
+  if (nestedResult && typeof nestedResult === 'object') {
+    const nested = nestedResult as Record<string, unknown>
+    if (typeof nested.response === 'string') return nested.response
+    if (typeof nested.output_text === 'string') return nested.output_text
+    if (typeof nested.text === 'string') return nested.text
+  }
+
+  const choices = obj.choices
+  if (Array.isArray(choices) && choices.length > 0) {
+    const choice = choices[0] as Record<string, unknown>
+    if (typeof choice.text === 'string') return choice.text
+    const delta = choice.delta as Record<string, unknown> | undefined
+    if (delta && typeof delta.content === 'string') return delta.content
+    const message = choice.message as Record<string, unknown> | undefined
+    if (message && typeof message.content === 'string') return message.content
+  }
+
+  return null
+}
+
+async function aiResultToText(result: unknown): Promise<string> {
+  const extracted = extractAiText(result)
+  if (extracted !== null) return extracted
+
+  if (result instanceof ReadableStream || result instanceof Response) {
+    return stringStreamToText(
+      aiResultToStream(result).pipeThrough(workersAiEventStreamToText()),
+    )
+  }
+
+  return JSON.stringify(result)
+}
+
 function extractStreamingText(data: string): string {
   if (data === '[DONE]') return ''
   try {
     const parsed = JSON.parse(data) as unknown
-    if (typeof parsed === 'string') return parsed
-    if (!parsed || typeof parsed !== 'object') return ''
-
-    const obj = parsed as Record<string, unknown>
-    if (typeof obj.response === 'string') return obj.response
-    if (typeof obj.output_text === 'string') return obj.output_text
-    if (typeof obj.text === 'string') return obj.text
-    if (typeof obj.result === 'string') return obj.result
-
-    const result = obj.result
-    if (result && typeof result === 'object') {
-      const resultObj = result as Record<string, unknown>
-      if (typeof resultObj.response === 'string') return resultObj.response
-      if (typeof resultObj.text === 'string') return resultObj.text
-    }
-
-    const choices = obj.choices
-    if (Array.isArray(choices) && choices.length > 0) {
-      const choice = choices[0] as Record<string, unknown>
-      if (typeof choice.text === 'string') return choice.text
-      const delta = choice.delta as Record<string, unknown> | undefined
-      if (delta && typeof delta.content === 'string') return delta.content
-      const message = choice.message as Record<string, unknown> | undefined
-      if (message && typeof message.content === 'string') return message.content
-    }
+    return extractAiText(parsed) ?? ''
   } catch {
     return data
   }
@@ -454,6 +507,55 @@ export function markdownCitationFootnotes(footnotes: string[]): TransformStream<
   })
 }
 
+async function runCagCompletion(
+  ai: WorkersAiBinding,
+  model: string,
+  messages: ChatMessage[],
+  maxCompletionTokens: number | undefined,
+  stream: boolean,
+): Promise<unknown> {
+  return ai.run(model, {
+    messages,
+    stream,
+    max_completion_tokens: clampInteger(
+      maxCompletionTokens ?? DEFAULT_MAX_COMPLETION_TOKENS,
+      1,
+      4_096,
+    ),
+    temperature: 0.2,
+    chat_template_kwargs: { thinking: false },
+  })
+}
+
+export async function generateCagAnswer(
+  ai: WorkersAiBinding,
+  question: string,
+  options?: CagOptions,
+): Promise<CagAnswer | null> {
+  const topK = clampInteger(options?.topK ?? DEFAULT_TOP_K, 1, MAX_TOP_K)
+  const sources = await retrieveCagSources(question, {
+    topK,
+    archiveBaseUrl: options?.archiveBaseUrl,
+  })
+  if (sources.length === 0) return null
+
+  const model = options?.model || DEFAULT_CAG_MODEL
+  const messages = buildCagMessages(
+    question,
+    sources,
+    options?.answerInstruction,
+  )
+  const result = await runCagCompletion(
+    ai,
+    model,
+    messages,
+    options?.maxCompletionTokens,
+    false,
+  )
+  const answer = (await aiResultToText(result)).trim()
+  return { answer, sources }
+}
+
 export async function streamCagAnswer(
   ai: WorkersAiBinding,
   question: string,
@@ -472,18 +574,18 @@ export async function streamCagAnswer(
   }
 
   const model = options?.model || DEFAULT_CAG_MODEL
-  const messages = buildCagMessages(question, sources)
-  const stream = await ai.run(model, {
+  const messages = buildCagMessages(
+    question,
+    sources,
+    options?.answerInstruction,
+  )
+  const stream = await runCagCompletion(
+    ai,
+    model,
     messages,
-    stream: true,
-    max_completion_tokens: clampInteger(
-      options?.maxCompletionTokens ?? DEFAULT_MAX_COMPLETION_TOKENS,
-      1,
-      4_096,
-    ),
-    temperature: 0.2,
-    chat_template_kwargs: { thinking: false },
-  })
+    options?.maxCompletionTokens,
+    true,
+  )
 
   const body = aiResultToStream(stream)
     .pipeThrough(workersAiEventStreamToText())

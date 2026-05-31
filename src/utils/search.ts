@@ -1,4 +1,5 @@
 import type Fuse from 'fuse.js'
+import type { CagSource } from './cag'
 import {
   ASK_INDEX_R2_KEY,
   manifestKeyForIndexKey,
@@ -42,6 +43,7 @@ type LoadedIndex = {
 
 const LINE_FLEX_BODY_MAX_CHARS = 280
 const LINE_FLEX_ALT_TEXT_MAX_CHARS = 1_500
+const LINE_CAG_BODY_MAX_CHARS = 1_200
 const INDEX_MANIFEST_CHECK_MS = 60_000
 
 /**
@@ -297,6 +299,68 @@ function truncatePlainText(s: string, maxChars: number): string {
   return `${s.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`
 }
 
+function markdownToLinePlainText(s: string): string {
+  return s
+    .replace(/^\[\^\d+\]:.*$/gm, '')
+    .replace(/\[\^(\d+)\]/g, '[$1]')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function buildArchiveTwOgImageUrlFromHref(href: string): string {
+  try {
+    const url = new URL(href)
+    const path = url.pathname.replace(/^\/+|\/+$/g, '')
+    url.pathname = `/og/${path}.png`
+    url.search = ''
+    url.hash = ''
+    return url.toString()
+  } catch {
+    return buildArchiveTwOgImageUrl(href, null)
+  }
+}
+
+function extractDisplayDateFromHref(href: string): string {
+  try {
+    const url = new URL(href)
+    const decodedPath = decodeURIComponent(url.pathname)
+    return extractDisplayDate(decodedPath.replace(/^\/+/, ''))
+  } catch {
+    return ''
+  }
+}
+
+function removeSourceSpeaker(label: string): string {
+  return removeLeadingDisplayDate(label.split(' — ')[0] ?? label)
+}
+
+function askResultToCagSource(result: AskSearchResult): CagSource {
+  return {
+    content: result.content,
+    href: buildArchiveTwSectionHref(
+      result.filename,
+      result.section_id,
+      result.nest_filename,
+    ),
+    label: result.name
+      ? `${result.display_name} — ${result.name}`
+      : result.display_name,
+    sectionId: result.section_id,
+  }
+}
+
+function buildFuseAnswerText(results: AskSearchResult[]): string {
+  return results
+    .map((result, index) => {
+      const content = truncatePlainText(htmlToPlainText(result.content), 320)
+      return `[${index + 1}] ${content}`
+    })
+    .join('\n\n')
+}
+
 export function formatAskAnswerHtml(result: AskSearchResult): string {
   const href = buildArchiveTwSectionHref(
     result.filename,
@@ -460,4 +524,126 @@ export function formatAskAnswerFlex(result: AskSearchResult): LineReplyMessage {
       },
     },
   }
+}
+
+export function formatCagAnswerFlex(
+  answer: string,
+  sources: CagSource[],
+): LineReplyMessage {
+  const displaySources = sources.slice(0, 2)
+  const content = truncatePlainText(
+    markdownToLinePlainText(answer),
+    LINE_CAG_BODY_MAX_CHARS,
+  )
+
+  if (displaySources.length === 0) {
+    return { type: 'text', text: content || '找不到符合條件的段落，請上\nhttps://archive.tw' }
+  }
+
+  const altText = truncatePlainText(content, LINE_FLEX_ALT_TEXT_MAX_CHARS)
+  const sourceColumns = displaySources.map((source, index) => {
+    const displaySource = removeSourceSpeaker(source.label)
+    const displayDate = extractDisplayDateFromHref(source.href)
+    const details = [
+      {
+        type: 'text',
+        text: `出處 ${index + 1}`,
+        color: '#aaaaaa',
+        size: 'xs',
+      },
+      {
+        type: 'text',
+        text: displaySource,
+        wrap: true,
+        color: '#666666',
+        size: 'xs',
+        maxLines: 3,
+      },
+    ]
+
+    if (displayDate !== '') {
+      details.push({
+        type: 'text',
+        text: displayDate,
+        wrap: true,
+        color: '#999999',
+        size: 'xs',
+        maxLines: 1,
+      })
+    }
+
+    return {
+      type: 'box',
+      layout: 'vertical',
+      flex: 1,
+      spacing: 'xs',
+      paddingAll: 'sm',
+      borderColor: '#eeeeee',
+      borderWidth: '1px',
+      cornerRadius: 'md',
+      contents: [
+        ...details,
+        {
+          type: 'button',
+          style: 'link',
+          height: 'sm',
+          action: {
+            type: 'uri',
+            label: '前往來源',
+            uri: source.href,
+          },
+        },
+      ],
+    }
+  })
+
+  return {
+    type: 'flex',
+    altText,
+    contents: {
+      type: 'bubble',
+      hero: {
+        type: 'box',
+        layout: 'horizontal',
+        contents: displaySources.map((source) => ({
+          type: 'image',
+          url: buildArchiveTwOgImageUrlFromHref(source.href),
+          size: 'full',
+          aspectRatio: '1:1',
+          aspectMode: 'fit',
+          flex: 1,
+          action: {
+            type: 'uri',
+            uri: source.href,
+          },
+        })),
+      },
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: 'md',
+        contents: [
+          {
+            type: 'text',
+            text: content,
+            size: 'sm',
+            wrap: true,
+          },
+          {
+            type: 'box',
+            layout: 'horizontal',
+            spacing: 'sm',
+            contents: sourceColumns,
+          },
+        ],
+      },
+    },
+  }
+}
+
+export function formatFuseAnswerFlex(results: AskSearchResult[]): LineReplyMessage {
+  return formatCagAnswerFlex(
+    buildFuseAnswerText(results.slice(0, 2)),
+    results.slice(0, 2).map(askResultToCagSource),
+  )
 }

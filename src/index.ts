@@ -3,12 +3,17 @@ import { Hono } from 'hono'
 import { renderHomePage } from './pages/home'
 import { renderPrivacyPolicyPage } from './pages/privacy'
 import { renderTermsOfUsePage } from './pages/terms'
-import { DEFAULT_CAG_MODEL, getCagStatus, streamCagAnswer } from './utils/cag'
+import {
+  DEFAULT_CAG_MODEL,
+  getCagStatus,
+  streamCagAnswer,
+} from './utils/cag'
 import {
   findClosestMatchingSection,
+  findClosestMatchingSections,
   findRandomSection,
-  formatAskAnswerFlex,
   formatAskAnswerHtml,
+  formatFuseAnswerFlex,
   isRandomAskQuestion,
   type LineReplyMessage,
 } from './utils/search'
@@ -235,11 +240,11 @@ app.post('/webhook', async (c) => {
 
   let replyMessage: LineReplyMessage
   try {
-    const hit = isRandomAskQuestion(userText)
-      ? await findRandomSection(c.env.ASK_INDEX)
-      : await findClosestMatchingSection(c.env.ASK_INDEX, userText)
-    replyMessage = hit
-      ? formatAskAnswerFlex(hit)
+    const hits = await findClosestMatchingSections(c.env.ASK_INDEX, userText, {
+      limit: 2,
+    })
+    replyMessage = hits.length > 0
+      ? formatFuseAnswerFlex(hits)
       : { type: 'text', text: '找不到符合條件的段落，請上\nhttps://archive.tw' }
   } catch (e) {
     console.error('搜尋發生錯誤:', e)

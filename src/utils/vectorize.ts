@@ -20,6 +20,7 @@ export const VECTORIZE_INDEX_NAME = 'askit-audrey-tang'
 
 const DEFAULT_TOP_K = 6
 const MAX_TOP_K = 12
+export const DEFAULT_VECTORIZE_MIN_COSINE_SCORE = 0.45
 
 // ── EmbeddingGemma 任務前綴（Workers AI 端點不會自動加，需自行前綴）─────────
 // 文件端：title: none | text: {content}
@@ -79,6 +80,11 @@ export type VectorizeBinding = {
 function clampInteger(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min
   return Math.max(min, Math.min(max, Math.floor(value)))
+}
+
+function normalizeMinScore(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) return DEFAULT_VECTORIZE_MIN_COSINE_SCORE
+  return Math.max(0, Math.min(1, value))
 }
 
 /**
@@ -149,9 +155,10 @@ export async function retrieveCagSourcesFromVectorize(
   ai: WorkersAiBinding,
   vectorize: VectorizeBinding,
   question: string,
-  options?: { topK?: number },
+  options?: { topK?: number; minScore?: number },
 ): Promise<CagSource[]> {
   const topK = clampInteger(options?.topK ?? DEFAULT_TOP_K, 1, MAX_TOP_K)
+  const minScore = normalizeMinScore(options?.minScore)
   const trimmed = question.trim()
   if (trimmed === '') return []
 
@@ -182,6 +189,7 @@ export async function retrieveCagSourcesFromVectorize(
   const seen = new Set<number>()
   const sources: CagSource[] = []
   for (const match of matches) {
+    if (!Number.isFinite(match.score) || match.score < minScore) continue
     const source = vectorMetadataToCagSource(match.metadata)
     if (!source || source.sectionId === null) continue
     if (seen.has(source.sectionId)) continue

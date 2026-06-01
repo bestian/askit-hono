@@ -92,12 +92,22 @@ test('retrieveCagSourcesFromVectorize embeds query, queries index, maps + dedups
           },
           {
             id: '456',
-            score: 0.7,
+            score: 0.85,
             metadata: {
               section_id: 456,
               filename: '2024-02-02-demo',
               content: '乙段',
               display_name: '另一會議',
+            },
+          },
+          {
+            id: '789',
+            score: 0.79,
+            metadata: {
+              section_id: 789,
+              filename: '2024-03-03-demo',
+              content: '低相關段',
+              display_name: '低相關會議',
             },
           },
         ],
@@ -117,6 +127,32 @@ test('retrieveCagSourcesFromVectorize embeds query, queries index, maps + dedups
   assert.equal(sources[0].href, 'https://archive.tw/2024-01-01-demo#s123')
   assert.equal(sources[1].sectionId, 456)
   assert.equal(sources[1].label, '另一會議') // 無 speaker
+})
+
+test('retrieveCagSourcesFromVectorize filters matches below min score', async () => {
+  const ai = { run: async () => ({ data: [[0.1, 0.2]] }) }
+  const vectorize: VectorizeBinding = {
+    query: async () => ({
+      matches: [
+        {
+          id: '1',
+          score: 0.79,
+          metadata: {
+            section_id: 1,
+            filename: '2024-01-01-demo',
+            content: '低相關段',
+            display_name: '低相關會議',
+          },
+        },
+      ],
+    }),
+  }
+
+  assert.deepEqual(await retrieveCagSourcesFromVectorize(ai, vectorize, 'q'), [])
+  assert.equal(
+    (await retrieveCagSourcesFromVectorize(ai, vectorize, 'q', { minScore: 0.79 })).length,
+    1,
+  )
 })
 
 test('retrieveCagSourcesFromVectorize returns [] on embed/query failure or empty', async () => {

@@ -341,7 +341,7 @@ export async function retrieveCagSources(
 /**
  * 依設定挑選檢索器。retriever='vectorize' 時先查 Vectorize；
  * 無 binding 時優雅回退 archive.tw 檢索；若 Vectorize 已綁定但低於相關度門檻，
- * 則保留空集合，讓上層能誠實回覆「找不到相關資料」。
+ * 則保留空集合，讓上層能誠實回覆「您的問題超出了資料庫的範圍，逐字稿網站連結如下：https://archive.tw'」。
  */
 async function resolveCagSources(
   ai: WorkersAiBinding,
@@ -667,7 +667,7 @@ export async function streamCagAnswer(
     vectorizeMinScore: options?.vectorizeMinScore,
   })
   if (sources.length === 0) {
-    return new Response('找不到符合條件的逐字稿段落', {
+    return new Response('您的問題超出了資料庫的範圍，逐字稿網站連結如下：https://archive.tw', {
       status: 404,
       headers: { 'Content-Type': 'text/plain; charset=UTF-8' },
     })

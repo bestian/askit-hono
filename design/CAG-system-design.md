@@ -61,7 +61,7 @@ question
   │     • 取 previous_content + section_content + next_content
   │     • htmlToPlainText 清洗，組出 label（標題 — 講者）
   │
-  ▼  CagSource[]（截到 topK；空集合 → 404「找不到符合條件的逐字稿段落」）
+  ▼  CagSource[]（截到 topK；空集合 → 404「您的問題超出了資料庫的範圍，逐字稿網站連結如下：https://archive.tw'」）
   │
   ▼  buildCagMessages()         system：只用引文作答、用 [n] 標註、中文用繁中
   │                             user：<lore> 多段引文 </lore> + Question

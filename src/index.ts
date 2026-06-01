@@ -11,7 +11,10 @@ import {
   getCagStatus,
   streamCagAnswer,
 } from './utils/cag'
-import type { VectorizeBinding } from './utils/vectorize'
+import {
+  DEFAULT_VECTORIZE_MIN_COSINE_SCORE,
+  type VectorizeBinding,
+} from './utils/vectorize'
 import {
   findClosestMatchingSection,
   findClosestMatchingSections,
@@ -29,8 +32,9 @@ type Bindings = {
   ASK_MODEL?: string
   ASK_ARCHIVE_BASE_URL?: string
   // CAG 檢索器預設值：'vectorize'（語意）或 'archive'（archive.tw 即時搜尋）。
-  // 未設定時預設 'vectorize'，並在無 VECTORIZE binding / 查無結果時自動回退 archive。
+  // 未設定時預設 'vectorize'；無 VECTORIZE binding 時自動回退 archive。
   CAG_RETRIEVER?: string
+  CAG_VECTORIZE_MIN_SCORE?: string
   ASK_INDEX: R2Bucket
   AI: {
     run: (model: string, input: Record<string, unknown>) => Promise<unknown>
@@ -48,6 +52,16 @@ function resolveCagRetriever(
     if (value === 'vectorize' || value === 'archive') return value
   }
   return DEFAULT_CAG_RETRIEVER
+}
+
+function resolveVectorizeMinScore(
+  ...values: (number | string | undefined)[]
+): number {
+  for (const value of values) {
+    const parsed = typeof value === 'number' ? value : parseOptionalNumber(value)
+    if (parsed !== undefined) return Math.max(0, Math.min(1, parsed))
+  }
+  return DEFAULT_VECTORIZE_MIN_COSINE_SCORE
 }
 
 type LineMessageEvent = {
@@ -108,6 +122,12 @@ function parseOptionalPositiveInteger(value: string | undefined): number | undef
   if (!value) return undefined
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined
+}
+
+function parseOptionalNumber(value: string | undefined): number | undefined {
+  if (!value) return undefined
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : undefined
 }
 
 // HMAC-SHA256(channelSecret, rawBody), base64-encoded.
@@ -243,6 +263,8 @@ async function replyWithCag(
   await startLineLoading(env, userId)
 
   let cag: CagAnswer | null = null
+  let cagFailed = false
+  const retriever = resolveCagRetriever(env.CAG_RETRIEVER)
   try {
     cag = await generateCagAnswer(env.AI, question, {
       archiveBaseUrl: env.ASK_ARCHIVE_BASE_URL,
@@ -251,14 +273,20 @@ async function replyWithCag(
       citableTopK: WEBHOOK_CAG_CITE_TOP_K,
       maxCompletionTokens: WEBHOOK_CAG_MAX_COMPLETION_TOKENS,
       answerInstruction: WEBHOOK_CAG_ANSWER_INSTRUCTION,
-      retriever: resolveCagRetriever(env.CAG_RETRIEVER),
+      retriever,
       vectorize: env.VECTORIZE,
+      vectorizeMinScore: resolveVectorizeMinScore(env.CAG_VECTORIZE_MIN_SCORE),
     })
   } catch (e) {
+    cagFailed = true
     console.error('CAG 生成失敗，改用 Fuse fallback:', e)
   }
 
   if (!cag || cag.answer.trim() === '') {
+    if (!cagFailed && retriever === 'vectorize' && env.VECTORIZE) {
+      await replyToLine(env, replyToken, { type: 'text', text: NOT_FOUND_REPLY })
+      return
+    }
     await replyWithFuseFallback(env, replyToken, question)
     return
   }
@@ -316,6 +344,10 @@ app.get('/cag/status', (c) => {
     model: c.env.ASK_MODEL || DEFAULT_CAG_MODEL,
     retriever: resolveCagRetriever(c.req.query('retriever'), c.env.CAG_RETRIEVER),
     vectorizeBound: Boolean(c.env.VECTORIZE),
+    vectorizeMinScore: resolveVectorizeMinScore(
+      c.req.query('min_score') ?? c.req.query('minScore'),
+      c.env.CAG_VECTORIZE_MIN_SCORE,
+    ),
   }))
 })
 
@@ -334,11 +366,15 @@ app.get('/cag/:question', async (c) => {
     ),
     retriever: resolveCagRetriever(c.req.query('retriever'), c.env.CAG_RETRIEVER),
     vectorize: c.env.VECTORIZE,
+    vectorizeMinScore: resolveVectorizeMinScore(
+      c.req.query('min_score') ?? c.req.query('minScore'),
+      c.env.CAG_VECTORIZE_MIN_SCORE,
+    ),
   })
 })
 
 app.post('/cag', async (c) => {
-  let payload: { question?: unknown; topK?: unknown; top_k?: unknown; citableTopK?: unknown; cite_top_k?: unknown; model?: unknown; maxTokens?: unknown; max_tokens?: unknown; retriever?: unknown }
+  let payload: { question?: unknown; topK?: unknown; top_k?: unknown; citableTopK?: unknown; cite_top_k?: unknown; model?: unknown; maxTokens?: unknown; max_tokens?: unknown; retriever?: unknown; minScore?: unknown; min_score?: unknown }
   try {
     payload = await c.req.json()
   } catch {
@@ -368,6 +404,11 @@ app.post('/cag', async (c) => {
     : typeof payload.cite_top_k === 'number'
       ? payload.cite_top_k
       : undefined
+  const vectorizeMinScore = typeof payload.minScore === 'number'
+    ? payload.minScore
+    : typeof payload.min_score === 'number'
+      ? payload.min_score
+      : resolveVectorizeMinScore(c.env.CAG_VECTORIZE_MIN_SCORE)
 
   return streamCagAnswer(c.env.AI, question, {
     archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
@@ -380,6 +421,7 @@ app.post('/cag', async (c) => {
       c.env.CAG_RETRIEVER,
     ),
     vectorize: c.env.VECTORIZE,
+    vectorizeMinScore,
   })
 })
 

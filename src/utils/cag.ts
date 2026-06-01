@@ -2,6 +2,7 @@ import {
   htmlToPlainText,
 } from './search'
 import {
+  DEFAULT_VECTORIZE_MIN_COSINE_SCORE,
   retrieveCagSourcesFromVectorize,
   type VectorizeBinding,
 } from './vectorize'
@@ -34,6 +35,8 @@ export type CagOptions = {
   retriever?: CagRetriever
   /** Vectorize binding（retriever='vectorize' 時使用）。 */
   vectorize?: VectorizeBinding
+  /** Vectorize cosine score 最低納入門檻，預設 0.8。 */
+  vectorizeMinScore?: number
 }
 
 export const DEFAULT_CAG_MODEL = '@cf/moonshotai/kimi-k2.6'
@@ -85,6 +88,7 @@ export type CagStatus = {
   vectorizeBound: boolean
   archiveBaseUrl: string
   model: string
+  vectorizeMinScore: number
   maxTopK: number
   maxContextSectionChars: number
 }
@@ -336,8 +340,8 @@ export async function retrieveCagSources(
 
 /**
  * 依設定挑選檢索器。retriever='vectorize' 時先查 Vectorize；
- * 若無 binding、查詢失敗或回空集合，則優雅回退 archive.tw 檢索，
- * 確保索引尚未建好 / 暫時無命中時 CAG 仍可運作。
+ * 無 binding 時優雅回退 archive.tw 檢索；若 Vectorize 已綁定但低於相關度門檻，
+ * 則保留空集合，讓上層能誠實回覆「找不到相關資料」。
  */
 async function resolveCagSources(
   ai: WorkersAiBinding,
@@ -347,17 +351,16 @@ async function resolveCagSources(
     archiveBaseUrl?: string
     retriever?: CagRetriever
     vectorize?: VectorizeBinding
+    vectorizeMinScore?: number
   },
 ): Promise<CagSource[]> {
   if (options.retriever === 'vectorize' && options.vectorize) {
-    const sources = await retrieveCagSourcesFromVectorize(
+    return retrieveCagSourcesFromVectorize(
       ai,
       options.vectorize,
       question,
-      { topK: options.topK },
+      { topK: options.topK, minScore: options.vectorizeMinScore },
     )
-    if (sources.length > 0) return sources
-    // 空集合 → 回退 archive
   }
   return retrieveCagSources(question, {
     topK: options.topK,
@@ -370,12 +373,14 @@ export function getCagStatus(options?: {
   model?: string
   retriever?: CagRetriever
   vectorizeBound?: boolean
+  vectorizeMinScore?: number
 }): CagStatus {
   return {
     retriever: options?.retriever ?? 'archive',
     vectorizeBound: options?.vectorizeBound ?? false,
     archiveBaseUrl: normalizeArchiveBaseUrl(options?.archiveBaseUrl),
     model: options?.model || DEFAULT_CAG_MODEL,
+    vectorizeMinScore: options?.vectorizeMinScore ?? DEFAULT_VECTORIZE_MIN_COSINE_SCORE,
     maxTopK: MAX_TOP_K,
     maxContextSectionChars: MAX_CONTEXT_SECTION_CHARS,
   }
@@ -624,6 +629,7 @@ export async function generateCagAnswer(
     archiveBaseUrl: options?.archiveBaseUrl,
     retriever: options?.retriever,
     vectorize: options?.vectorize,
+    vectorizeMinScore: options?.vectorizeMinScore,
   })
   if (sources.length === 0) return null
 
@@ -658,6 +664,7 @@ export async function streamCagAnswer(
     archiveBaseUrl: options?.archiveBaseUrl,
     retriever: options?.retriever,
     vectorize: options?.vectorize,
+    vectorizeMinScore: options?.vectorizeMinScore,
   })
   if (sources.length === 0) {
     return new Response('找不到符合條件的逐字稿段落', {

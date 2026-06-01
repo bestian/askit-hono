@@ -93,7 +93,7 @@ const WEBHOOK_LOADING_SECONDS = 30
 const WEBHOOK_CAG_ANSWER_INSTRUCTION =
   '請以繁體中文用 3～5 句話簡潔作答，全文控制在約 200 字內並完整收尾，' +
   '於陳述具體事實時標註 [1]、[2] 等來源編號。'
-const NOT_FOUND_REPLY = '找不到符合條件的段落，請上\nhttps://archive.tw'
+const NOT_FOUND_REPLY = '您的問題超出了資料庫的範圍，\n逐字稿網站連結如下：https://archive.tw'
 const ERROR_REPLY = '查詢發生錯誤，請稍後再試'
 const ROBOTS_TXT = `User-agent: *
 Disallow: /ask/
@@ -322,7 +322,7 @@ app.get('/ask/:question', async (c) => {
       ? await findRandomSection(c.env.ASK_INDEX)
       : await findClosestMatchingSection(c.env.ASK_INDEX, question)
     if (!hit) {
-      return c.text('找不到符合條件的段落', 404)
+      return c.text('您的問題超出了資料庫的範圍，\n逐字稿網站連結如下：https://archive.tw', 404)
     }
     const body = formatAskAnswerHtml(hit)
     return new Response(

@@ -102,7 +102,7 @@ test('retrieveCagSourcesFromVectorize embeds query, queries index, maps + dedups
           },
           {
             id: '789',
-            score: 0.79,
+            score: 0.44,
             metadata: {
               section_id: 789,
               filename: '2024-03-03-demo',
@@ -136,7 +136,7 @@ test('retrieveCagSourcesFromVectorize filters matches below min score', async ()
       matches: [
         {
           id: '1',
-          score: 0.79,
+          score: 0.44,
           metadata: {
             section_id: 1,
             filename: '2024-01-01-demo',
@@ -150,7 +150,7 @@ test('retrieveCagSourcesFromVectorize filters matches below min score', async ()
 
   assert.deepEqual(await retrieveCagSourcesFromVectorize(ai, vectorize, 'q'), [])
   assert.equal(
-    (await retrieveCagSourcesFromVectorize(ai, vectorize, 'q', { minScore: 0.79 })).length,
+    (await retrieveCagSourcesFromVectorize(ai, vectorize, 'q', { minScore: 0.44 })).length,
     1,
   )
 })

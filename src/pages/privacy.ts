@@ -4,7 +4,30 @@ export function renderPrivacyPolicyPage(): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>隱私權政策 | Privacy Policy</title>
+  <title>隱私權政策 | Privacy Policy | 鳳問</title>
+  <meta name="description" content="鳳問的隱私權政策：本服務不收集、儲存、販售、交換或分析任何使用者資料。">
+  <link rel="canonical" href="https://askit-hono.audreyt.workers.dev/privacy">
+
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+  <meta name="theme-color" content="#5AAD67">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="鳳問">
+  <meta property="og:locale" content="zh_TW">
+  <meta property="og:title" content="隱私權政策 | Privacy Policy | 鳳問">
+  <meta property="og:description" content="鳳問的隱私權政策：本服務不收集、儲存、販售、交換或分析任何使用者資料。">
+  <meta property="og:url" content="https://askit-hono.audreyt.workers.dev/privacy">
+  <meta property="og:image" content="https://askit-hono.audreyt.workers.dev/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="隱私權政策 | Privacy Policy | 鳳問">
+  <meta name="twitter:description" content="鳳問的隱私權政策：本服務不收集、儲存、販售、交換或分析任何使用者資料。">
+  <meta name="twitter:image" content="https://askit-hono.audreyt.workers.dev/og-image.png">
   <style>
     :root {
       color-scheme: light dark;

@@ -23,9 +23,9 @@
  *   VECTORIZE_PROGRESS_TABLE 記帳表名（預設 askit_vectorize_progress）
  *   VECTORIZE_INDEX         Vectorize 索引名（預設 askit-audrey-tang）
  *   SPEAKER_LIKE            speakers.name LIKE（預設 '唐鳳%'，與 build:index 一致）
- *   MAX_SECTION_CHARS       段落純文字字數上限（預設 100，與 build:index 一致）
+ *   MAX_SECTION_CHARS       段落純文字字數上限（預設 175，與 build:index 不一致，較寬鬆）
  *   YEARS_BACK              只收最近幾年（預設 2，與 build:index 一致）
- *   EMBED_BATCH             每次 REST 嵌入筆數（預設 96，上限 100）
+ *   EMBED_BATCH             每次 REST 嵌入筆數（預設 32，上限 100）
  *   UPSERT_BATCH            wrangler vectorize upsert 的 --batch-size（預設 1000）
  *   LIMIT                   本次最多處理幾筆 pending（預設不限）
  *   LOCAL=1                 對 D1 下 --local（預設 --remote）
@@ -50,9 +50,9 @@ const VECTORIZE_D1_DATABASE = process.env.VECTORIZE_D1_DATABASE ?? D1_DATABASE
 const PROGRESS_TABLE = process.env.VECTORIZE_PROGRESS_TABLE ?? 'askit_vectorize_progress'
 const VECTORIZE_INDEX = process.env.VECTORIZE_INDEX ?? VECTORIZE_INDEX_NAME
 const SPEAKER_LIKE = process.env.SPEAKER_LIKE ?? '唐鳳%'
-const MAX_SECTION_CHARS = Number(process.env.MAX_SECTION_CHARS ?? '100')
+const MAX_SECTION_CHARS = Number(process.env.MAX_SECTION_CHARS ?? '175')
 const YEARS_BACK = Number(process.env.YEARS_BACK ?? '2')
-const EMBED_BATCH = Math.min(100, Math.max(1, Number(process.env.EMBED_BATCH ?? '96')))
+const EMBED_BATCH = Math.min(100, Math.max(1, Number(process.env.EMBED_BATCH ?? '32')))
 const UPSERT_BATCH = Math.max(1, Number(process.env.UPSERT_BATCH ?? '1000'))
 const LIMIT = process.env.LIMIT ? Math.max(0, Number(process.env.LIMIT)) : Infinity
 const D1_FLAG = process.env.LOCAL === '1' ? '--local' : '--remote'

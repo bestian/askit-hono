@@ -1,0 +1,28 @@
+{
+  "name": "鳳問",
+  "short_name": "鳳問",
+  "description": "透過問答機器人，認識唐鳳的思想。",
+  "lang": "zh-Hant",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#5AAD67",
+  "theme_color": "#5AAD67",
+  "icons": [
+    {
+      "src": "/android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/maskable-icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

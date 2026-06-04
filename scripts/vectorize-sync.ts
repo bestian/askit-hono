@@ -33,6 +33,7 @@
  */
 import { execSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { mkdir, writeFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import type { SectionRow } from '../src/utils/askIndexFormat'
@@ -44,6 +45,43 @@ import {
   extractEmbeddings,
   type VectorizeSectionMetadata,
 } from '../src/utils/vectorize'
+
+function loadDevVarsFallback(): void {
+  let raw = ''
+  try {
+    raw = readFileSync(path.resolve('.dev.vars'), 'utf-8')
+  } catch (e) {
+    const code = typeof e === 'object' && e !== null && 'code' in e ? e.code : null
+    if (code === 'ENOENT') return
+    throw e
+  }
+
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (trimmed === '' || trimmed.startsWith('#')) continue
+
+    const normalized = trimmed.startsWith('export ') ? trimmed.slice('export '.length).trim() : trimmed
+    const eq = normalized.indexOf('=')
+    if (eq <= 0) continue
+
+    const key = normalized.slice(0, eq).trim()
+    let value = normalized.slice(eq + 1).trim()
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue
+
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1)
+    }
+
+    if (process.env[key] === undefined || process.env[key] === '') {
+      process.env[key] = value
+    }
+  }
+}
+
+loadDevVarsFallback()
 
 const D1_DATABASE = process.env.D1_DATABASE ?? 'sayit-database'
 const VECTORIZE_D1_DATABASE = process.env.VECTORIZE_D1_DATABASE ?? D1_DATABASE
@@ -65,6 +103,7 @@ const API_TOKEN = process.env.CLOUDFLARE_API_TOKEN ?? ''
 const REQUIRED_COLUMNS = ['section_id', 'is_vectorized', 'content_sha']
 // 合法 table 名（防注入；只允許英數與底線）。
 const TABLE_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+const EMBED_MAX_ATTEMPTS = 3
 
 // ── 小工具（與 build-ask-index 一致的純文字處理）─────────────────────────────
 function shellQuote(value: string): string {
@@ -99,6 +138,10 @@ function textLength(s: string): number {
 
 function sha256Hex(s: string): string {
   return createHash('sha256').update(s).digest('hex')
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function sqlString(value: string): string {
@@ -204,31 +247,57 @@ function ensureProgressTable(outDir: string): Promise<void> {
 // ── Workers AI REST 嵌入 ─────────────────────────────────────────────────────
 async function embedTexts(texts: string[]): Promise<number[][]> {
   const url = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/ai/run/${EMBEDDING_MODEL}`
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${API_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ text: texts }),
-  })
-  if (!res.ok) {
-    throw new Error(`嵌入 HTTP ${res.status}：${(await res.text()).slice(0, 500)}`)
-  }
-  const json = (await res.json()) as { success?: boolean; errors?: unknown }
-  if (json.success === false) {
-    throw new Error(`嵌入 API 回傳錯誤：${JSON.stringify(json.errors)}`)
-  }
-  const vectors = extractEmbeddings(json)
-  if (vectors.length !== texts.length) {
-    throw new Error(`嵌入筆數不符：送 ${texts.length} 收 ${vectors.length}`)
-  }
-  for (const v of vectors) {
-    if (v.length !== EMBEDDING_DIM) {
-      throw new Error(`嵌入維度不符：預期 ${EMBEDDING_DIM} 收到 ${v.length}`)
+  let lastError: unknown = null
+
+  for (let attempt = 1; attempt <= EMBED_MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${API_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text: texts }),
+      })
+      if (!res.ok) {
+        const body = (await res.text()).slice(0, 500)
+        const message = `嵌入 HTTP ${res.status}：${body}`
+        if (attempt < EMBED_MAX_ATTEMPTS && (res.status === 429 || res.status >= 500)) {
+          lastError = new Error(message)
+          console.warn(
+            `[vectorize-sync] ${message}；${attempt}/${EMBED_MAX_ATTEMPTS}，稍後重試。`,
+          )
+          await sleep(1000 * attempt)
+          continue
+        }
+        throw new Error(message)
+      }
+      const json = (await res.json()) as { success?: boolean; errors?: unknown }
+      if (json.success === false) {
+        throw new Error(`嵌入 API 回傳錯誤：${JSON.stringify(json.errors)}`)
+      }
+      const vectors = extractEmbeddings(json)
+      if (vectors.length !== texts.length) {
+        throw new Error(`嵌入筆數不符：送 ${texts.length} 收 ${vectors.length}`)
+      }
+      for (const v of vectors) {
+        if (v.length !== EMBEDDING_DIM) {
+          throw new Error(`嵌入維度不符：預期 ${EMBEDDING_DIM} 收到 ${v.length}`)
+        }
+      }
+      return vectors
+    } catch (e) {
+      lastError = e
+      if (attempt >= EMBED_MAX_ATTEMPTS) break
+      console.warn(
+        `[vectorize-sync] 嵌入失敗：${e instanceof Error ? e.message : String(e)}；` +
+          `${attempt}/${EMBED_MAX_ATTEMPTS}，稍後重試。`,
+      )
+      await sleep(1000 * attempt)
     }
   }
-  return vectors
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError))
 }
 
 // ── Vectorize upsert（透過 wrangler CLI；冪等 last-write-wins）─────────────────

@@ -178,7 +178,7 @@ export function renderHomePage(): string {
       <div class="hero">
         <img class="logo" src="/logo.png" alt="鳳問 logo">
         <h1>鳳問</h1>
-        <p class="tagline">透過 Line Bot，認識唐鳳的思想</p>
+        <p class="tagline">透過問答機器人，認識唐鳳的思想</p>
       </div>
 
       <section class="demo">
@@ -186,7 +186,7 @@ export function renderHomePage(): string {
           <input
             v-model="question"
             type="text"
-            placeholder="輸入你的問題，例如：什麼是數位民主？"
+            placeholder="輸入你的問題，例如：什麼是仁工智慧？"
             :disabled="loading"
             aria-label="問題">
           <button type="submit" :disabled="loading || !question.trim()">
@@ -285,6 +285,7 @@ export function renderHomePage(): string {
         const answered = ref(false)
         const error = ref('')
         const samples = [
+          '什麼是仁工智慧？',
           '什麼是數位民主？',
           '如何看待開放政府？',
           '唐鳳對 AI 的看法？',

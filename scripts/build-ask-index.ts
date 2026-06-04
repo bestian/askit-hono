@@ -10,7 +10,7 @@
  *   R2_BUCKET     R2 bucket 名稱（預設 askit-fuse-index-cache）
  *   R2_KEY        上傳到 R2 的 key（預設 ask-index/audrey-tang.json）
  *   R2_MANIFEST_KEY  上傳 sidecar manifest 的 key（預設 ask-index/audrey-tang.manifest.json）
- *   MAX_SECTION_CHARS  段落純文字字數上限（預設 100）
+ *   MAX_SECTION_CHARS  段落純文字字數上限（預設 175）
  *   YEARS_BACK    只保留最近幾年的內容（預設 2，以 filename 開頭日期判斷）
  *   LOCAL=1       對 D1 下 --local（預設用 --remote 對線上資料庫查詢）
  *   SKIP_UPLOAD=1 只在本地產出 JSON，不上傳 R2
@@ -36,7 +36,7 @@ const SPEAKER_LIKE = process.env.SPEAKER_LIKE ?? '唐鳳%'
 const R2_KEY = process.env.R2_KEY ?? ASK_INDEX_R2_KEY
 const R2_MANIFEST_KEY =
   process.env.R2_MANIFEST_KEY ?? manifestKeyForIndexKey(R2_KEY)
-const MAX_SECTION_CHARS = Number(process.env.MAX_SECTION_CHARS ?? '100')
+const MAX_SECTION_CHARS = Number(process.env.MAX_SECTION_CHARS ?? '175')
 const YEARS_BACK = Number(process.env.YEARS_BACK ?? '2')
 const SKIP_UPLOAD = process.env.SKIP_UPLOAD === '1'
 const D1_FLAG = process.env.LOCAL === '1' ? '--local' : '--remote'

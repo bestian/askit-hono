@@ -66,16 +66,16 @@ export function renderPrivacyPolicyPage(): string {
 
     <section aria-labelledby="privacy-zh">
       <h2 id="privacy-zh">華語</h2>
-      <p>本 LINE Bot 不收集、儲存、販售、交換或分析任何使用者資料。</p>
-      <p>當您傳送訊息給本 LINE Bot 時，訊息只會用於即時產生回覆；我們不會建立使用者個人檔案，也不會將您的訊息內容保存於資料庫。</p>
-      <p>本 LINE Bot 可能會依 LINE Platform 與 Cloudflare Workers 的運作機制接收必要的請求資訊，但我們不會主動蒐集或留存可識別您的個人資料。</p>
+      <p>本 Bot 不收集、儲存、販售、交換或分析任何使用者資料。</p>
+      <p>當您傳送訊息給本 Bot 時，訊息只會用於即時產生回覆；我們不會建立使用者個人檔案，也不會將您的訊息內容保存於資料庫。</p>
+      <p>本 Bot 可能會依 LINE Platform 與 Cloudflare Workers 的運作機制接收必要的請求資訊，但我們不會主動蒐集或留存可識別您的個人資料。</p>
     </section>
 
     <section class="lang" aria-labelledby="privacy-en">
       <h2 id="privacy-en">English</h2>
-      <p>This LINE Bot does not collect, store, sell, exchange, or analyze any user data.</p>
-      <p>When you send a message to this LINE Bot, the message is used only to generate an immediate reply. We do not create user profiles or store your message content in a database.</p>
-      <p>This LINE Bot may receive request information required by LINE Platform and Cloudflare Workers to operate, but we do not actively collect or retain personal data that identifies you.</p>
+      <p>This Bot does not collect, store, sell, exchange, or analyze any user data.</p>
+      <p>When you send a message to this Bot, the message is used only to generate an immediate reply. We do not create user profiles or store your message content in a database.</p>
+      <p>This Bot may receive request information required by LINE Platform and Cloudflare Workers to operate, but we do not actively collect or retain personal data that identifies you.</p>
     </section>
 
     <nav aria-label="Legal pages">

@@ -10,39 +10,141 @@ export function renderHomePage(): string {
       color-scheme: light dark;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       line-height: 1.6;
+      --bg: #f7f8f5;
+      --fg: #17212b;
+      --muted: #5b6770;
+      --border: #d9ded6;
+      --link: #2457a6;
+      --card: #ffffff;
+      --accent: #2457a6;
+      --accent-fg: #ffffff;
     }
+    * { box-sizing: border-box; }
     body {
       min-height: 100vh;
       margin: 0;
-      color: #17212b;
-      background: #f7f8f5;
+      color: var(--fg);
+      background: var(--bg);
       display: grid;
       grid-template-rows: 1fr auto;
     }
     main {
       width: min(760px, calc(100% - 32px));
       margin: 0 auto;
-      padding: 64px 0 40px;
-      display: grid;
-      place-items: center;
+      padding: 48px 0 40px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
       text-align: center;
     }
-    img {
-      width: clamp(128px, 32vw, 192px);
+    .hero { display: grid; place-items: center; }
+    img.logo {
+      width: clamp(112px, 28vw, 176px);
       height: auto;
       border-radius: 24px;
-      margin-bottom: 28px;
+      margin-bottom: 20px;
     }
     h1 {
       margin: 0;
-      font-size: clamp(3rem, 12vw, 6.5rem);
+      font-size: clamp(2.5rem, 11vw, 5.5rem);
       line-height: 1;
       letter-spacing: 0;
     }
-    p {
-      margin: 20px 0 0;
-      font-size: clamp(1.125rem, 4vw, 1.6rem);
+    .tagline {
+      margin: 16px 0 0;
+      font-size: clamp(1rem, 3.6vw, 1.4rem);
+      color: var(--muted);
     }
+    .demo {
+      width: 100%;
+      margin-top: 36px;
+      text-align: left;
+    }
+    .ask-form {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .ask-form input {
+      flex: 1 1 220px;
+      min-width: 0;
+      padding: 12px 16px;
+      font-size: 1.05rem;
+      color: var(--fg);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+    .ask-form input:focus {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+    .ask-form button {
+      flex: 0 0 auto;
+      padding: 12px 24px;
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--accent-fg);
+      background: var(--accent);
+      border: 0;
+      border-radius: 12px;
+      cursor: pointer;
+    }
+    .ask-form button:disabled {
+      opacity: 0.55;
+      cursor: progress;
+    }
+    .samples {
+      margin: 14px 0 0;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .samples button {
+      padding: 6px 12px;
+      font-size: 0.9rem;
+      color: var(--link);
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      cursor: pointer;
+    }
+    .answer {
+      margin-top: 24px;
+      padding: 20px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      min-height: 60px;
+      overflow-wrap: anywhere;
+    }
+    .answer .placeholder { color: var(--muted); }
+    .answer .body { white-space: pre-wrap; }
+    .answer .error { color: #b3261e; }
+    sup.cite a {
+      font-size: 0.72em;
+      padding: 0 1px;
+      text-decoration: none;
+    }
+    .sources {
+      margin-top: 18px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+    }
+    .sources h2 {
+      margin: 0 0 10px;
+      font-size: 0.95rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .sources ol { margin: 0; padding-left: 1.4em; }
+    .sources li { margin-bottom: 6px; }
+    .cursor {
+      display: inline-block;
+      width: 0.5em;
+      animation: blink 1s steps(2) infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
     footer {
       width: min(760px, calc(100% - 32px));
       margin: 0 auto;
@@ -51,39 +153,191 @@ export function renderHomePage(): string {
       justify-content: center;
       gap: 20px;
       flex-wrap: wrap;
-      border-top: 1px solid #d9ded6;
+      border-top: 1px solid var(--border);
     }
-    a {
-      color: #2457a6;
-      text-decoration-thickness: 0.08em;
-      text-underline-offset: 0.18em;
-    }
+    a { color: var(--link); text-underline-offset: 0.18em; }
     @media (prefers-color-scheme: dark) {
-      body {
-        color: #eef2f3;
-        background: #121614;
+      :root {
+        --bg: #121614;
+        --fg: #eef2f3;
+        --muted: #9aa6ad;
+        --border: #343b35;
+        --link: #9fc2ff;
+        --card: #1b211e;
+        --accent: #3a6fc4;
       }
-      footer {
-        border-color: #343b35;
-      }
-      a {
-        color: #9fc2ff;
-      }
+    }
+    @media (max-width: 480px) {
+      .ask-form button { flex: 1 1 100%; }
     }
   </style>
 </head>
 <body>
   <main>
-    <div>
-      <img src="/logo.png" alt="鳳問 logo">
-      <h1>鳳問</h1>
-      <p>透過 Line Bot，認識唐鳳的思想</p>
+    <div id="app">
+      <div class="hero">
+        <img class="logo" src="/logo.png" alt="鳳問 logo">
+        <h1>鳳問</h1>
+        <p class="tagline">透過 Line Bot，認識唐鳳的思想</p>
+      </div>
+
+      <section class="demo">
+        <form class="ask-form" @submit.prevent="ask">
+          <input
+            v-model="question"
+            type="text"
+            placeholder="輸入你的問題，例如：什麼是數位民主？"
+            :disabled="loading"
+            aria-label="問題">
+          <button type="submit" :disabled="loading || !question.trim()">
+            {{ loading ? '思考中…' : '送出' }}
+          </button>
+        </form>
+
+        <div class="samples" v-if="!answered">
+          <button
+            type="button"
+            v-for="s in samples"
+            :key="s"
+            @click="askSample(s)"
+            :disabled="loading">{{ s }}</button>
+        </div>
+
+        <div class="answer" v-if="answered">
+          <p class="placeholder" v-if="!bodyHtml && !error && loading">檢索逐字稿中…</p>
+          <p class="error" v-if="error">{{ error }}</p>
+          <div class="body" v-html="bodyHtml"></div>
+          <span class="cursor" v-if="loading">▌</span>
+          <div class="sources" v-if="sources.length">
+            <h2>出處</h2>
+            <ol>
+              <li v-for="src in sources" :key="src.index" :value="src.index">
+                <a :href="src.href" target="_blank" rel="noopener noreferrer">{{ src.label }}</a>
+              </li>
+            </ol>
+          </div>
+        </div>
+      </section>
     </div>
   </main>
   <footer>
     <a href="/privacy">隱私權政策</a>
     <a href="/terms">使用條款</a>
   </footer>
+
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script>
+    const { createApp, ref, computed } = Vue
+
+    // 將串流回來的 Markdown（含 [^n] 引註與末尾 [^n]: [標題](網址) 註腳）
+    // 拆成「正文 + 出處清單」，並把行內引註轉成可點擊、開新分頁的上標連結。
+    function escapeHtml(text) {
+      return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+    }
+
+    function parseAnswer(raw) {
+      const sources = []
+      const seen = new Map()
+      // 抽出末尾註腳定義：[^1]: [label](href)
+      const body = raw.replace(
+        /^\\[\\^(\\d+)\\]:\\s*\\[([^\\]]*)\\]\\(([^)\\s]+)\\)\\s*$/gm,
+        (_m, num, label, href) => {
+          const index = Number(num)
+          if (!seen.has(index)) {
+            seen.set(index, { index, label: label.trim() || href, href })
+          }
+          return ''
+        },
+      ).trim()
+
+      sources.push(...[...seen.values()].sort((a, b) => a.index - b.index))
+      const hrefByIndex = new Map(sources.map((s) => [s.index, s.href]))
+
+      // 正文：先逃脫 HTML，再還原我們要的少量 Markdown。
+      let html = escapeHtml(body)
+      // 粗體 / 斜體
+      html = html.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>')
+      html = html.replace(/(^|[^*])\\*([^*\\n]+)\\*/g, '$1<em>$2</em>')
+      // 行內 Markdown 連結 [text](url) → 開新分頁
+      html = html.replace(
+        /\\[([^\\]]+)\\]\\((https?:[^)\\s]+)\\)/g,
+        '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>',
+      )
+      // 行內引註 [^n] → 上標連結（連到對應出處，開新分頁）
+      html = html.replace(/\\[\\^(\\d+)\\]/g, (m, num) => {
+        const href = hrefByIndex.get(Number(num))
+        if (!href) return ''
+        return '<sup class="cite"><a href="' + href +
+          '" target="_blank" rel="noopener noreferrer">[' + num + ']</a></sup>'
+      })
+
+      return { html, sources }
+    }
+
+    createApp({
+      setup() {
+        const question = ref('')
+        const raw = ref('')
+        const loading = ref(false)
+        const answered = ref(false)
+        const error = ref('')
+        const samples = [
+          '什麼是數位民主？',
+          '如何看待開放政府？',
+          '唐鳳對 AI 的看法？',
+        ]
+
+        const parsed = computed(() => parseAnswer(raw.value))
+        const bodyHtml = computed(() => parsed.value.html)
+        const sources = computed(() => parsed.value.sources)
+
+        async function run(q) {
+          const query = q.trim()
+          if (!query || loading.value) return
+          question.value = query
+          loading.value = true
+          answered.value = true
+          error.value = ''
+          raw.value = ''
+
+          try {
+            const res = await fetch('/cag/' + encodeURIComponent(query))
+            if (!res.ok) {
+              error.value = (await res.text()) || '查詢發生錯誤，請稍後再試。'
+              return
+            }
+            const reader = res.body.getReader()
+            const decoder = new TextDecoder()
+            while (true) {
+              const { done, value } = await reader.read()
+              if (done) break
+              raw.value += decoder.decode(value, { stream: true })
+            }
+            raw.value += decoder.decode()
+          } catch (e) {
+            error.value = '連線發生錯誤，請稍後再試。'
+          } finally {
+            loading.value = false
+          }
+        }
+
+        return {
+          question,
+          loading,
+          answered,
+          error,
+          samples,
+          bodyHtml,
+          sources,
+          ask: () => run(question.value),
+          askSample: (s) => run(s),
+        }
+      },
+    }).mount('#app')
+  </script>
 </body>
 </html>`
 }

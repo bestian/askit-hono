@@ -50,6 +50,9 @@ jobs:
       - name: Refresh R2 index
         run: npm run build:index
 
+      - name: Sync vector index
+        run: npm run vectorize:sync
+
       - name: Validate Worker bundle
         run: npx wrangler deploy --dry-run --outdir /tmp/askit-hono-dry-run
 

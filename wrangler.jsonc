@@ -49,6 +49,21 @@
     { "binding": "VECTORIZE", "index_name": "askit-audrey-tang" }
   ],
 
+  // 防連續濫用：用 Durable Object 做「同一使用者 N 秒內最多 1 次」的強一致限流。
+  // 內建 ratelimit binding 為 per-PoP、eventually consistent、permissive，擋不住
+  // 「同一人的下一個請求」（LINE webhook 實測會穿透），故改用 DO：每個 key 一顆全域
+  // 唯一實例（idFromName），單執行緒、強一致，能確實擋住視窗內的第 2 個請求。
+  //   - LINE webhook 以 event.source.userId 為 key（精準對人）。
+  //   - /ask、/cag 沒有登入身分，以 cf-connecting-ip 為 key（同一 NAT 會共用額度）。
+  "durable_objects": {
+    "bindings": [
+      { "name": "RATE_LIMIT_DO", "class_name": "RateLimiterDO" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["RateLimiterDO"] }
+  ],
+
   "assets": {
     "directory": "./public"
   }

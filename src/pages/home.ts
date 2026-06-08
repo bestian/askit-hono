@@ -212,8 +212,8 @@ export function renderHomePage(): string {
             placeholder="輸入你的問題，例如：什麼是仁工智慧？"
             :disabled="loading"
             aria-label="問題">
-          <button type="submit" :disabled="loading || !question.trim()">
-            {{ loading ? '思考中…' : '送出' }}
+          <button type="submit" :disabled="loading || cooldown > 0 || !question.trim()">
+            {{ loading ? '思考中…' : (cooldown > 0 ? cooldown + ' 秒…' : '送出') }}
           </button>
         </form>
 
@@ -223,7 +223,7 @@ export function renderHomePage(): string {
             v-for="s in samples"
             :key="s"
             @click="askSample(s)"
-            :disabled="loading">{{ s }}</button>
+            :disabled="loading || cooldown > 0">{{ s }}</button>
         </div>
 
         <div class="answer" v-if="answered">
@@ -307,6 +307,22 @@ export function renderHomePage(): string {
         const loading = ref(false)
         const answered = ref(false)
         const error = ref('')
+        // 防連續濫用：每次發問後送出鈕冷卻 10 秒（對齊後端 10 秒限流視窗）。
+        const COOLDOWN_SECONDS = 10
+        const cooldown = ref(0)
+        let cooldownTimer = null
+        function startCooldown() {
+          cooldown.value = COOLDOWN_SECONDS
+          if (cooldownTimer) clearInterval(cooldownTimer)
+          cooldownTimer = setInterval(() => {
+            cooldown.value -= 1
+            if (cooldown.value <= 0) {
+              cooldown.value = 0
+              clearInterval(cooldownTimer)
+              cooldownTimer = null
+            }
+          }, 1000)
+        }
         const samples = [
           '什麼是仁工智慧？',
           '什麼是數位民主？',
@@ -320,7 +336,7 @@ export function renderHomePage(): string {
 
         async function run(q) {
           const query = q.trim()
-          if (!query || loading.value) return
+          if (!query || loading.value || cooldown.value > 0) return
           question.value = query
           loading.value = true
           answered.value = true
@@ -345,12 +361,14 @@ export function renderHomePage(): string {
             error.value = '連線發生錯誤，請稍後再試。'
           } finally {
             loading.value = false
+            startCooldown()
           }
         }
 
         return {
           question,
           loading,
+          cooldown,
           answered,
           error,
           samples,

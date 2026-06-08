@@ -1,4 +1,4 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 
 import { renderHomePage } from './pages/home'
 import { renderPrivacyPolicyPage } from './pages/privacy'
@@ -41,6 +41,9 @@ type Bindings = {
   }
   // Vectorize 語意索引 binding；尚未建立索引前可不綁（程式會回退 archive）。
   VECTORIZE?: VectorizeBinding
+  // 防連續濫用限流：Durable Object namespace（wrangler.jsonc 的 durable_objects）。
+  // 未綁時不限流（dev/測試）。
+  RATE_LIMIT_DO?: DurableObjectNamespace
 }
 
 const DEFAULT_CAG_RETRIEVER: CagRetriever = 'vectorize'
@@ -95,6 +98,11 @@ const WEBHOOK_CAG_ANSWER_INSTRUCTION =
   '於陳述具體事實時標註 [1]、[2] 等來源編號。'
 const NOT_FOUND_REPLY = '您的問題超出了資料庫的範圍，\n逐字稿網站連結如下：https://archive.tw'
 const ERROR_REPLY = '查詢發生錯誤，請稍後再試'
+// 限流冷卻視窗：同一使用者於此毫秒數內最多 1 次（對齊首頁送出鈕的 10 秒冷卻）。
+const RATE_LIMIT_WINDOW_MS = 10_000
+// 限流（同一使用者 10 秒內最多 1 次）觸發時的回覆訊息。
+const RATE_LIMIT_HTTP_MESSAGE = '您的發問過於頻繁，請稍候約 10 秒再試，謝謝 🙏'
+const RATE_LIMIT_LINE_REPLY = '您的發問過於頻繁，請稍候約 10 秒再試，謝謝 🙏'
 const ROBOTS_TXT = `User-agent: *
 Disallow: /ask/
 Disallow: /cag/
@@ -109,6 +117,35 @@ function decodeRouteParam(value: string): string {
   } catch {
     return value
   }
+}
+
+// 強一致的單人限流：每個 key 對應一顆 Durable Object（idFromName 路由），
+// 物件內以「上次通過時間」判斷是否仍在冷卻視窗內。回 true 代表「應被擋下」。
+// 無 binding（dev/測試）或檢查發生錯誤時一律放行，以免誤擋正常使用者。
+async function isRateLimited(
+  ns: DurableObjectNamespace | undefined,
+  key: string,
+): Promise<boolean> {
+  if (!ns) return false
+  try {
+    const stub = ns.get(ns.idFromName(key))
+    const res = await stub.fetch(
+      `https://rate-limit/?window_ms=${RATE_LIMIT_WINDOW_MS}`,
+    )
+    const data = (await res.json()) as { allowed: boolean }
+    return !data.allowed
+  } catch (e) {
+    console.error('限流檢查失敗，放行:', e)
+    return false
+  }
+}
+
+// /ask、/cag 沒有登入身分，只能以來源 IP 當限流 key（同一 NAT 會共用額度）。
+// 取不到 IP（例如本機 wrangler dev）時不限流，以免誤擋正常使用者。
+async function isIpRateLimited(c: Context<{ Bindings: Bindings }>): Promise<boolean> {
+  const ip = c.req.header('cf-connecting-ip')
+  if (!ip) return false
+  return isRateLimited(c.env.RATE_LIMIT_DO, `ip:${ip}`)
 }
 
 function parsePositiveInteger(value: string | undefined, fallback: number): number {
@@ -315,6 +352,9 @@ app.get('/robots.txt', (c) => {
 })
 
 app.get('/ask/:question', async (c) => {
+  if (await isIpRateLimited(c)) {
+    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, { 'Retry-After': '10' })
+  }
   const question = decodeRouteParam(c.req.param('question'))
 
   try {
@@ -352,6 +392,9 @@ app.get('/cag/status', (c) => {
 })
 
 app.get('/cag/:question', async (c) => {
+  if (await isIpRateLimited(c)) {
+    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, { 'Retry-After': '10' })
+  }
   const question = decodeRouteParam(c.req.param('question'))
   return streamCagAnswer(c.env.AI, question, {
     archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
@@ -374,6 +417,9 @@ app.get('/cag/:question', async (c) => {
 })
 
 app.post('/cag', async (c) => {
+  if (await isIpRateLimited(c)) {
+    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, { 'Retry-After': '10' })
+  }
   let payload: { question?: unknown; topK?: unknown; top_k?: unknown; citableTopK?: unknown; cite_top_k?: unknown; model?: unknown; maxTokens?: unknown; max_tokens?: unknown; retriever?: unknown; minScore?: unknown; min_score?: unknown }
   try {
     payload = await c.req.json()
@@ -461,6 +507,15 @@ app.post('/webhook', async (c) => {
   const userId = event.source.userId
   const userText = event.message.text ?? ''
 
+  // 防連續濫用：同一 userId 10 秒內第 2 則訊息，只回個提示，不再做昂貴的 CAG 生成。
+  // （仍須回 200 ack，並用一次性 reply token 送出提示。）
+  if (userId && (await isRateLimited(c.env.RATE_LIMIT_DO, `line:${userId}`))) {
+    c.executionCtx.waitUntil(
+      replyToLine(c.env, replyToken, { type: 'text', text: RATE_LIMIT_LINE_REPLY }),
+    )
+    return c.text('OK', 200)
+  }
+
   // 關鍵：CAG 生成需數秒到十幾秒，超過 LINE 對 webhook 的「2 秒內回 2xx」限制，
   // 因此把慢工作交給 ctx.waitUntil 背景執行（回應後最多 30 秒預算），handler 立刻 ack。
   // reply token 約 1 分鐘有效，留待背景用 Reply API 送出「唯一一次」回覆。
@@ -468,5 +523,23 @@ app.post('/webhook', async (c) => {
 
   return c.text('OK', 200)
 })
+
+// 限流用 Durable Object：每個 key（line:<userId> 或 ip:<ip>）透過 idFromName 路由到
+// 同一顆全域唯一實例，單執行緒、強一致。只在記憶體保留「上次通過時間」即可——即使實例
+// 被回收，最壞情況也只是視窗內多放行一個請求，無安全疑慮，故不需動用 storage。
+export class RateLimiterDO {
+  private lastAllowedMs = 0
+
+  async fetch(req: Request): Promise<Response> {
+    const windowMs =
+      Number(new URL(req.url).searchParams.get('window_ms')) || RATE_LIMIT_WINDOW_MS
+    const now = Date.now()
+    if (now - this.lastAllowedMs < windowMs) {
+      return Response.json({ allowed: false })
+    }
+    this.lastAllowedMs = now
+    return Response.json({ allowed: true })
+  }
+}
 
 export default app

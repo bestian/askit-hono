@@ -26,6 +26,12 @@ import {
   type LineReplyMessage,
 } from './utils/search'
 
+// Cloudflare Workers 內建 Rate Limiting binding 的最小型別（@cloudflare/workers-types 未必有）。
+// limit() 不是 subrequest、in-memory、零有感延遲，用作便宜的第一層洪水防護。
+type RateLimiter = {
+  limit: (options: { key: string }) => Promise<{ success: boolean }>
+}
+
 type Bindings = {
   LINE_CHANNEL_ACCESS_TOKEN: string
   LINE_CHANNEL_SECRET: string
@@ -41,8 +47,11 @@ type Bindings = {
   }
   // Vectorize 語意索引 binding；尚未建立索引前可不綁（程式會回退 archive）。
   VECTORIZE?: VectorizeBinding
-  // 防連續濫用限流：Durable Object namespace（wrangler.jsonc 的 durable_objects）。
-  // 未綁時不限流（dev/測試）。
+  // 防連續濫用限流（兩層）：
+  //   第一層 RATE_LIMITER —— 內建限流，便宜、概略、per-PoP，擋明顯洪水（門檻設很寬）。
+  //   第二層 RATE_LIMIT_DO —— Durable Object，精準、強一致，做「同一人 N 秒最多 1 次」冷卻。
+  // 任一未綁時，該層自動跳過（dev/測試仍可運作）。
+  RATE_LIMITER?: RateLimiter
   RATE_LIMIT_DO?: DurableObjectNamespace
 }
 
@@ -119,13 +128,22 @@ function decodeRouteParam(value: string): string {
   }
 }
 
-// 強一致的單人限流：每個 key 對應一顆 Durable Object（idFromName 路由），
-// 物件內以「上次通過時間」判斷是否仍在冷卻視窗內。回 true 代表「應被擋下」。
-// 無 binding（dev/測試）或檢查發生錯誤時一律放行，以免誤擋正常使用者。
-async function isRateLimited(
-  ns: DurableObjectNamespace | undefined,
-  key: string,
-): Promise<boolean> {
+// 兩層單人限流，回 true 代表「應被擋下」（兩層共用同一個 key）：
+//   第一層（便宜、概略）：內建 limit()，非 subrequest、in-memory、零有感延遲。
+//     太頻繁就直接擋下，根本不碰下游 DO —— 順手保護單一 DO 實例不被洪水打爆。
+//     門檻刻意設得比「1 次/N 秒」寬很多，正常使用者碰不到，只有狂刷會中。
+//   第二層（精準、強一致）：每個 key 一顆 Durable Object（idFromName 路由），
+//     物件內以「上次通過時間」判斷是否仍在冷卻視窗內，做真正的逐人冷卻。
+// 任一層未綁（dev/測試）或 DO 檢查發生錯誤時，該層放行，以免誤擋正常使用者。
+async function isRateLimited(env: Bindings, key: string): Promise<boolean> {
+  // 第一層：內建限流（免費、零延遲）。太頻繁直接擋，不付 DO 成本。
+  if (env.RATE_LIMITER) {
+    const { success } = await env.RATE_LIMITER.limit({ key })
+    if (!success) return true
+  }
+
+  // 第二層：DO 精準冷卻。
+  const ns = env.RATE_LIMIT_DO
   if (!ns) return false
   try {
     const stub = ns.get(ns.idFromName(key))
@@ -145,7 +163,7 @@ async function isRateLimited(
 async function isIpRateLimited(c: Context<{ Bindings: Bindings }>): Promise<boolean> {
   const ip = c.req.header('cf-connecting-ip')
   if (!ip) return false
-  return isRateLimited(c.env.RATE_LIMIT_DO, `ip:${ip}`)
+  return isRateLimited(c.env, `ip:${ip}`)
 }
 
 function parsePositiveInteger(value: string | undefined, fallback: number): number {
@@ -509,7 +527,7 @@ app.post('/webhook', async (c) => {
 
   // 防連續濫用：同一 userId 10 秒內第 2 則訊息，只回個提示，不再做昂貴的 CAG 生成。
   // （仍須回 200 ack，並用一次性 reply token 送出提示。）
-  if (userId && (await isRateLimited(c.env.RATE_LIMIT_DO, `line:${userId}`))) {
+  if (userId && (await isRateLimited(c.env, `line:${userId}`))) {
     c.executionCtx.waitUntil(
       replyToLine(c.env, replyToken, { type: 'text', text: RATE_LIMIT_LINE_REPLY }),
     )

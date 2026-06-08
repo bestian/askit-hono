@@ -49,12 +49,26 @@
     { "binding": "VECTORIZE", "index_name": "askit-audrey-tang" }
   ],
 
-  // 防連續濫用：用 Durable Object 做「同一使用者 N 秒內最多 1 次」的強一致限流。
-  // 內建 ratelimit binding 為 per-PoP、eventually consistent、permissive，擋不住
-  // 「同一人的下一個請求」（LINE webhook 實測會穿透），故改用 DO：每個 key 一顆全域
-  // 唯一實例（idFromName），單執行緒、強一致，能確實擋住視窗內的第 2 個請求。
+  // 防連續濫用：兩層限流（兩層共用同一個 key：line:<userId> 或 ip:<ip>）。
+  //
+  // 第一層 RATE_LIMITER —— 內建限流，便宜（非 subrequest、in-memory、零有感延遲）、
+  //   per-PoP、eventually consistent、permissive。門檻設很寬（5 次/10 秒），只負責擋
+  //   「明顯洪水」：太頻繁就在邊緣直接擋下，根本不碰下游 DO，順手保護單一 DO 實例不被打爆。
+  //   period 僅能 10 或 60；門檻刻意遠高於正常用量，避免誤擋守規矩的人。
+  //
+  // 第二層 RATE_LIMIT_DO —— Durable Object，每個 key 一顆全域唯一實例（idFromName），
+  //   單執行緒、強一致，做精準的「同一人 N 秒內最多 1 次」冷卻。內建限流為 per-PoP/最終
+  //   一致，擋不住「同一人的下一個請求」（LINE webhook 實測會穿透），故由 DO 當精準把關。
+  //
   //   - LINE webhook 以 event.source.userId 為 key（精準對人）。
   //   - /ask、/cag 沒有登入身分，以 cf-connecting-ip 為 key（同一 NAT 會共用額度）。
+  "ratelimits": [
+    {
+      "name": "RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 5, "period": 10 }
+    }
+  ],
   "durable_objects": {
     "bindings": [
       { "name": "RATE_LIMIT_DO", "class_name": "RateLimiterDO" }

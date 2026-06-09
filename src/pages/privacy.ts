@@ -6,7 +6,7 @@ export function renderPrivacyPolicyPage(): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>隱私權政策 | Privacy Policy | 鳳問</title>
   <meta name="description" content="鳳問的隱私權政策：我們不販售、交換或分析您的個人資料，也不保存訊息內容；僅為避免濫用而暫存最低限度的限流資訊。">
-  <link rel="canonical" href="https://askit-hono.audreyt.workers.dev/privacy">
+  <link rel="canonical" href="https://ask.archive.tw/privacy">
 
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
@@ -20,14 +20,14 @@ export function renderPrivacyPolicyPage(): string {
   <meta property="og:locale" content="zh_TW">
   <meta property="og:title" content="隱私權政策 | Privacy Policy | 鳳問">
   <meta property="og:description" content="鳳問的隱私權政策：我們不販售、交換或分析您的個人資料，也不保存訊息內容；僅為避免濫用而暫存最低限度的限流資訊。">
-  <meta property="og:url" content="https://askit-hono.audreyt.workers.dev/privacy">
-  <meta property="og:image" content="https://askit-hono.audreyt.workers.dev/og-image.png">
+  <meta property="og:url" content="https://ask.archive.tw/privacy">
+  <meta property="og:image" content="https://ask.archive.tw/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="隱私權政策 | Privacy Policy | 鳳問">
   <meta name="twitter:description" content="鳳問的隱私權政策：我們不販售、交換或分析您的個人資料，也不保存訊息內容；僅為避免濫用而暫存最低限度的限流資訊。">
-  <meta name="twitter:image" content="https://askit-hono.audreyt.workers.dev/og-image.png">
+  <meta name="twitter:image" content="https://ask.archive.tw/og-image.png">
   <style>
     :root {
       color-scheme: light dark;

@@ -6,7 +6,7 @@ export function renderHomePage(): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>鳳問 | 認識唐鳳的思想</title>
   <meta name="description" content="鳳問是一個問答機器人：提出問題，AI 會檢索唐鳳的逐字稿並附上出處作答，帶你認識唐鳳的思想。">
-  <link rel="canonical" href="https://askit-hono.audreyt.workers.dev/">
+  <link rel="canonical" href="https://ask.archive.tw/">
 
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
@@ -20,14 +20,14 @@ export function renderHomePage(): string {
   <meta property="og:locale" content="zh_TW">
   <meta property="og:title" content="鳳問 | 認識唐鳳的思想">
   <meta property="og:description" content="提出問題，AI 會檢索唐鳳的逐字稿並附上出處作答，帶你認識唐鳳的思想。">
-  <meta property="og:url" content="https://askit-hono.audreyt.workers.dev/">
-  <meta property="og:image" content="https://askit-hono.audreyt.workers.dev/og-image.png">
+  <meta property="og:url" content="https://ask.archive.tw/">
+  <meta property="og:image" content="https://ask.archive.tw/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="鳳問 | 認識唐鳳的思想">
   <meta name="twitter:description" content="提出問題，AI 會檢索唐鳳的逐字稿並附上出處作答，帶你認識唐鳳的思想。">
-  <meta name="twitter:image" content="https://askit-hono.audreyt.workers.dev/og-image.png">
+  <meta name="twitter:image" content="https://ask.archive.tw/og-image.png">
   <style>
     :root {
       color-scheme: light dark;

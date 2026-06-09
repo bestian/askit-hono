@@ -6,7 +6,7 @@ export function renderTermsOfUsePage(): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>使用條款 | Terms of Use | 鳳問</title>
   <meta name="description" content="鳳問的使用條款：回應內容採 Creative Commons 姓名標示-相同方式分享（CC BY-SA）授權。">
-  <link rel="canonical" href="https://askit-hono.audreyt.workers.dev/terms">
+  <link rel="canonical" href="https://ask.archive.tw/terms">
 
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
@@ -20,14 +20,14 @@ export function renderTermsOfUsePage(): string {
   <meta property="og:locale" content="zh_TW">
   <meta property="og:title" content="使用條款 | Terms of Use | 鳳問">
   <meta property="og:description" content="鳳問的使用條款：回應內容採 Creative Commons 姓名標示-相同方式分享（CC BY-SA）授權。">
-  <meta property="og:url" content="https://askit-hono.audreyt.workers.dev/terms">
-  <meta property="og:image" content="https://askit-hono.audreyt.workers.dev/og-image.png">
+  <meta property="og:url" content="https://ask.archive.tw/terms">
+  <meta property="og:image" content="https://ask.archive.tw/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="使用條款 | Terms of Use | 鳳問">
   <meta name="twitter:description" content="鳳問的使用條款：回應內容採 Creative Commons 姓名標示-相同方式分享（CC BY-SA）授權。">
-  <meta name="twitter:image" content="https://askit-hono.audreyt.workers.dev/og-image.png">
+  <meta name="twitter:image" content="https://ask.archive.tw/og-image.png">
   <style>
     :root {
       color-scheme: light dark;

@@ -118,9 +118,11 @@ const NOT_FOUND_REPLY = '您的問題超出了資料庫的範圍，\n逐字稿�
 const ERROR_REPLY = '查詢發生錯誤，請稍後再試'
 // 限流冷卻視窗：同一使用者於此毫秒數內最多 1 次（對齊首頁送出鈕的 10 秒冷卻）。
 const RATE_LIMIT_WINDOW_MS = 10_000
+const MAX_QUESTION_CHARS = 100
 // 限流（同一使用者 10 秒內最多 1 次）觸發時的回覆訊息。
 const RATE_LIMIT_HTTP_MESSAGE = '您的發問過於頻繁，請稍候約 10 秒再試，謝謝 🙏'
 const RATE_LIMIT_LINE_REPLY = '您的發問過於頻繁，請稍候約 10 秒再試，謝謝 🙏'
+const QUESTION_TOO_LONG_MESSAGE = '您的問題字數過長，請縮短問題的長度，謝謝!'
 const ROBOTS_TXT = `User-agent: *
 Disallow: /ask/
 Disallow: /cag/
@@ -135,6 +137,10 @@ function decodeRouteParam(value: string): string {
   } catch {
     return value
   }
+}
+
+function isQuestionTooLong(question: string): boolean {
+  return [...question.trim()].length > MAX_QUESTION_CHARS
 }
 
 async function readStreamToString(stream: ReadableStream<Uint8Array>): Promise<string> {
@@ -449,6 +455,9 @@ app.get('/ask/:question', async (c) => {
     return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, { 'Retry-After': '10' })
   }
   const question = decodeRouteParam(c.req.param('question'))
+  if (isQuestionTooLong(question)) {
+    return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
+  }
   // 隨機問題每次都要不同結果，不快取；其餘相同問題 7 天內直接取用。
   const random = isRandomAskQuestion(question)
   const cacheKey = random ? null : await buildCacheKey('ask', question)
@@ -501,6 +510,9 @@ app.get('/cag/:question', async (c) => {
     return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, { 'Retry-After': '10' })
   }
   const question = decodeRouteParam(c.req.param('question'))
+  if (isQuestionTooLong(question)) {
+    return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
+  }
   const model = c.env.ASK_MODEL || DEFAULT_CAG_MODEL
   const topK = parsePositiveInteger(c.req.query('top_k') ?? c.req.query('topK'), 6)
   const citableTopK = parseOptionalPositiveInteger(
@@ -557,6 +569,9 @@ app.post('/cag', async (c) => {
   const question = typeof payload.question === 'string' ? payload.question : ''
   if (question.trim() === '') {
     return c.text('question is required', 400)
+  }
+  if (isQuestionTooLong(question)) {
+    return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
   }
 
   const topK = typeof payload.topK === 'number'
@@ -648,6 +663,13 @@ app.post('/webhook', async (c) => {
   const replyToken = event.replyToken
   const userId = event.source.userId
   const userText = event.message.text ?? ''
+
+  if (isQuestionTooLong(userText)) {
+    c.executionCtx.waitUntil(
+      replyToLine(c.env, replyToken, { type: 'text', text: QUESTION_TOO_LONG_MESSAGE }),
+    )
+    return c.text('OK', 200)
+  }
 
   // 防連續濫用：同一 userId 10 秒內第 2 則訊息，只回個提示，不再做昂貴的 CAG 生成。
   // （仍須回 200 ack，並用一次性 reply token 送出提示。）

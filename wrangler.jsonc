@@ -4,6 +4,8 @@
   "main": "src/index.ts",
   "compatibility_date": "2025-01-01",
   "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
 
   // LINE_CHANNEL_ACCESS_TOKEN 與 LINE_CHANNEL_SECRET 應透過
   // `wrangler secret put` 設定，不要寫入此檔案。

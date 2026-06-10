@@ -6,11 +6,17 @@ import { renderTermsOfUsePage } from './pages/terms'
 import {
   type CagAnswer,
   type CagRetriever,
+  type CagSource,
   DEFAULT_CAG_MODEL,
   generateCagAnswer,
   getCagStatus,
   streamCagAnswer,
 } from './utils/cag'
+import {
+  buildCacheKey,
+  getCachedResponse,
+  putCachedResponse,
+} from './utils/cache'
 import {
   DEFAULT_VECTORIZE_MIN_COSINE_SCORE,
   type VectorizeBinding,
@@ -42,6 +48,8 @@ type Bindings = {
   CAG_RETRIEVER?: string
   CAG_VECTORIZE_MIN_SCORE?: string
   ASK_INDEX: R2Bucket
+  // 答案快取 bucket（issue #25）：相同問題 7 天內直接取用，未綁時優雅降級。
+  ASK_CACHE?: R2Bucket
   AI: {
     run: (model: string, input: Record<string, unknown>) => Promise<unknown>
   }
@@ -126,6 +134,48 @@ function decodeRouteParam(value: string): string {
   } catch {
     return value
   }
+}
+
+async function readStreamToString(stream: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  let text = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    text += decoder.decode(value, { stream: true })
+  }
+  return text + decoder.decode()
+}
+
+// 用快取內容組出回應（命中時走這條，不跑檢索與 AI）。
+function respondFromCache(body: string, contentType: string): Response {
+  return new Response(body, {
+    status: 200,
+    headers: { 'Content-Type': contentType, 'X-Cache': 'HIT' },
+  })
+}
+
+// 把串流回應「分流」：一份照常串給使用者，一份在背景累積成完整文字後寫入快取。
+// 只快取 200 成功回應；非 200（如 404 查無範圍）或無 body 時原樣回傳、不快取。
+function cacheStreamingResponse(
+  c: Context<{ Bindings: Bindings }>,
+  cacheKey: string,
+  response: Response,
+): Response {
+  if (response.status !== 200 || !response.body) return response
+  const [toClient, toCache] = response.body.tee()
+  const contentType =
+    response.headers.get('Content-Type') || 'text/markdown; charset=UTF-8'
+  c.executionCtx.waitUntil(
+    readStreamToString(toCache)
+      .then((text) => putCachedResponse(c.env.ASK_CACHE, cacheKey, text, contentType))
+      .catch((e) => console.error('快取串流寫入失敗:', e)),
+  )
+  return new Response(toClient, {
+    status: response.status,
+    headers: response.headers,
+  })
 }
 
 // 兩層單人限流，回 true 代表「應被擋下」（兩層共用同一個 key）：
@@ -315,15 +365,32 @@ async function replyWithCag(
   userId: string | undefined,
   question: string,
 ): Promise<void> {
+  const retriever = resolveCagRetriever(env.CAG_RETRIEVER)
+  const model = env.ASK_MODEL || DEFAULT_CAG_MODEL
+  // 快取：相同問題（retriever／model 相同）7 天內直接用快取的答案與來源回覆，不跑檢索與 AI。
+  const cacheKey = await buildCacheKey('webhook', question, { retriever, model })
+  const cached = await getCachedResponse(env.ASK_CACHE, cacheKey)
+  if (cached) {
+    try {
+      const { answer, sources } = JSON.parse(cached.body) as {
+        answer: string
+        sources: CagSource[]
+      }
+      await replyToLine(env, replyToken, formatCagAnswerFlex(answer, sources))
+      return
+    } catch (e) {
+      console.error('webhook 快取解析失敗，改為重新生成:', e)
+    }
+  }
+
   await startLineLoading(env, userId)
 
   let cag: CagAnswer | null = null
   let cagFailed = false
-  const retriever = resolveCagRetriever(env.CAG_RETRIEVER)
   try {
     cag = await generateCagAnswer(env.AI, question, {
       archiveBaseUrl: env.ASK_ARCHIVE_BASE_URL,
-      model: env.ASK_MODEL || DEFAULT_CAG_MODEL,
+      model,
       topK: WEBHOOK_CAG_TOP_K,
       citableTopK: WEBHOOK_CAG_CITE_TOP_K,
       maxCompletionTokens: WEBHOOK_CAG_MAX_COMPLETION_TOKENS,
@@ -347,6 +414,13 @@ async function replyWithCag(
   }
   const answer = splitSentencesToLines(trimToCompleteSentence(cag.answer))
   await replyToLine(env, replyToken, formatCagAnswerFlex(answer, cag.sources))
+  // 成功生成才寫入快取（answer + sources），供下次相同問題直接取用。
+  await putCachedResponse(
+    env.ASK_CACHE,
+    cacheKey,
+    JSON.stringify({ answer, sources: cag.sources }),
+    'application/json; charset=UTF-8',
+  )
 }
 
 app.get('/', (c) => {
@@ -374,22 +448,34 @@ app.get('/ask/:question', async (c) => {
     return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, { 'Retry-After': '10' })
   }
   const question = decodeRouteParam(c.req.param('question'))
+  // 隨機問題每次都要不同結果，不快取；其餘相同問題 7 天內直接取用。
+  const random = isRandomAskQuestion(question)
+  const cacheKey = random ? null : await buildCacheKey('ask', question)
+
+  if (cacheKey) {
+    const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
+    if (cached) return respondFromCache(cached.body, cached.contentType)
+  }
 
   try {
-    const hit = isRandomAskQuestion(question)
+    const hit = random
       ? await findRandomSection(c.env.ASK_INDEX)
       : await findClosestMatchingSection(c.env.ASK_INDEX, question)
     if (!hit) {
       return c.text('您的問題超出了資料庫的範圍，\n逐字稿網站連結如下：https://archive.tw', 404)
     }
     const body = formatAskAnswerHtml(hit)
-    return new Response(
-      `<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8"/><title>Ask</title></head><body><p>${body}</p></body></html>`,
-      {
-        status: 200,
-        headers: { 'Content-Type': 'text/html; charset=UTF-8' },
-      },
-    )
+    const html = `<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8"/><title>Ask</title></head><body><p>${body}</p></body></html>`
+    const contentType = 'text/html; charset=UTF-8'
+    if (cacheKey) {
+      c.executionCtx.waitUntil(
+        putCachedResponse(c.env.ASK_CACHE, cacheKey, html, contentType),
+      )
+    }
+    return new Response(html, {
+      status: 200,
+      headers: { 'Content-Type': contentType },
+    })
   } catch (e) {
     console.error(e)
     return c.text('查詢發生錯誤', 500)
@@ -414,24 +500,44 @@ app.get('/cag/:question', async (c) => {
     return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, { 'Retry-After': '10' })
   }
   const question = decodeRouteParam(c.req.param('question'))
-  return streamCagAnswer(c.env.AI, question, {
-    archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
-    model: c.req.query('model') || c.env.ASK_MODEL || DEFAULT_CAG_MODEL,
-    topK: parsePositiveInteger(c.req.query('top_k') ?? c.req.query('topK'), 6),
-    citableTopK: parseOptionalPositiveInteger(
-      c.req.query('cite_top_k') ?? c.req.query('citeTopK'),
-    ),
-    maxCompletionTokens: parsePositiveInteger(
-      c.req.query('max_tokens') ?? c.req.query('maxTokens'),
-      900,
-    ),
-    retriever: resolveCagRetriever(c.req.query('retriever'), c.env.CAG_RETRIEVER),
-    vectorize: c.env.VECTORIZE,
-    vectorizeMinScore: resolveVectorizeMinScore(
-      c.req.query('min_score') ?? c.req.query('minScore'),
-      c.env.CAG_VECTORIZE_MIN_SCORE,
-    ),
+  const model = c.req.query('model') || c.env.ASK_MODEL || DEFAULT_CAG_MODEL
+  const topK = parsePositiveInteger(c.req.query('top_k') ?? c.req.query('topK'), 6)
+  const citableTopK = parseOptionalPositiveInteger(
+    c.req.query('cite_top_k') ?? c.req.query('citeTopK'),
+  )
+  const maxCompletionTokens = parsePositiveInteger(
+    c.req.query('max_tokens') ?? c.req.query('maxTokens'),
+    900,
+  )
+  const retriever = resolveCagRetriever(c.req.query('retriever'), c.env.CAG_RETRIEVER)
+  const vectorizeMinScore = resolveVectorizeMinScore(
+    c.req.query('min_score') ?? c.req.query('minScore'),
+    c.env.CAG_VECTORIZE_MIN_SCORE,
+  )
+
+  // 快取 key 納入所有影響答案的參數；相同問題＋相同參數 7 天內直接取用。
+  const cacheKey = await buildCacheKey('cag', question, {
+    model,
+    topK,
+    citableTopK,
+    maxCompletionTokens,
+    retriever,
+    vectorizeMinScore,
   })
+  const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
+  if (cached) return respondFromCache(cached.body, cached.contentType)
+
+  const response = await streamCagAnswer(c.env.AI, question, {
+    archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
+    model,
+    topK,
+    citableTopK,
+    maxCompletionTokens,
+    retriever,
+    vectorize: c.env.VECTORIZE,
+    vectorizeMinScore,
+  })
+  return cacheStreamingResponse(c, cacheKey, response)
 })
 
 app.post('/cag', async (c) => {
@@ -474,19 +580,34 @@ app.post('/cag', async (c) => {
       ? payload.min_score
       : resolveVectorizeMinScore(c.env.CAG_VECTORIZE_MIN_SCORE)
 
-  return streamCagAnswer(c.env.AI, question, {
+  const retriever = resolveCagRetriever(
+    typeof payload.retriever === 'string' ? payload.retriever : undefined,
+    c.env.CAG_RETRIEVER,
+  )
+
+  // 快取 key 納入所有影響答案的參數；相同問題＋相同參數 7 天內直接取用。
+  const cacheKey = await buildCacheKey('cag', question, {
+    model,
+    topK,
+    citableTopK,
+    maxCompletionTokens,
+    retriever,
+    vectorizeMinScore,
+  })
+  const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
+  if (cached) return respondFromCache(cached.body, cached.contentType)
+
+  const response = await streamCagAnswer(c.env.AI, question, {
     archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
     model,
     topK,
     citableTopK,
     maxCompletionTokens,
-    retriever: resolveCagRetriever(
-      typeof payload.retriever === 'string' ? payload.retriever : undefined,
-      c.env.CAG_RETRIEVER,
-    ),
+    retriever,
     vectorize: c.env.VECTORIZE,
     vectorizeMinScore,
   })
+  return cacheStreamingResponse(c, cacheKey, response)
 })
 
 app.post('/webhook', async (c) => {

@@ -21,6 +21,18 @@ async function streamToString(stream: ReadableStream<string>): Promise<string> {
   }
 }
 
+async function signLineBody(secret: string, body: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(body))
+  return btoa(String.fromCharCode(...new Uint8Array(mac)))
+}
+
 test('buildCagQueryVariants keeps useful Chinese retrieval terms', () => {
   const variants = buildCagQueryVariants('用 #zh-tw 回答：地神香火如何')
   assert.equal(variants[0], '地神香火如何')
@@ -128,6 +140,114 @@ test('public CAG endpoints ignore client-supplied model', async () => {
     '@cf/account/allowed-model',
     '@cf/account/allowed-model',
   ])
+})
+
+test('question endpoints reject questions over 100 characters before retrieval or AI', async () => {
+  const message = '您的問題字數過長，請縮短問題的長度，謝謝!'
+  const longQuestion = '長'.repeat(101)
+  const aiCalls: { model: string; input: Record<string, unknown> }[] = []
+  const env = {
+    AI: {
+      run: async (model: string, input: Record<string, unknown>) => {
+        aiCalls.push({ model, input })
+        return { response: '不應該被呼叫' }
+      },
+    },
+  }
+
+  const askResponse = await app.request(
+    `/ask/${encodeURIComponent(longQuestion)}`,
+    undefined,
+    env,
+  )
+  assert.equal(askResponse.status, 400)
+  assert.equal(await askResponse.text(), message)
+
+  const getCagResponse = await app.request(
+    `/cag/${encodeURIComponent(longQuestion)}`,
+    undefined,
+    env,
+  )
+  assert.equal(getCagResponse.status, 400)
+  assert.equal(await getCagResponse.text(), message)
+
+  const postCagResponse = await app.request(
+    '/cag',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: longQuestion }),
+    },
+    env,
+  )
+  assert.equal(postCagResponse.status, 400)
+  assert.equal(await postCagResponse.text(), message)
+  assert.equal(aiCalls.length, 0)
+})
+
+test('webhook replies with length warning for questions over 100 characters', async () => {
+  const message = '您的問題字數過長，請縮短問題的長度，謝謝!'
+  const secret = 'test-secret'
+  const body = JSON.stringify({
+    events: [
+      {
+        type: 'message',
+        replyToken: 'reply-token',
+        timestamp: Date.now(),
+        source: { userId: 'line-user' },
+        message: { type: 'text', text: '長'.repeat(101) },
+      },
+    ],
+  })
+  const signature = await signLineBody(secret, body)
+  const fetchCalls: { input: RequestInfo | URL; init?: RequestInit }[] = []
+  const waitUntilPromises: Promise<unknown>[] = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    fetchCalls.push({ input, init })
+    return new Response('{}', { status: 200 })
+  }
+
+  try {
+    const response = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-line-signature': signature,
+        },
+        body,
+      },
+      {
+        LINE_CHANNEL_SECRET: secret,
+        LINE_CHANNEL_ACCESS_TOKEN: 'line-token',
+        AI: {
+          run: async () => {
+            throw new Error('AI should not be called for overlong questions')
+          },
+        },
+      },
+      {
+        waitUntil: (promise: Promise<unknown>) => {
+          waitUntilPromises.push(promise)
+        },
+        passThroughOnException: () => {},
+      },
+    )
+    assert.equal(response.status, 200)
+    assert.equal(await response.text(), 'OK')
+    await Promise.all(waitUntilPromises)
+
+    assert.equal(fetchCalls.length, 1)
+    assert.equal(String(fetchCalls[0].input), 'https://api.line.me/v2/bot/message/reply')
+    assert.deepEqual(JSON.parse(String(fetchCalls[0].init?.body)), {
+      replyToken: 'reply-token',
+      messages: [{ type: 'text', text: message }],
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })
 
 test('markdownCitationFootnotes rewrites numbered citations and appends used notes', async () => {

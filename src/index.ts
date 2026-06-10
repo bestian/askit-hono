@@ -48,6 +48,8 @@ type Bindings = {
   // 未設定時預設 'vectorize'；無 VECTORIZE binding 時自動回退 archive。
   CAG_RETRIEVER?: string
   CAG_VECTORIZE_MIN_SCORE?: string
+  GLOBAL_GENERATION_LIMIT_PER_MINUTE?: string
+  GLOBAL_GENERATION_LIMIT_PER_DAY?: string
   ASK_INDEX: R2Bucket
   // 答案快取 bucket（issue #25）：相同問題 7 天內直接取用，未綁時優雅降級。
   ASK_CACHE?: R2Bucket
@@ -118,10 +120,14 @@ const NOT_FOUND_REPLY = '您的問題超出了資料庫的範圍，\n逐字稿�
 const ERROR_REPLY = '查詢發生錯誤，請稍後再試'
 // 限流冷卻視窗：同一使用者於此毫秒數內最多 1 次（對齊首頁送出鈕的 10 秒冷卻）。
 const RATE_LIMIT_WINDOW_MS = 10_000
+const GLOBAL_GENERATION_LIMIT_PER_MINUTE = 15
+const GLOBAL_GENERATION_LIMIT_PER_DAY = 300
 const MAX_QUESTION_CHARS = 100
 // 限流（同一使用者 10 秒內最多 1 次）觸發時的回覆訊息。
 const RATE_LIMIT_HTTP_MESSAGE = '您的發問過於頻繁，請稍候約 10 秒再試，謝謝 🙏'
 const RATE_LIMIT_LINE_REPLY = '您的發問過於頻繁，請稍候約 10 秒再試，謝謝 🙏'
+const GLOBAL_BUDGET_HTTP_MESSAGE = '目前服務量已達上限，請稍後再試，謝謝'
+const GLOBAL_BUDGET_LINE_REPLY = '目前服務量已達上限，請稍後再試，謝謝'
 const QUESTION_TOO_LONG_MESSAGE = '您的問題字數過長，請縮短問題的長度，謝謝!'
 const ROBOTS_TXT = `User-agent: *
 Disallow: /ask/
@@ -185,6 +191,14 @@ function cacheStreamingResponse(
   })
 }
 
+type BudgetLimitReason = 'minute' | 'day'
+
+type BudgetLimitDecision = {
+  allowed: boolean
+  reason?: BudgetLimitReason
+  retryAfterSeconds?: number
+}
+
 // 兩層單人限流，回 true 代表「應被擋下」（兩層共用同一個 key）：
 //   第一層（便宜、概略）：內建 limit()，非 subrequest、in-memory、零有感延遲。
 //     太頻繁就直接擋下，根本不碰下游 DO —— 順手保護單一 DO 實例不被洪水打爆。
@@ -215,12 +229,89 @@ async function isRateLimited(env: Bindings, key: string): Promise<boolean> {
   }
 }
 
+function normalizeIpv6Prefix64(ip: string): string | null {
+  const zoneIndex = ip.indexOf('%')
+  const withoutZone = zoneIndex === -1 ? ip : ip.slice(0, zoneIndex)
+  const [headPart, tailPart] = withoutZone.split('::')
+  if (withoutZone.split('::').length > 2) return null
+
+  const parseParts = (part: string): string[] => {
+    if (part === '') return []
+    return part.split(':')
+  }
+
+  const head = parseParts(headPart)
+  const tail = tailPart === undefined ? [] : parseParts(tailPart)
+  const expanded: string[] = []
+  for (const part of [...head, ...tail]) {
+    if (part.includes('.')) return null
+    const value = Number.parseInt(part, 16)
+    if (!/^[0-9a-f]{1,4}$/i.test(part) || !Number.isFinite(value)) return null
+  }
+
+  if (tailPart === undefined) {
+    if (head.length !== 8) return null
+    expanded.push(...head)
+  } else {
+    const missing = 8 - head.length - tail.length
+    if (missing < 1) return null
+    expanded.push(...head, ...Array.from({ length: missing }, () => '0'), ...tail)
+  }
+
+  return expanded
+    .slice(0, 4)
+    .map((part) => Number.parseInt(part, 16).toString(16))
+    .join(':')
+}
+
+export function ipRateLimitKeyFromIp(ip: string): string {
+  const normalized = ip.trim().toLowerCase()
+  if (normalized.includes(':')) {
+    const prefix64 = normalizeIpv6Prefix64(normalized)
+    return prefix64 ? `ip6:${prefix64}::/64` : `ip:${normalized}`
+  }
+  return `ip:${normalized}`
+}
+
 // /ask、/cag 沒有登入身分，只能以來源 IP 當限流 key（同一 NAT 會共用額度）。
+// IPv6 以 /64 前綴當桶，避免攻擊者在同一段內輪換位址取得新額度。
 // 取不到 IP（例如本機 wrangler dev）時不限流，以免誤擋正常使用者。
 async function isIpRateLimited(c: Context<{ Bindings: Bindings }>): Promise<boolean> {
   const ip = c.req.header('cf-connecting-ip')
   if (!ip) return false
-  return isRateLimited(c.env, `ip:${ip}`)
+  return isRateLimited(c.env, ipRateLimitKeyFromIp(ip))
+}
+
+async function checkGlobalGenerationBudget(
+  env: Bindings,
+): Promise<BudgetLimitDecision> {
+  const ns = env.RATE_LIMIT_DO
+  if (!ns) return { allowed: true }
+
+  const minuteLimit = parsePositiveInteger(
+    env.GLOBAL_GENERATION_LIMIT_PER_MINUTE,
+    GLOBAL_GENERATION_LIMIT_PER_MINUTE,
+  )
+  const dayLimit = parsePositiveInteger(
+    env.GLOBAL_GENERATION_LIMIT_PER_DAY,
+    GLOBAL_GENERATION_LIMIT_PER_DAY,
+  )
+
+  try {
+    const stub = ns.get(ns.idFromName('global:generation-budget'))
+    const url = new URL('https://rate-limit/quota')
+    url.searchParams.set('minute_limit', String(minuteLimit))
+    url.searchParams.set('day_limit', String(dayLimit))
+    const res = await stub.fetch(url.toString())
+    return (await res.json()) as BudgetLimitDecision
+  } catch (e) {
+    console.error('全域生成配額檢查失敗，放行:', e)
+    return { allowed: true }
+  }
+}
+
+function retryAfterForBudget(decision: BudgetLimitDecision): string {
+  return String(Math.max(1, decision.retryAfterSeconds ?? 60))
 }
 
 function parsePositiveInteger(value: string | undefined, fallback: number): number {
@@ -390,6 +481,12 @@ async function replyWithCag(
     }
   }
 
+  const budget = await checkGlobalGenerationBudget(env)
+  if (!budget.allowed) {
+    await replyToLine(env, replyToken, { type: 'text', text: GLOBAL_BUDGET_LINE_REPLY })
+    return
+  }
+
   await startLineLoading(env, userId)
 
   let cag: CagAnswer | null = null
@@ -465,6 +562,13 @@ app.get('/ask/:question', async (c) => {
   if (cacheKey) {
     const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
     if (cached) return respondFromCache(cached.body, cached.contentType)
+  }
+
+  const budget = await checkGlobalGenerationBudget(c.env)
+  if (!budget.allowed) {
+    return c.text(GLOBAL_BUDGET_HTTP_MESSAGE, 429, {
+      'Retry-After': retryAfterForBudget(budget),
+    })
   }
 
   try {
@@ -551,6 +655,13 @@ app.get('/cag/:question', async (c) => {
   const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
   if (cached) return respondFromCache(cached.body, cached.contentType)
 
+  const budget = await checkGlobalGenerationBudget(c.env)
+  if (!budget.allowed) {
+    return c.text(GLOBAL_BUDGET_HTTP_MESSAGE, 429, {
+      'Retry-After': retryAfterForBudget(budget),
+    })
+  }
+
   const response = await streamCagAnswer(c.env.AI, question, cagOptions)
   return cacheStreamingResponse(c, cacheKey, response)
 })
@@ -624,6 +735,13 @@ app.post('/cag', async (c) => {
   const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
   if (cached) return respondFromCache(cached.body, cached.contentType)
 
+  const budget = await checkGlobalGenerationBudget(c.env)
+  if (!budget.allowed) {
+    return c.text(GLOBAL_BUDGET_HTTP_MESSAGE, 429, {
+      'Retry-After': retryAfterForBudget(budget),
+    })
+  }
+
   const response = await streamCagAnswer(c.env.AI, question, cagOptions)
   return cacheStreamingResponse(c, cacheKey, response)
 })
@@ -688,21 +806,79 @@ app.post('/webhook', async (c) => {
   return c.text('OK', 200)
 })
 
-// 限流用 Durable Object：每個 key（line:<userId> 或 ip:<ip>）透過 idFromName 路由到
-// 同一顆全域唯一實例，單執行緒、強一致。只在記憶體保留「上次通過時間」即可——即使實例
-// 被回收，最壞情況也只是視窗內多放行一個請求，無安全疑慮，故不需動用 storage。
+type QuotaBucket = {
+  windowStartMs: number
+  count: number
+}
+
+// 限流用 Durable Object：
+// - 每個使用者/IP key 一顆物件：記憶體保留「上次通過時間」，做精準冷卻。
+// - global:generation-budget 單一物件：用 storage 保存分鐘/每日共享計數器，跨實例回收仍有效。
 export class RateLimiterDO {
   private lastAllowedMs = 0
 
+  constructor(private readonly state: DurableObjectState) {}
+
   async fetch(req: Request): Promise<Response> {
+    const url = new URL(req.url)
+    if (url.pathname === '/quota') {
+      return this.handleQuota(url)
+    }
+
     const windowMs =
-      Number(new URL(req.url).searchParams.get('window_ms')) || RATE_LIMIT_WINDOW_MS
+      Number(url.searchParams.get('window_ms')) || RATE_LIMIT_WINDOW_MS
     const now = Date.now()
     if (now - this.lastAllowedMs < windowMs) {
       return Response.json({ allowed: false })
     }
     this.lastAllowedMs = now
     return Response.json({ allowed: true })
+  }
+
+  private async handleQuota(url: URL): Promise<Response> {
+    const minuteLimit =
+      Number(url.searchParams.get('minute_limit')) || GLOBAL_GENERATION_LIMIT_PER_MINUTE
+    const dayLimit =
+      Number(url.searchParams.get('day_limit')) || GLOBAL_GENERATION_LIMIT_PER_DAY
+    const now = Date.now()
+    const minuteStartMs = Math.floor(now / 60_000) * 60_000
+    const dayStartMs = Math.floor(now / 86_400_000) * 86_400_000
+
+    const decision = await this.state.storage.transaction(async (txn) => {
+      const minute = await txn.get<QuotaBucket>('quota:minute')
+      const day = await txn.get<QuotaBucket>('quota:day')
+      const nextMinute =
+        minute?.windowStartMs === minuteStartMs
+          ? minute
+          : { windowStartMs: minuteStartMs, count: 0 }
+      const nextDay =
+        day?.windowStartMs === dayStartMs
+          ? day
+          : { windowStartMs: dayStartMs, count: 0 }
+
+      if (nextMinute.count >= minuteLimit) {
+        return {
+          allowed: false,
+          reason: 'minute' as const,
+          retryAfterSeconds: Math.ceil((minuteStartMs + 60_000 - now) / 1000),
+        }
+      }
+      if (nextDay.count >= dayLimit) {
+        return {
+          allowed: false,
+          reason: 'day' as const,
+          retryAfterSeconds: Math.ceil((dayStartMs + 86_400_000 - now) / 1000),
+        }
+      }
+
+      nextMinute.count += 1
+      nextDay.count += 1
+      await txn.put('quota:minute', nextMinute)
+      await txn.put('quota:day', nextDay)
+      return { allowed: true }
+    })
+
+    return Response.json(decision)
   }
 }
 

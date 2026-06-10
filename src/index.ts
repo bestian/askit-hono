@@ -10,6 +10,7 @@ import {
   DEFAULT_CAG_MODEL,
   generateCagAnswer,
   getCagStatus,
+  normalizeCagOptions,
   streamCagAnswer,
 } from './utils/cag'
 import {
@@ -514,20 +515,7 @@ app.get('/cag/:question', async (c) => {
     c.req.query('min_score') ?? c.req.query('minScore'),
     c.env.CAG_VECTORIZE_MIN_SCORE,
   )
-
-  // 快取 key 納入所有影響答案的參數；相同問題＋相同參數 7 天內直接取用。
-  const cacheKey = await buildCacheKey('cag', question, {
-    model,
-    topK,
-    citableTopK,
-    maxCompletionTokens,
-    retriever,
-    vectorizeMinScore,
-  })
-  const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
-  if (cached) return respondFromCache(cached.body, cached.contentType)
-
-  const response = await streamCagAnswer(c.env.AI, question, {
+  const cagOptions = normalizeCagOptions({
     archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
     model,
     topK,
@@ -537,6 +525,21 @@ app.get('/cag/:question', async (c) => {
     vectorize: c.env.VECTORIZE,
     vectorizeMinScore,
   })
+
+  // 快取 key 納入實際生效的參數（含 clamp/default 後的值），避免用超大參數繞過快取。
+  const cacheKey = await buildCacheKey('cag', question, {
+    archiveBaseUrl: cagOptions.archiveBaseUrl,
+    model: cagOptions.model,
+    topK: cagOptions.topK,
+    citableTopK: cagOptions.citableTopK,
+    maxCompletionTokens: cagOptions.maxCompletionTokens,
+    retriever: cagOptions.retriever,
+    vectorizeMinScore: cagOptions.vectorizeMinScore,
+  })
+  const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
+  if (cached) return respondFromCache(cached.body, cached.contentType)
+
+  const response = await streamCagAnswer(c.env.AI, question, cagOptions)
   return cacheStreamingResponse(c, cacheKey, response)
 })
 
@@ -584,20 +587,7 @@ app.post('/cag', async (c) => {
     typeof payload.retriever === 'string' ? payload.retriever : undefined,
     c.env.CAG_RETRIEVER,
   )
-
-  // 快取 key 納入所有影響答案的參數；相同問題＋相同參數 7 天內直接取用。
-  const cacheKey = await buildCacheKey('cag', question, {
-    model,
-    topK,
-    citableTopK,
-    maxCompletionTokens,
-    retriever,
-    vectorizeMinScore,
-  })
-  const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
-  if (cached) return respondFromCache(cached.body, cached.contentType)
-
-  const response = await streamCagAnswer(c.env.AI, question, {
+  const cagOptions = normalizeCagOptions({
     archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
     model,
     topK,
@@ -607,6 +597,21 @@ app.post('/cag', async (c) => {
     vectorize: c.env.VECTORIZE,
     vectorizeMinScore,
   })
+
+  // 快取 key 納入實際生效的參數（含 clamp/default 後的值），避免用超大參數繞過快取。
+  const cacheKey = await buildCacheKey('cag', question, {
+    archiveBaseUrl: cagOptions.archiveBaseUrl,
+    model: cagOptions.model,
+    topK: cagOptions.topK,
+    citableTopK: cagOptions.citableTopK,
+    maxCompletionTokens: cagOptions.maxCompletionTokens,
+    retriever: cagOptions.retriever,
+    vectorizeMinScore: cagOptions.vectorizeMinScore,
+  })
+  const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
+  if (cached) return respondFromCache(cached.body, cached.contentType)
+
+  const response = await streamCagAnswer(c.env.AI, question, cagOptions)
   return cacheStreamingResponse(c, cacheKey, response)
 })
 

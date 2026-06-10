@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   buildCagQueryVariants,
   markdownCitationFootnotes,
+  normalizeCagOptions,
   parseArchiveSectionId,
   retrieveCagSources,
 } from '../src/utils/cag'
@@ -29,6 +30,32 @@ test('parseArchiveSectionId extracts archive anchors', () => {
   assert.equal(parseArchiveSectionId('https://archive.tw/a/b#s619731'), 619731)
   assert.equal(parseArchiveSectionId('/demo#s42'), 42)
   assert.equal(parseArchiveSectionId('/demo'), null)
+})
+
+test('normalizeCagOptions returns effective parameters used by CAG', () => {
+  const options = normalizeCagOptions({
+    topK: 999,
+    citableTopK: 999,
+    maxCompletionTokens: 9999,
+    archiveBaseUrl: 'https://archive.tw/',
+    retriever: 'vectorize',
+    vectorizeMinScore: 2,
+  })
+  assert.equal(options.topK, 8)
+  assert.equal(options.citableTopK, 8)
+  assert.equal(options.maxCompletionTokens, 4096)
+  assert.equal(options.archiveBaseUrl, 'https://archive.tw')
+  assert.equal(options.retriever, 'vectorize')
+  assert.equal(options.vectorizeMinScore, 2)
+
+  const minimums = normalizeCagOptions({
+    topK: 0,
+    citableTopK: 0,
+    maxCompletionTokens: 0,
+  })
+  assert.equal(minimums.topK, 1)
+  assert.equal(minimums.citableTopK, 1)
+  assert.equal(minimums.maxCompletionTokens, 1)
 })
 
 test('markdownCitationFootnotes rewrites numbered citations and appends used notes', async () => {

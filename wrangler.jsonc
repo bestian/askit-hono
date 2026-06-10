@@ -21,7 +21,18 @@
     // CAG 預設檢索器：'vectorize'（語意，issue #15）或 'archive'（archive.tw 即時搜尋）。
     // 索引尚未建好 / 無 VECTORIZE binding / 查無結果時，程式會自動回退 archive。
     // 亦可用 /cag?retriever=archive 之類的查詢參數逐次覆寫，方便 A/B 比較。
-    "CAG_RETRIEVER": "vectorize"
+    "CAG_RETRIEVER": "vectorize",
+    // 全域生成預算：快取未命中的 /ask、/cag 與 LINE CAG 生成共享同一組 DO 計數器。
+    // 以 Kimi K2.6 最壞可請求輸出 4096 tokens 估算，每次約 <= $0.033；
+    // https://console.cloud.google.com/ai/models/kimi-k2.6/cost-estimation
+    // 15 次/分鐘約 <= $0.5，300 次/日約 <= $10。
+    "GLOBAL_GENERATION_LIMIT_PER_MINUTE": "15",
+    "GLOBAL_GENERATION_LIMIT_PER_DAY": "300"
+  },
+
+  // CPU 上限：避免單次請求異常消耗 Worker CPU；AI/網路等待不計入 CPU time。
+  "limits": {
+    "cpu_ms": 30000
   },
 
   // R2：載入預先建好的 Fuse.js 索引（由 `npm run build:index` 產出並上傳）。
@@ -62,7 +73,7 @@
     { "binding": "VECTORIZE", "index_name": "askit-audrey-tang" }
   ],
 
-  // 防連續濫用：兩層限流（兩層共用同一個 key：line:<userId> 或 ip:<ip>）。
+  // 防連續濫用：兩層限流（兩層共用同一個 key：line:<userId>、ip:<IPv4> 或 ip6:<IPv6 /64>）。
   //
   // 第一層 RATE_LIMITER —— 內建限流，便宜（非 subrequest、in-memory、零有感延遲）、
   //   per-PoP、eventually consistent、permissive。門檻設很寬（5 次/10 秒），只負責擋
@@ -74,7 +85,7 @@
   //   一致，擋不住「同一人的下一個請求」（LINE webhook 實測會穿透），故由 DO 當精準把關。
   //
   //   - LINE webhook 以 event.source.userId 為 key（精準對人）。
-  //   - /ask、/cag 沒有登入身分，以 cf-connecting-ip 為 key（同一 NAT 會共用額度）。
+  //   - /ask、/cag 沒有登入身分，以 cf-connecting-ip 為 key；IPv6 會收斂到 /64 前綴桶。
   "ratelimits": [
     {
       "name": "RATE_LIMITER",

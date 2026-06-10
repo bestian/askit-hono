@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import app from '../src/index'
+import app, { ipRateLimitKeyFromIp } from '../src/index'
 import {
   buildCagQueryVariants,
   markdownCitationFootnotes,
@@ -183,6 +183,52 @@ test('question endpoints reject questions over 100 characters before retrieval o
   assert.equal(postCagResponse.status, 400)
   assert.equal(await postCagResponse.text(), message)
   assert.equal(aiCalls.length, 0)
+})
+
+test('IPv6 rate limit keys are bucketed by /64 prefix', () => {
+  assert.equal(ipRateLimitKeyFromIp('203.0.113.10'), 'ip:203.0.113.10')
+  assert.equal(
+    ipRateLimitKeyFromIp('2001:db8:abcd:0012::1'),
+    'ip6:2001:db8:abcd:12::/64',
+  )
+  assert.equal(
+    ipRateLimitKeyFromIp('2001:0db8:abcd:12:ffff::abcd'),
+    'ip6:2001:db8:abcd:12::/64',
+  )
+})
+
+test('global generation budget blocks uncached CAG before AI', async () => {
+  const aiCalls: Record<string, unknown>[] = []
+  const quotaUrls: string[] = []
+  const env = {
+    AI: {
+      run: async (_model: string, input: Record<string, unknown>) => {
+        aiCalls.push(input)
+        return { response: '不應該被呼叫' }
+      },
+    },
+    RATE_LIMIT_DO: {
+      idFromName: (name: string) => name,
+      get: () => ({
+        fetch: async (input: RequestInfo | URL) => {
+          quotaUrls.push(String(input))
+          return Response.json({
+            allowed: false,
+            reason: 'minute',
+            retryAfterSeconds: 17,
+          })
+        },
+      }),
+    },
+  }
+
+  const response = await app.request('/cag/%E6%B8%AC%E8%A9%A6', undefined, env)
+
+  assert.equal(response.status, 429)
+  assert.equal(response.headers.get('Retry-After'), '17')
+  assert.equal(await response.text(), '目前服務量已達上限，請稍後再試，謝謝')
+  assert.equal(aiCalls.length, 0)
+  assert.equal(new URL(quotaUrls[0]).pathname, '/quota')
 })
 
 test('webhook replies with length warning for questions over 100 characters', async () => {

@@ -25,11 +25,22 @@
   // R2：載入預先建好的 Fuse.js 索引（由 `npm run build:index` 產出並上傳）。
   // Bucket 需先建立： npx wrangler r2 bucket create askit-fuse-index-cache
   // 預設索引 key：ask-index/audrey-tang.json
+  // ASK_CACHE：對相同問題（且影響答案的參數也相同）的回應做 7 天快取（issue #25）。
+  // 區分 /ask、/cag、/webhook 三條路徑（key 前綴 cache/<scope>/<hash>）。
+  // Bucket 需先建立： npx wrangler r2 bucket create askit-answer-cache
+  //                  npx wrangler r2 bucket create askit-answer-cache-preview
+  // 未綁定時程式會優雅降級（當作未命中、照常生成）。
   "r2_buckets": [
     {
       "binding": "ASK_INDEX",
       "bucket_name": "askit-fuse-index-cache",
       "preview_bucket_name": "askit-fuse-index-cache-preview",
+      "remote": true
+    },
+    {
+      "binding": "ASK_CACHE",
+      "bucket_name": "askit-answer-cache",
+      "preview_bucket_name": "askit-answer-cache-preview",
       "remote": true
     }
   ],

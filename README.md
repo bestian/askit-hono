@@ -25,6 +25,18 @@
 
 `/ask/:question` 會回 HTML，方便瀏覽器測試；`/webhook` 則回 LINE Flex Message：主文是 CAG 生成的答案（逐句斷行、附 `[1][2]` 引註），下方最多兩欄來源卡片，含出處、日期與原文連結（hero 圖用 `https://archive.tw/og/...png`）。查無結果或錯誤時回純文字。
 
+### 相同問題的 R2 答案快取
+
+對「相同問題（且影響答案的參數也相同）」的回應做 **7 天** R2 快取（issue #25）。收到問題時先簡單確認快取是否存在，命中就**直接取用、不再跑檢索與 AI**，命中時 HTTP 回應帶 `X-Cache: HIT`。
+
+- 三條路徑各自獨立命名空間（key 前綴 `cache/<scope>/<sha256>`），互不污染：
+  - `/ask/:question`：以正規化問題為 key（隨機問題 `隨機`／`random` 不快取）。
+  - `/cag/:question`、`POST /cag`：key 納入所有影響答案的參數（`model`、`topK`、`citableTopK`、`maxCompletionTokens`、`retriever`、`vectorizeMinScore`），參數順序無關。串流回應會「分流」——一份照常串給使用者，一份在背景累積成完整文字後寫入快取。
+  - `/webhook`：以問題＋（`retriever`、`model`）為 key，快取 `answer` 與 `sources`，命中時直接重組 Flex Message 回覆。
+- 問題正規化：壓縮空白、去前後空白、轉小寫，讓「實質相同」的問題命中同一筆。
+- 壽命以 R2 物件上傳時間判斷，過期視為未命中並順手刪除。
+- 快取放在獨立的 `ASK_CACHE`（`askit-answer-cache`）bucket；未綁定或讀寫出錯時一律優雅降級（當作未命中、照常生成），不會阻斷回答。實作見 `src/utils/cache.ts`。
+
 ### LINE webhook 的 CAG 三段式回覆
 
 CAG 需先檢索 `archive.tw` 再讓 Workers AI 生成，通常要數秒到十幾秒，超過 LINE 對 webhook「**2 秒內必須回 2xx**」的限制；而 LINE Reply API 不支援串流、reply token 為一次性。因此 `/webhook` 採三段式非同步回覆：
@@ -62,6 +74,7 @@ Worker 端 `src/utils/search.ts` 第一次請求時從 R2 抓索引、用 `Fuse.
 │   ├── index.ts                   # Hono app（/, /ask/:question, /webhook）
 │   └── utils/
 │       ├── search.ts              # R2 載入索引 + Fuse 搜尋 + HTML 輸出
+│       ├── cache.ts               # 相同問題的 R2 答案快取（7 天，issue #25）
 │       └── askIndexFormat.ts      # build / runtime 共用的型別與 Fuse 設定
 ├── scripts/
 │   ├── build-ask-index.ts         # 從 D1 撈段落 → 建 Fuse 索引 → 上傳 R2
@@ -88,6 +101,13 @@ build script 把索引上傳到 `askit-fuse-index-cache`（preview 對應 `askit
 ```bash
 npx wrangler r2 bucket create askit-fuse-index-cache
 npx wrangler r2 bucket create askit-fuse-index-cache-preview
+```
+
+另外，答案快取（見「相同問題的 R2 答案快取」）使用獨立的 `askit-answer-cache` bucket，第一次使用也先建好（未建時程式會優雅降級、當作未命中）：
+
+```bash
+npx wrangler r2 bucket create askit-answer-cache
+npx wrangler r2 bucket create askit-answer-cache-preview
 ```
 
 #### 建索引並上傳到 R2

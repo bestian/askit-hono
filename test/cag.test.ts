@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import app from '../src/index'
 import {
   buildCagQueryVariants,
   markdownCitationFootnotes,
@@ -8,6 +9,7 @@ import {
   parseArchiveSectionId,
   retrieveCagSources,
 } from '../src/utils/cag'
+import type { VectorizeBinding } from '../src/utils/vectorize'
 
 async function streamToString(stream: ReadableStream<string>): Promise<string> {
   const reader = stream.getReader()
@@ -56,6 +58,76 @@ test('normalizeCagOptions returns effective parameters used by CAG', () => {
   assert.equal(minimums.topK, 1)
   assert.equal(minimums.citableTopK, 1)
   assert.equal(minimums.maxCompletionTokens, 1)
+})
+
+test('public CAG endpoints ignore client-supplied model', async () => {
+  const aiCalls: { model: string; input: Record<string, unknown> }[] = []
+  const ai = {
+    run: async (model: string, input: Record<string, unknown>) => {
+      aiCalls.push({ model, input })
+      if ('text' in input) return { data: [[0.1, 0.2, 0.3]] }
+      return { response: '測試回答 [1]' }
+    },
+  }
+  const vectorize: VectorizeBinding = {
+    query: async () => ({
+      matches: [
+        {
+          id: '123',
+          score: 0.9,
+          metadata: {
+            section_id: 123,
+            filename: '2024-01-01-demo',
+            content: '測試內容',
+            display_name: '示範會議',
+          },
+        },
+      ],
+    }),
+  }
+  const env = {
+    ASK_MODEL: '@cf/account/allowed-model',
+    AI: ai,
+    VECTORIZE: vectorize,
+    CAG_RETRIEVER: 'vectorize',
+  }
+  const executionCtx = {
+    waitUntil: (_promise: Promise<unknown>) => {},
+    passThroughOnException: () => {},
+  }
+
+  const getResponse = await app.request(
+    '/cag/%E6%B8%AC%E8%A9%A6?model=@cf/attacker/expensive-model',
+    undefined,
+    env,
+    executionCtx,
+  )
+  assert.equal(getResponse.status, 200)
+  await getResponse.text()
+
+  const postResponse = await app.request(
+    '/cag',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        question: '測試',
+        model: '@cf/attacker/expensive-model',
+      }),
+    },
+    env,
+    executionCtx,
+  )
+  assert.equal(postResponse.status, 200)
+  await postResponse.text()
+
+  const chatModels = aiCalls
+    .filter(({ input }) => Array.isArray(input.messages))
+    .map(({ model }) => model)
+  assert.deepEqual(chatModels, [
+    '@cf/account/allowed-model',
+    '@cf/account/allowed-model',
+  ])
 })
 
 test('markdownCitationFootnotes rewrites numbered citations and appends used notes', async () => {

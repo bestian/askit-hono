@@ -501,7 +501,7 @@ app.get('/cag/:question', async (c) => {
     return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, { 'Retry-After': '10' })
   }
   const question = decodeRouteParam(c.req.param('question'))
-  const model = c.req.query('model') || c.env.ASK_MODEL || DEFAULT_CAG_MODEL
+  const model = c.env.ASK_MODEL || DEFAULT_CAG_MODEL
   const topK = parsePositiveInteger(c.req.query('top_k') ?? c.req.query('topK'), 6)
   const citableTopK = parseOptionalPositiveInteger(
     c.req.query('cite_top_k') ?? c.req.query('citeTopK'),
@@ -547,7 +547,7 @@ app.post('/cag', async (c) => {
   if (await isIpRateLimited(c)) {
     return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, { 'Retry-After': '10' })
   }
-  let payload: { question?: unknown; topK?: unknown; top_k?: unknown; citableTopK?: unknown; cite_top_k?: unknown; model?: unknown; maxTokens?: unknown; max_tokens?: unknown; retriever?: unknown; minScore?: unknown; min_score?: unknown }
+  let payload: { question?: unknown; topK?: unknown; top_k?: unknown; citableTopK?: unknown; cite_top_k?: unknown; maxTokens?: unknown; max_tokens?: unknown; retriever?: unknown; minScore?: unknown; min_score?: unknown }
   try {
     payload = await c.req.json()
   } catch {
@@ -569,9 +569,7 @@ app.post('/cag', async (c) => {
     : typeof payload.max_tokens === 'number'
       ? payload.max_tokens
       : 900
-  const model = typeof payload.model === 'string'
-    ? payload.model
-    : c.env.ASK_MODEL || DEFAULT_CAG_MODEL
+  const model = c.env.ASK_MODEL || DEFAULT_CAG_MODEL
   const citableTopK = typeof payload.citableTopK === 'number'
     ? payload.citableTopK
     : typeof payload.cite_top_k === 'number'

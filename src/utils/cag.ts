@@ -42,7 +42,7 @@ export type CagOptions = {
 export const DEFAULT_CAG_MODEL = '@cf/moonshotai/kimi-k2.6'
 export const DEFAULT_ARCHIVE_BASE_URL = 'https://archive.tw'
 const DEFAULT_TOP_K = 6
-const MAX_TOP_K = 12
+const MAX_TOP_K = 8
 const DEFAULT_MAX_COMPLETION_TOKENS = 900
 const MAX_CONTEXT_SECTION_CHARS = 2_200
 const MAX_SEARCH_VARIANTS = 6
@@ -93,9 +93,43 @@ export type CagStatus = {
   maxContextSectionChars: number
 }
 
+export type NormalizedCagOptions = {
+  model: string
+  topK: number
+  citableTopK: number
+  maxCompletionTokens: number
+  archiveBaseUrl: string
+  answerInstruction?: string
+  retriever: CagRetriever
+  vectorize?: VectorizeBinding
+  vectorizeMinScore: number
+}
+
 function clampInteger(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min
   return Math.max(min, Math.min(max, Math.floor(value)))
+}
+
+export function normalizeCagOptions(options?: CagOptions): NormalizedCagOptions {
+  const topK = clampInteger(options?.topK ?? DEFAULT_TOP_K, 1, MAX_TOP_K)
+  const citableTopK = options?.citableTopK === undefined
+    ? topK
+    : clampInteger(options.citableTopK, 1, topK)
+  return {
+    model: options?.model || DEFAULT_CAG_MODEL,
+    topK,
+    citableTopK,
+    maxCompletionTokens: clampInteger(
+      options?.maxCompletionTokens ?? DEFAULT_MAX_COMPLETION_TOKENS,
+      1,
+      4_096,
+    ),
+    archiveBaseUrl: normalizeArchiveBaseUrl(options?.archiveBaseUrl),
+    answerInstruction: options?.answerInstruction,
+    retriever: options?.retriever ?? 'archive',
+    vectorize: options?.vectorize,
+    vectorizeMinScore: options?.vectorizeMinScore ?? DEFAULT_VECTORIZE_MIN_COSINE_SCORE,
+  }
 }
 
 function truncateContextText(value: string): string {
@@ -623,29 +657,28 @@ export async function generateCagAnswer(
   question: string,
   options?: CagOptions,
 ): Promise<CagAnswer | null> {
-  const topK = clampInteger(options?.topK ?? DEFAULT_TOP_K, 1, MAX_TOP_K)
+  const normalized = normalizeCagOptions(options)
   const sources = await resolveCagSources(ai, question, {
-    topK,
-    archiveBaseUrl: options?.archiveBaseUrl,
-    retriever: options?.retriever,
-    vectorize: options?.vectorize,
-    vectorizeMinScore: options?.vectorizeMinScore,
+    topK: normalized.topK,
+    archiveBaseUrl: normalized.archiveBaseUrl,
+    retriever: normalized.retriever,
+    vectorize: normalized.vectorize,
+    vectorizeMinScore: normalized.vectorizeMinScore,
   })
   if (sources.length === 0) return null
 
-  const { cited, background } = splitCitedAndBackground(sources, options?.citableTopK)
-  const model = options?.model || DEFAULT_CAG_MODEL
+  const { cited, background } = splitCitedAndBackground(sources, normalized.citableTopK)
   const messages = buildCagMessages(
     question,
     cited,
     background,
-    options?.answerInstruction,
+    normalized.answerInstruction,
   )
   const result = await runCagCompletion(
     ai,
-    model,
+    normalized.model,
     messages,
-    options?.maxCompletionTokens,
+    normalized.maxCompletionTokens,
     false,
   )
   const answer = (await aiResultToText(result)).trim()
@@ -658,13 +691,13 @@ export async function streamCagAnswer(
   question: string,
   options?: CagOptions,
 ): Promise<Response> {
-  const topK = clampInteger(options?.topK ?? DEFAULT_TOP_K, 1, MAX_TOP_K)
+  const normalized = normalizeCagOptions(options)
   const sources = await resolveCagSources(ai, question, {
-    topK,
-    archiveBaseUrl: options?.archiveBaseUrl,
-    retriever: options?.retriever,
-    vectorize: options?.vectorize,
-    vectorizeMinScore: options?.vectorizeMinScore,
+    topK: normalized.topK,
+    archiveBaseUrl: normalized.archiveBaseUrl,
+    retriever: normalized.retriever,
+    vectorize: normalized.vectorize,
+    vectorizeMinScore: normalized.vectorizeMinScore,
   })
   if (sources.length === 0) {
     return new Response('您的問題超出了資料庫的範圍，逐字稿網站連結如下：https://archive.tw', {
@@ -673,19 +706,18 @@ export async function streamCagAnswer(
     })
   }
 
-  const { cited, background } = splitCitedAndBackground(sources, options?.citableTopK)
-  const model = options?.model || DEFAULT_CAG_MODEL
+  const { cited, background } = splitCitedAndBackground(sources, normalized.citableTopK)
   const messages = buildCagMessages(
     question,
     cited,
     background,
-    options?.answerInstruction,
+    normalized.answerInstruction,
   )
   const stream = await runCagCompletion(
     ai,
-    model,
+    normalized.model,
     messages,
-    options?.maxCompletionTokens,
+    normalized.maxCompletionTokens,
     true,
   )
 

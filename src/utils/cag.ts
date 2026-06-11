@@ -281,7 +281,11 @@ export function parseArchiveSectionId(href: string): number | null {
 function absoluteArchiveHref(baseUrl: string, href: string | undefined): string | null {
   if (!href) return null
   try {
-    return new URL(href, baseUrl).toString()
+    const base = new URL(baseUrl)
+    const url = new URL(href, base)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+    if (url.origin !== base.origin) return null
+    return url.toString()
   } catch {
     return null
   }

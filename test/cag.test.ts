@@ -605,3 +605,63 @@ test('retrieveCagSources searches archive and hydrates sections with neighbors',
     globalThis.fetch = originalFetch
   }
 })
+
+test('retrieveCagSources rejects archive result URLs outside archive origin', async () => {
+  const originalFetch = globalThis.fetch
+  const requests: string[] = []
+  globalThis.fetch = async (input: RequestInfo | URL) => {
+    const url = new URL(String(input))
+    requests.push(url.toString())
+    if (url.pathname === '/api/search.json') {
+      return Response.json({
+        results: [
+          {
+            title: 'External',
+            url: 'https://evil.test/demo#s666',
+            snippet: '不應使用',
+          },
+          {
+            title: 'Script',
+            url: 'javascript:alert(1)',
+            snippet: '不應使用',
+          },
+          {
+            title: 'Protocol Relative',
+            url: '//evil.test/demo#s777',
+            snippet: '不應使用',
+          },
+          {
+            title: 'Demo Speech',
+            url: 'https://archive.tw/demo#s123',
+            speaker: '唐鳳',
+            snippet: '地神',
+          },
+        ],
+      })
+    }
+    if (url.pathname === '/api/section/123') {
+      return Response.json({
+        section_id: 123,
+        section_content: '<p>合法同源內容</p>',
+        display_name: 'Demo Speech',
+        name: '唐鳳',
+      })
+    }
+    return new Response('not found', { status: 404 })
+  }
+
+  try {
+    const sources = await retrieveCagSources('地神香火如何', {
+      archiveBaseUrl: 'https://archive.tw',
+      topK: 4,
+    })
+
+    assert.equal(sources.length, 1)
+    assert.equal(sources[0].href, 'https://archive.tw/demo#s123')
+    assert.match(sources[0].content, /合法同源內容/)
+    assert.ok(!requests.some((url) => url.includes('/api/section/666')))
+    assert.ok(!requests.some((url) => url.includes('/api/section/777')))
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})

@@ -11,6 +11,22 @@ import {
 } from '../src/utils/cag'
 import type { VectorizeBinding } from '../src/utils/vectorize'
 
+test('home page serves self-hosted scripts with CSP', async () => {
+  const response = await app.request('/')
+  const html = await response.text()
+  const csp = response.headers.get('Content-Security-Policy') ?? ''
+
+  assert.equal(response.status, 200)
+  assert.match(html, /<script src="\/vendor\/vue\.global\.prod\.js" defer><\/script>/)
+  assert.match(html, /<script src="\/app\.js" defer><\/script>/)
+  assert.doesNotMatch(html, /unpkg\.com/)
+  assert.doesNotMatch(html, /<script>\s*const/)
+  assert.match(csp, /default-src 'self'/)
+  assert.match(csp, /script-src 'self'/)
+  assert.match(csp, /script-src-attr 'none'/)
+  assert.ok(!/script-src[^;]*'unsafe-inline'/.test(csp))
+})
+
 async function streamToString(stream: ReadableStream<string>): Promise<string> {
   const reader = stream.getReader()
   let text = ''

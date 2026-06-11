@@ -1,0 +1,250 @@
+(function () {
+  const { createApp, ref, computed, h } = Vue
+
+  const COOLDOWN_SECONDS = 10
+  const BLOCKED_ELEMENT_SELECTOR = 'script, iframe, object, embed, base, meta, link'
+  const ALLOWED_LINK_PROTOCOLS = new Set(['http:', 'https:', 'mailto:'])
+  const URL_ATTRIBUTE_NAMES = new Set(['href', 'src', 'xlink:href', 'action', 'formaction', 'poster'])
+
+  function isSafeUrl(value) {
+    try {
+      const url = new URL(value, window.location.origin)
+      return ALLOWED_LINK_PROTOCOLS.has(url.protocol)
+    } catch {
+      return false
+    }
+  }
+
+  function escapeAttribute(value) {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+  }
+
+  function sanitizeHtml(html) {
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    doc.body.querySelectorAll(BLOCKED_ELEMENT_SELECTOR).forEach((element) => {
+      element.remove()
+    })
+
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_ELEMENT)
+    let element = walker.nextNode()
+    while (element) {
+      for (const attr of [...element.attributes]) {
+        const name = attr.name.toLowerCase()
+        if (name.startsWith('on') || name === 'srcdoc' || name === 'style') {
+          element.removeAttribute(attr.name)
+          continue
+        }
+        if (URL_ATTRIBUTE_NAMES.has(name) && !isSafeUrl(attr.value)) {
+          element.removeAttribute(attr.name)
+        }
+      }
+
+      if (element.tagName.toLowerCase() === 'a') {
+        element.setAttribute('target', '_blank')
+        element.setAttribute('rel', 'noopener noreferrer')
+      }
+
+      element = walker.nextNode()
+    }
+
+    return doc.body.innerHTML
+  }
+
+  // 將串流回來的 Markdown（含 [^n] 引註與末尾 [^n]: [標題](網址) 註腳）
+  // 拆成「正文 + 出處清單」，並把行內引註轉成可點擊、開新分頁的上標連結。
+  function parseAnswer(raw) {
+    const sources = []
+    const seen = new Map()
+    const body = raw.replace(
+      /^\[\^(\d+)\]:\s*\[([^\]]*)\]\(([^)\s]+)\)\s*$/gm,
+      (_m, num, label, href) => {
+        if (!isSafeUrl(href)) return ''
+        const index = Number(num)
+        if (!seen.has(index)) {
+          seen.set(index, { index, label: label.trim() || href, href })
+        }
+        return ''
+      },
+    ).trim()
+
+    sources.push(...[...seen.values()].sort((a, b) => a.index - b.index))
+    const hrefByIndex = new Map(sources.map((s) => [s.index, s.href]))
+
+    let html = body
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    html = html.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+    html = html.replace(
+      /\[([^\]]+)\]\((https?:[^)\s]+)\)/g,
+      (_m, label, href) =>
+        '<a href="' + escapeAttribute(href) +
+        '" target="_blank" rel="noopener noreferrer">' + label + '</a>',
+    )
+    html = html.replace(/\[\^(\d+)\]/g, (m, num) => {
+      const href = hrefByIndex.get(Number(num))
+      if (!href) return ''
+      return '<sup class="cite"><a href="' + escapeAttribute(href) +
+        '" target="_blank" rel="noopener noreferrer">[' + num + ']</a></sup>'
+    })
+
+    return { html: sanitizeHtml(html), sources }
+  }
+
+  createApp({
+    setup() {
+      const question = ref('')
+      const raw = ref('')
+      const loading = ref(false)
+      const answered = ref(false)
+      const error = ref('')
+      const consentAccepted = ref(false)
+      const cooldown = ref(0)
+      let cooldownTimer = null
+
+      function startCooldown() {
+        cooldown.value = COOLDOWN_SECONDS
+        if (cooldownTimer) clearInterval(cooldownTimer)
+        cooldownTimer = setInterval(() => {
+          cooldown.value -= 1
+          if (cooldown.value <= 0) {
+            cooldown.value = 0
+            clearInterval(cooldownTimer)
+            cooldownTimer = null
+          }
+        }, 1000)
+      }
+
+      const samples = [
+        '什麼是仁工智慧？',
+        '什麼是數位民主？',
+        '如何看待開放政府？',
+        '唐鳳對 AI 的看法？',
+      ]
+
+      const parsed = computed(() => parseAnswer(raw.value))
+      const bodyHtml = computed(() => parsed.value.html)
+      const sources = computed(() => parsed.value.sources)
+      const canSubmit = computed(() =>
+        consentAccepted.value && !loading.value && cooldown.value <= 0 && Boolean(question.value.trim()),
+      )
+      const canAskSample = computed(() =>
+        consentAccepted.value && !loading.value && cooldown.value <= 0,
+      )
+
+      async function run(q) {
+        const query = q.trim()
+        if (!query || !consentAccepted.value || loading.value || cooldown.value > 0) return
+        question.value = query
+        loading.value = true
+        answered.value = true
+        error.value = ''
+        raw.value = ''
+
+        try {
+          const res = await fetch('/cag/' + encodeURIComponent(query))
+          if (!res.ok) {
+            error.value = (await res.text()) || '查詢發生錯誤，請稍後再試。'
+            return
+          }
+          const reader = res.body.getReader()
+          const decoder = new TextDecoder()
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            raw.value += decoder.decode(value, { stream: true })
+          }
+          raw.value += decoder.decode()
+        } catch (e) {
+          error.value = '連線發生錯誤，請稍後再試。'
+        } finally {
+          loading.value = false
+          startCooldown()
+        }
+      }
+
+      return () => h('div', [
+        h('div', { class: 'hero' }, [
+          h('img', { class: 'logo', src: '/logo.png', alt: '鳳問 logo' }),
+          h('h1', '鳳問'),
+          h('p', { class: 'tagline' }, '透過問答機器人，認識唐鳳的思想'),
+        ]),
+        h('label', { class: 'consent' }, [
+          h('input', {
+            type: 'checkbox',
+            checked: consentAccepted.value,
+            disabled: loading.value,
+            onChange: (event) => {
+              consentAccepted.value = event.target.checked
+            },
+          }),
+          h('span', [
+            '我已閱讀並同意 ',
+            h('a', { href: '/privacy', target: '_blank', rel: 'noopener noreferrer' }, '隱私權政策'),
+            ' 和 ',
+            h('a', { href: '/terms', target: '_blank', rel: 'noopener noreferrer' }, '使用條款'),
+          ]),
+        ]),
+        h('section', { class: 'demo' }, [
+          h('form', {
+            class: 'ask-form',
+            onSubmit: (event) => {
+              event.preventDefault()
+              run(question.value)
+            },
+          }, [
+            h('input', {
+              value: question.value,
+              type: 'text',
+              placeholder: consentAccepted.value
+                ? '輸入你的問題，例如：什麼是仁工智慧？'
+                : '請先同意隱私權政策和使用條款，才能發問',
+              disabled: loading.value,
+              'aria-label': '問題',
+              onInput: (event) => {
+                question.value = event.target.value
+              },
+            }),
+            h('button', {
+              type: 'submit',
+              disabled: !canSubmit.value,
+              class: { loading: loading.value },
+            }, loading.value ? '思考中…' : (cooldown.value > 0 ? cooldown.value + ' 秒…' : '送出')),
+          ]),
+          !answered.value
+            ? h('div', { class: 'samples' }, samples.map((sample) =>
+              h('button', {
+                type: 'button',
+                key: sample,
+                disabled: !canAskSample.value,
+                onClick: () => run(sample),
+              }, sample),
+            ))
+            : null,
+          answered.value
+            ? h('div', { class: 'answer' }, [
+              !bodyHtml.value && !error.value && loading.value
+                ? h('p', { class: 'placeholder' }, '檢索逐字稿中…')
+                : null,
+              error.value ? h('p', { class: 'error' }, error.value) : null,
+              h('div', { class: 'body', innerHTML: bodyHtml.value }),
+              loading.value ? h('span', { class: 'cursor' }, '▌') : null,
+              sources.value.length
+                ? h('div', { class: 'sources' }, [
+                  h('h2', '出處'),
+                  h('ol', sources.value.map((src) =>
+                    h('li', { key: src.index, value: src.index }, [
+                      h('a', { href: src.href, target: '_blank', rel: 'noopener noreferrer' }, src.label),
+                    ]),
+                  )),
+                ])
+                : null,
+            ])
+            : null,
+        ]),
+      ])
+    },
+  }).mount('#app')
+})()

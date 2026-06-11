@@ -115,7 +115,21 @@ export function renderHomePage(): string {
     }
     .ask-form button:disabled {
       opacity: 0.55;
-      cursor: progress;
+      cursor: not-allowed;
+    }
+    .ask-form button.loading:disabled { cursor: progress; }
+    .consent {
+      margin: 12px 0 0;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 0.95rem;
+      color: var(--muted);
+    }
+    .consent input {
+      margin-top: 0.35em;
+      flex: 0 0 auto;
+      accent-color: var(--accent);
     }
     .samples {
       margin: 14px 0 0;
@@ -131,6 +145,10 @@ export function renderHomePage(): string {
       border: 1px solid var(--border);
       border-radius: 999px;
       cursor: pointer;
+    }
+    .samples button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
     }
     .answer {
       margin-top: 24px;
@@ -204,15 +222,25 @@ export function renderHomePage(): string {
         <p class="tagline">透過問答機器人，認識唐鳳的思想</p>
       </div>
 
+      <label class="consent">
+        <input type="checkbox" v-model="consentAccepted" :disabled="loading">
+        <span>
+          我已閱讀並同意
+          <a href="/privacy" target="_blank" rel="noopener noreferrer">隱私權政策</a>
+          和
+          <a href="/terms" target="_blank" rel="noopener noreferrer">使用條款</a>
+        </span>
+      </label>
+      
       <section class="demo">
         <form class="ask-form" @submit.prevent="ask">
           <input
             v-model="question"
             type="text"
-            placeholder="輸入你的問題，例如：什麼是仁工智慧？"
+            :placeholder="consentAccepted ? '輸入你的問題，例如：什麼是仁工智慧？' : '請先同意隱私權政策和使用條款，才能發問'"
             :disabled="loading"
             aria-label="問題">
-          <button type="submit" :disabled="loading || cooldown > 0 || !question.trim()">
+          <button type="submit" :disabled="!canSubmit" :class="{ loading }">
             {{ loading ? '思考中…' : (cooldown > 0 ? cooldown + ' 秒…' : '送出') }}
           </button>
         </form>
@@ -223,7 +251,7 @@ export function renderHomePage(): string {
             v-for="s in samples"
             :key="s"
             @click="askSample(s)"
-            :disabled="loading || cooldown > 0">{{ s }}</button>
+            :disabled="!canAskSample">{{ s }}</button>
         </div>
 
         <div class="answer" v-if="answered">
@@ -307,6 +335,7 @@ export function renderHomePage(): string {
         const loading = ref(false)
         const answered = ref(false)
         const error = ref('')
+        const consentAccepted = ref(false)
         // 防連續濫用：每次發問後送出鈕冷卻 10 秒（對齊後端 10 秒限流視窗）。
         const COOLDOWN_SECONDS = 10
         const cooldown = ref(0)
@@ -333,10 +362,16 @@ export function renderHomePage(): string {
         const parsed = computed(() => parseAnswer(raw.value))
         const bodyHtml = computed(() => parsed.value.html)
         const sources = computed(() => parsed.value.sources)
+        const canSubmit = computed(() =>
+          consentAccepted.value && !loading.value && cooldown.value <= 0 && Boolean(question.value.trim()),
+        )
+        const canAskSample = computed(() =>
+          consentAccepted.value && !loading.value && cooldown.value <= 0,
+        )
 
         async function run(q) {
           const query = q.trim()
-          if (!query || loading.value || cooldown.value > 0) return
+          if (!query || !consentAccepted.value || loading.value || cooldown.value > 0) return
           question.value = query
           loading.value = true
           answered.value = true
@@ -367,6 +402,7 @@ export function renderHomePage(): string {
 
         return {
           question,
+          consentAccepted,
           loading,
           cooldown,
           answered,
@@ -374,6 +410,8 @@ export function renderHomePage(): string {
           samples,
           bodyHtml,
           sources,
+          canSubmit,
+          canAskSample,
           ask: () => run(question.value),
           askSample: (s) => run(s),
         }

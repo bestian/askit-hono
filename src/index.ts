@@ -18,6 +18,7 @@ import {
   buildCacheKey,
   getCachedResponse,
   putCachedResponse,
+  refreshCachedResponse,
 } from './utils/cache'
 import {
   DEFAULT_VECTORIZE_MIN_COSINE_SCORE,
@@ -498,7 +499,9 @@ async function replyWithCag(
         answer: string
         sources: CagSource[]
       }
+      const refresh = refreshCachedResponse(env.ASK_CACHE, cacheKey, cached)
       await replyToLine(env, replyToken, formatCagAnswerFlex(answer, sources))
+      await refresh
       return
     } catch (e) {
       console.error('webhook 快取解析失敗，改為重新生成:', e)
@@ -585,7 +588,10 @@ app.get('/ask/:question', async (c) => {
 
   if (cacheKey) {
     const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
-    if (cached) return respondFromCache(cached.body, cached.contentType)
+    if (cached) {
+      c.executionCtx.waitUntil(refreshCachedResponse(c.env.ASK_CACHE, cacheKey, cached))
+      return respondFromCache(cached.body, cached.contentType)
+    }
   }
 
   const budget = await checkGlobalGenerationBudget(c.env)
@@ -677,7 +683,10 @@ app.get('/cag/:question', async (c) => {
     vectorizeMinScore: cagOptions.vectorizeMinScore,
   })
   const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
-  if (cached) return respondFromCache(cached.body, cached.contentType)
+  if (cached) {
+    c.executionCtx.waitUntil(refreshCachedResponse(c.env.ASK_CACHE, cacheKey, cached))
+    return respondFromCache(cached.body, cached.contentType)
+  }
 
   const budget = await checkGlobalGenerationBudget(c.env)
   if (!budget.allowed) {
@@ -757,7 +766,10 @@ app.post('/cag', async (c) => {
     vectorizeMinScore: cagOptions.vectorizeMinScore,
   })
   const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
-  if (cached) return respondFromCache(cached.body, cached.contentType)
+  if (cached) {
+    c.executionCtx.waitUntil(refreshCachedResponse(c.env.ASK_CACHE, cacheKey, cached))
+    return respondFromCache(cached.body, cached.contentType)
+  }
 
   const budget = await checkGlobalGenerationBudget(c.env)
   if (!budget.allowed) {

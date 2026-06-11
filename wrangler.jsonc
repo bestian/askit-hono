@@ -42,6 +42,7 @@
   // 區分 /ask、/cag、/webhook 三條路徑（key 前綴 cache/<scope>/<hash>）。
   // Bucket 需先建立： npx wrangler r2 bucket create askit-answer-cache
   //                  npx wrangler r2 bucket create askit-answer-cache-preview
+  // 建立後套用 7 天 lifecycle：npm run r2:lifecycle
   // 未綁定時程式會優雅降級（當作未命中、照常生成）。
   "r2_buckets": [
     {

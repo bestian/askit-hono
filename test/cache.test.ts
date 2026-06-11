@@ -3,19 +3,23 @@ import test from 'node:test'
 
 import {
   buildCacheKey,
+  CACHE_REFRESH_AFTER_MS,
   CACHE_TTL_MS,
   getCachedResponse,
   putCachedResponse,
+  refreshCachedResponse,
 } from '../src/utils/cache'
 
 // 最小 R2Bucket 假物件：以記憶體 Map 模擬 put/get/delete，並可注入 uploaded 時間以測過期。
-function createFakeBucket(now = Date.now()) {
+function createFakeBucket(initialUploadedAt = Date.now()) {
   const store = new Map<
     string,
     { body: string; contentType?: string; uploaded: Date }
   >()
+  const putUploadedAt: number[] = [initialUploadedAt]
   return {
     store,
+    putUploadedAt,
     async put(
       key: string,
       body: string,
@@ -24,7 +28,7 @@ function createFakeBucket(now = Date.now()) {
       store.set(key, {
         body,
         contentType: opts?.httpMetadata?.contentType,
-        uploaded: new Date(now),
+        uploaded: new Date(putUploadedAt.shift() ?? Date.now()),
       })
     },
     async get(key: string) {
@@ -72,7 +76,31 @@ test('put 後 get 命中並保留 contentType', async () => {
   const key = await buildCacheKey('ask', 'q')
   await putCachedResponse(bucket as never, key, '<p>hi</p>', 'text/html; charset=UTF-8')
   const hit = await getCachedResponse(bucket as never, key)
-  assert.deepEqual(hit, { body: '<p>hi</p>', contentType: 'text/html; charset=UTF-8' })
+  assert.deepEqual(hit, {
+    body: '<p>hi</p>',
+    contentType: 'text/html; charset=UTF-8',
+    shouldRefresh: false,
+  })
+})
+
+test('命中且超過 3.5 天時標記續命並可刷新 uploaded time', async () => {
+  const oldUploadedAt = Date.now() - CACHE_REFRESH_AFTER_MS - 1000
+  const refreshedUploadedAt = Date.now()
+  const bucket = createFakeBucket(oldUploadedAt)
+  const key = await buildCacheKey('cag', 'q')
+  bucket.putUploadedAt.push(refreshedUploadedAt)
+
+  await putCachedResponse(bucket as never, key, 'hot', 'text/markdown')
+  const hit = await getCachedResponse(bucket as never, key)
+  assert.ok(hit)
+  assert.deepEqual(hit, {
+    body: 'hot',
+    contentType: 'text/markdown',
+    shouldRefresh: true,
+  })
+
+  await refreshCachedResponse(bucket as never, key, hit)
+  assert.equal(bucket.store.get(key)?.uploaded.getTime(), refreshedUploadedAt)
 })
 
 test('超過 7 天視為未命中並刪除', async () => {

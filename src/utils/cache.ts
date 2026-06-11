@@ -14,10 +14,13 @@ export type CacheScope = 'ask' | 'cag' | 'webhook'
 
 /** 快取壽命：7 天。 */
 export const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+/** 命中且物件已超過 3.5 天時，重寫同一 key 以刷新 R2 物件壽命。 */
+export const CACHE_REFRESH_AFTER_MS = CACHE_TTL_MS / 2
 
 export type CachedEntry = {
   body: string
   contentType: string
+  shouldRefresh: boolean
 }
 
 async function sha256Hex(input: string): Promise<string> {
@@ -48,6 +51,7 @@ export async function buildCacheKey(
 
 // 讀取快取。命中且未過期回傳內容；未綁 bucket、查無、過期或發生錯誤一律回 null（視為未命中）。
 // 7 天壽命以 R2 物件的上傳時間判斷；過期順手刪除，避免 bucket 無限膨脹。
+// 命中但已超過 3.5 天時標記 shouldRefresh，讓呼叫端可用 waitUntil 背景續命。
 export async function getCachedResponse(
   bucket: R2Bucket | undefined,
   key: string,
@@ -56,13 +60,14 @@ export async function getCachedResponse(
   try {
     const object = await bucket.get(key)
     if (!object) return null
-    if (Date.now() - object.uploaded.getTime() > CACHE_TTL_MS) {
+    const ageMs = Date.now() - object.uploaded.getTime()
+    if (ageMs > CACHE_TTL_MS) {
       await bucket.delete(key).catch(() => {})
       return null
     }
     const body = await object.text()
     const contentType = object.httpMetadata?.contentType || 'text/plain; charset=UTF-8'
-    return { body, contentType }
+    return { body, contentType, shouldRefresh: ageMs > CACHE_REFRESH_AFTER_MS }
   } catch (e) {
     console.error('快取讀取失敗，視為未命中:', e)
     return null
@@ -85,4 +90,15 @@ export async function putCachedResponse(
   } catch (e) {
     console.error('快取寫入失敗，略過:', e)
   }
+}
+
+// 快取命中續命：只在 getCachedResponse 標記 shouldRefresh 時重寫同一份內容，
+// 刷新 R2 uploaded time，讓熱 key 不會被 7 天 lifecycle 刪除。
+export async function refreshCachedResponse(
+  bucket: R2Bucket | undefined,
+  key: string,
+  cached: CachedEntry,
+): Promise<void> {
+  if (!cached.shouldRefresh) return
+  await putCachedResponse(bucket, key, cached.body, cached.contentType)
 }

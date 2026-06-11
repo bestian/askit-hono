@@ -337,6 +337,70 @@ test('global generation budget blocks uncached CAG before AI', async () => {
   assert.equal(new URL(quotaUrls[0]).pathname, '/quota')
 })
 
+test('public CAG does not cache blank, short, or known-bad streamed answers', async () => {
+  const badAnswers = [
+    '   ',
+    '太短',
+    '查詢發生錯誤，請稍後再試',
+  ]
+
+  for (const answer of badAnswers) {
+    const cachedBodies: string[] = []
+    const waitUntilPromises: Promise<unknown>[] = []
+    const env = {
+      ASK_CACHE: {
+        async get() {
+          return null
+        },
+        async put(_key: string, body: string) {
+          cachedBodies.push(body)
+        },
+      },
+      AI: {
+        run: async (_model: string, input: Record<string, unknown>) => {
+          if ('text' in input) return { data: [[0.1, 0.2, 0.3]] }
+          return { response: answer }
+        },
+      },
+      VECTORIZE: {
+        query: async () => ({
+          matches: [
+            {
+              id: '123',
+              score: 0.9,
+              metadata: {
+                section_id: 123,
+                filename: '2024-01-01-demo',
+                content: '測試內容',
+                display_name: '示範會議',
+              },
+            },
+          ],
+        }),
+      },
+      CAG_RETRIEVER: 'vectorize',
+    }
+
+    const response = await app.request(
+      '/cag/%E6%B8%AC%E8%A9%A6',
+      undefined,
+      env,
+      {
+        waitUntil: (promise: Promise<unknown>) => {
+          waitUntilPromises.push(promise)
+        },
+        passThroughOnException: () => {},
+        props: {},
+      },
+    )
+
+    assert.equal(response.status, 200)
+    await response.text()
+    await Promise.all(waitUntilPromises)
+    assert.deepEqual(cachedBodies, [])
+  }
+})
+
 test('webhook replies with length warning for questions over 100 characters', async () => {
   const message = '您的問題字數過長，請縮短問題的長度，謝謝!'
   const secret = 'test-secret'

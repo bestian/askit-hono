@@ -125,6 +125,7 @@ const RATE_LIMIT_WINDOW_MS = 10_000
 const GLOBAL_GENERATION_LIMIT_PER_MINUTE = 15
 const GLOBAL_GENERATION_LIMIT_PER_DAY = 300
 const MAX_QUESTION_CHARS = 100
+const MIN_CACHEABLE_CAG_ANSWER_CHARS = 12
 // 限流（同一使用者 10 秒內最多 1 次）觸發時的回覆訊息。
 const RATE_LIMIT_HTTP_MESSAGE = '您的發問過於頻繁，請稍候約 10 秒再試，謝謝 🙏'
 const RATE_LIMIT_LINE_REPLY = '您的發問過於頻繁，請稍候約 10 秒再試，謝謝 🙏'
@@ -179,6 +180,28 @@ async function readStreamToString(stream: ReadableStream<Uint8Array>): Promise<s
   return text + decoder.decode()
 }
 
+function isCacheableCagAnswerText(text: string): boolean {
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  if ([...normalized].length < MIN_CACHEABLE_CAG_ANSWER_CHARS) return false
+
+  const knownBadAnswerPhrases = [
+    NOT_FOUND_REPLY,
+    ERROR_REPLY,
+    RATE_LIMIT_HTTP_MESSAGE,
+    GLOBAL_BUDGET_HTTP_MESSAGE,
+    QUESTION_TOO_LONG_MESSAGE,
+    '查詢發生錯誤',
+    '找不到足夠相關的逐字稿',
+    '無法根據提供的逐字稿回答',
+    '無法從提供的資料中回答',
+    '無法回答這個問題',
+    '不能回答這個問題',
+    'I cannot answer',
+    'I can’t answer',
+  ]
+  return !knownBadAnswerPhrases.some((phrase) => normalized.includes(phrase))
+}
+
 // 用快取內容組出回應（命中時走這條，不跑檢索與 AI）。
 function respondFromCache(body: string, contentType: string): Response {
   return new Response(body, {
@@ -200,7 +223,10 @@ function cacheStreamingResponse(
     response.headers.get('Content-Type') || 'text/markdown; charset=UTF-8'
   c.executionCtx.waitUntil(
     readStreamToString(toCache)
-      .then((text) => putCachedResponse(c.env.ASK_CACHE, cacheKey, text, contentType))
+      .then((text) => {
+        if (!isCacheableCagAnswerText(text)) return
+        return putCachedResponse(c.env.ASK_CACHE, cacheKey, text, contentType)
+      })
       .catch((e) => console.error('快取串流寫入失敗:', e)),
   )
   return new Response(toClient, {

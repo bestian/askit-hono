@@ -3,7 +3,13 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { runInNewContext } from 'node:vm'
 
+import Fuse from 'fuse.js'
 import app, { ipRateLimitKeyFromIp } from '../src/index'
+import {
+  ASK_FUSE_OPTIONS,
+  ASK_INDEX_R2_KEY,
+  type SectionRow,
+} from '../src/utils/askIndexFormat'
 import {
   buildCagQueryVariants,
   markdownCitationFootnotes,
@@ -54,6 +60,75 @@ function sameRealmJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
 
+function assertSecurityHeaders(response: Response) {
+  assert.match(response.headers.get('Content-Security-Policy') ?? '', /frame-ancestors 'none'/)
+  assert.equal(response.headers.get('X-Content-Type-Options'), 'nosniff')
+  assert.equal(response.headers.get('Referrer-Policy'), 'no-referrer')
+  assert.equal(response.headers.get('Strict-Transport-Security'), 'max-age=15552000; includeSubDomains')
+  assert.equal(response.headers.get('X-Frame-Options'), 'SAMEORIGIN')
+  assert.equal(response.headers.get('Cross-Origin-Opener-Policy'), 'same-origin')
+  assert.equal(response.headers.get('Cross-Origin-Resource-Policy'), 'same-origin')
+  assert.equal(response.headers.get('Origin-Agent-Cluster'), '?1')
+  assert.equal(response.headers.get('X-DNS-Prefetch-Control'), 'off')
+  assert.equal(response.headers.get('X-Download-Options'), 'noopen')
+  assert.equal(response.headers.get('X-Permitted-Cross-Domain-Policies'), 'none')
+  assert.equal(response.headers.get('X-XSS-Protection'), '0')
+
+  const permissionsPolicy = response.headers.get('Permissions-Policy') ?? ''
+  assert.match(permissionsPolicy, /camera=\(\)/)
+  assert.match(permissionsPolicy, /geolocation=\(\)/)
+  assert.match(permissionsPolicy, /microphone=\(\)/)
+}
+
+function createAskIndexBucket() {
+  const rows: SectionRow[] = [
+    {
+      filename: '2024-01-01-demo',
+      nest_filename: null,
+      section_id: 123,
+      section_speaker: '唐鳳',
+      section_content: '地神香火測試內容',
+      display_name: '示範會議',
+      name: '唐鳳',
+    },
+  ]
+  const payload = {
+    v: 1,
+    generatedAt: '2026-01-01T00:00:00.000Z',
+    speakerLike: '%唐鳳%',
+    rowCount: rows.length,
+    rows,
+    index: Fuse.createIndex(ASK_FUSE_OPTIONS.keys as string[], rows).toJSON(),
+  }
+
+  return {
+    async get(key: string) {
+      if (key !== ASK_INDEX_R2_KEY) return null
+      return {
+        async text() {
+          return JSON.stringify(payload)
+        },
+      }
+    },
+  }
+}
+
+function createCachedResponseBucket(body: string, contentType: string) {
+  return {
+    async get() {
+      return {
+        uploaded: new Date(),
+        httpMetadata: { contentType },
+        async text() {
+          return body
+        },
+      }
+    },
+    async put() {},
+    async delete() {},
+  }
+}
+
 
 test('home page serves self-hosted scripts with CSP', async () => {
   const response = await app.request('/')
@@ -69,6 +144,79 @@ test('home page serves self-hosted scripts with CSP', async () => {
   assert.match(csp, /script-src 'self'/)
   assert.match(csp, /script-src-attr 'none'/)
   assert.ok(!/script-src[^;]*'unsafe-inline'/.test(csp))
+  assertSecurityHeaders(response)
+})
+
+test('security headers apply to manual responses, cache hits, and CAG streams', async () => {
+  const waitUntilPromises: Promise<unknown>[] = []
+  const executionCtx = {
+    waitUntil: (promise: Promise<unknown>) => {
+      waitUntilPromises.push(promise)
+    },
+    passThroughOnException: () => {},
+    props: {},
+  }
+
+  const askResponse = await app.request(
+    '/ask/%E5%9C%B0%E7%A5%9E',
+    undefined,
+    { ASK_INDEX: createAskIndexBucket() },
+    executionCtx,
+  )
+  assert.equal(askResponse.status, 200)
+  assertSecurityHeaders(askResponse)
+  assert.match(await askResponse.text(), /地神香火測試內容/)
+
+  const cachedResponse = await app.request(
+    '/ask/%E5%9C%B0%E7%A5%9E',
+    undefined,
+    {
+      ASK_CACHE: createCachedResponseBucket(
+        '<!doctype html><p>cached</p>',
+        'text/html; charset=UTF-8',
+      ),
+    },
+    executionCtx,
+  )
+  assert.equal(cachedResponse.status, 200)
+  assert.equal(cachedResponse.headers.get('X-Cache'), 'HIT')
+  assertSecurityHeaders(cachedResponse)
+  assert.equal(await cachedResponse.text(), '<!doctype html><p>cached</p>')
+
+  const streamResponse = await app.request(
+    '/cag/%E6%B8%AC%E8%A9%A6',
+    undefined,
+    {
+      AI: {
+        run: async (_model: string, input: Record<string, unknown>) => {
+          if ('text' in input) return { data: [[0.1, 0.2, 0.3]] }
+          return { response: '這是串流回答 [1]' }
+        },
+      },
+      VECTORIZE: {
+        query: async () => ({
+          matches: [
+            {
+              id: '123',
+              score: 0.9,
+              metadata: {
+                section_id: 123,
+                filename: '2024-01-01-demo',
+                content: '測試內容',
+                display_name: '示範會議',
+              },
+            },
+          ],
+        }),
+      },
+      CAG_RETRIEVER: 'vectorize',
+    },
+    executionCtx,
+  )
+  assert.equal(streamResponse.status, 200)
+  assertSecurityHeaders(streamResponse)
+  assert.match(await streamResponse.text(), /這是串流回答/)
+  await Promise.all(waitUntilPromises)
 })
 
 test('homepage parser rejects non-http citation URLs and relative URLs', async () => {

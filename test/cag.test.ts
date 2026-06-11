@@ -65,7 +65,7 @@ function assertSecurityHeaders(response: Response) {
   assert.equal(response.headers.get('X-Content-Type-Options'), 'nosniff')
   assert.equal(response.headers.get('Referrer-Policy'), 'no-referrer')
   assert.equal(response.headers.get('Strict-Transport-Security'), 'max-age=15552000; includeSubDomains')
-  assert.equal(response.headers.get('X-Frame-Options'), 'SAMEORIGIN')
+  assert.equal(response.headers.get('X-Frame-Options'), 'DENY')
   assert.equal(response.headers.get('Cross-Origin-Opener-Policy'), 'same-origin')
   assert.equal(response.headers.get('Cross-Origin-Resource-Policy'), 'same-origin')
   assert.equal(response.headers.get('Origin-Agent-Cluster'), '?1')

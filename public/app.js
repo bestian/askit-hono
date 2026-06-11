@@ -3,24 +3,30 @@
 
   const COOLDOWN_SECONDS = 10
   const BLOCKED_ELEMENT_SELECTOR = 'script, iframe, object, embed, base, meta, link'
-  const ALLOWED_LINK_PROTOCOLS = new Set(['http:', 'https:', 'mailto:'])
+  const ALLOWED_LINK_PROTOCOLS = new Set(['http:', 'https:'])
   const URL_ATTRIBUTE_NAMES = new Set(['href', 'src', 'xlink:href', 'action', 'formaction', 'poster'])
 
-  function isSafeUrl(value) {
+  function isSafeHttpUrl(value) {
+    if (/[\s"'<>]/.test(value) || /&(quot|#39|lt|gt);/i.test(value)) return false
     try {
-      const url = new URL(value, window.location.origin)
+      const url = new URL(value)
       return ALLOWED_LINK_PROTOCOLS.has(url.protocol)
     } catch {
       return false
     }
   }
 
-  function escapeAttribute(value) {
+  function escapeHtml(value) {
     return value
       .replace(/&/g, '&amp;')
-      .replace(/"/g, '&quot;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+  }
+
+  function escapeAttribute(value) {
+    return escapeHtml(value)
   }
 
   function sanitizeHtml(html) {
@@ -38,7 +44,7 @@
           element.removeAttribute(attr.name)
           continue
         }
-        if (URL_ATTRIBUTE_NAMES.has(name) && !isSafeUrl(attr.value)) {
+        if (URL_ATTRIBUTE_NAMES.has(name) && !isSafeHttpUrl(attr.value)) {
           element.removeAttribute(attr.name)
         }
       }
@@ -62,7 +68,7 @@
     const body = raw.replace(
       /^\[\^(\d+)\]:\s*\[([^\]]*)\]\(([^)\s]+)\)\s*$/gm,
       (_m, num, label, href) => {
-        if (!isSafeUrl(href)) return ''
+        if (!isSafeHttpUrl(href)) return ''
         const index = Number(num)
         if (!seen.has(index)) {
           seen.set(index, { index, label: label.trim() || href, href })
@@ -74,14 +80,18 @@
     sources.push(...[...seen.values()].sort((a, b) => a.index - b.index))
     const hrefByIndex = new Map(sources.map((s) => [s.index, s.href]))
 
-    let html = body
+    let html = escapeHtml(body)
     html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     html = html.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
     html = html.replace(
       /\[([^\]]+)\]\((https?:[^)\s]+)\)/g,
-      (_m, label, href) =>
+      (_m, label, href) => {
+        if (!isSafeHttpUrl(href)) return label
+        return (
         '<a href="' + escapeAttribute(href) +
-        '" target="_blank" rel="noopener noreferrer">' + label + '</a>',
+        '" target="_blank" rel="noopener noreferrer">' + label + '</a>'
+        )
+      },
     )
     html = html.replace(/\[\^(\d+)\]/g, (m, num) => {
       const href = hrefByIndex.get(Number(num))
@@ -91,6 +101,10 @@
     })
 
     return { html: sanitizeHtml(html), sources }
+  }
+
+  if (globalThis.__ASKIT_ENABLE_TEST_HOOKS__) {
+    globalThis.__ASKIT_TESTS__ = { parseAnswer, isSafeHttpUrl, sanitizeHtml }
   }
 
   createApp({

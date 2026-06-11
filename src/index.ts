@@ -92,7 +92,7 @@ type LineMessageEvent = {
   type: string
   replyToken: string
   timestamp: number
-  source: { userId?: string; type: string }
+  source: { userId?: string; type: string; groupId?: string; roomId?: string }
   message?: { type: string; text?: string }
 }
 
@@ -244,6 +244,13 @@ async function isRateLimited(env: Bindings, key: string): Promise<boolean> {
     console.error('限流檢查失敗，放行:', e)
     return false
   }
+}
+
+function lineRateLimitKey(source: LineMessageEvent['source']): string {
+  if (source.userId) return `line:${source.userId}`
+  if (source.type === 'group' && source.groupId) return `line:group:${source.groupId}`
+  if (source.type === 'room' && source.roomId) return `line:room:${source.roomId}`
+  return 'line:anonymous'
 }
 
 function normalizeIpv6Prefix64(ip: string): string | null {
@@ -806,9 +813,10 @@ app.post('/webhook', async (c) => {
     return c.text('OK', 200)
   }
 
-  // 防連續濫用：同一 userId 10 秒內第 2 則訊息，只回個提示，不再做昂貴的 CAG 生成。
+  // 防連續濫用：同一 LINE 來源 10 秒內第 2 則訊息，只回個提示，不再做昂貴的 CAG 生成。
+  // userId 缺席時改以 groupId / roomId / anonymous 做較粗的限流，避免群組事件繞過。
   // （仍須回 200 ack，並用一次性 reply token 送出提示。）
-  if (userId && (await isRateLimited(c.env, `line:${userId}`))) {
+  if (await isRateLimited(c.env, lineRateLimitKey(event.source))) {
     c.executionCtx.waitUntil(
       replyToLine(c.env, replyToken, { type: 'text', text: RATE_LIMIT_LINE_REPLY }),
     )

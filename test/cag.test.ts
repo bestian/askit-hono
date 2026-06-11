@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
+import { runInNewContext } from 'node:vm'
 
 import app, { ipRateLimitKeyFromIp } from '../src/index'
 import {
@@ -10,6 +12,48 @@ import {
   retrieveCagSources,
 } from '../src/utils/cag'
 import type { VectorizeBinding } from '../src/utils/vectorize'
+
+type AppTestHooks = {
+  parseAnswer: (raw: string) => {
+    html: string
+    sources: { index: number; label: string; href: string }[]
+  }
+  isSafeHttpUrl: (value: string) => boolean
+}
+
+async function loadAppTestHooks(): Promise<AppTestHooks> {
+  const appJs = await readFile(new URL('../public/app.js', import.meta.url), 'utf8')
+  const context = {
+    URL,
+    NodeFilter: { SHOW_ELEMENT: 1 },
+    DOMParser: class {
+      parseFromString(html: string) {
+        return {
+          body: {
+            innerHTML: html,
+            querySelectorAll: () => [],
+          },
+          createTreeWalker: () => ({ nextNode: () => null }),
+        }
+      }
+    },
+    Vue: {
+      createApp: () => ({ mount: () => {} }),
+      ref: (value: unknown) => ({ value }),
+      computed: (fn: () => unknown) => ({ get value() { return fn() } }),
+      h: () => ({}),
+    },
+    __ASKIT_ENABLE_TEST_HOOKS__: true,
+  }
+
+  runInNewContext(appJs, context)
+  return (context as typeof context & { __ASKIT_TESTS__: AppTestHooks }).__ASKIT_TESTS__
+}
+
+function sameRealmJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
 
 test('home page serves self-hosted scripts with CSP', async () => {
   const response = await app.request('/')
@@ -25,6 +69,51 @@ test('home page serves self-hosted scripts with CSP', async () => {
   assert.match(csp, /script-src 'self'/)
   assert.match(csp, /script-src-attr 'none'/)
   assert.ok(!/script-src[^;]*'unsafe-inline'/.test(csp))
+})
+
+test('homepage parser rejects non-http citation URLs and relative URLs', async () => {
+  const { isSafeHttpUrl, parseAnswer } = await loadAppTestHooks()
+
+  assert.equal(isSafeHttpUrl('https://archive.tw/demo#s1'), true)
+  assert.equal(isSafeHttpUrl('http://archive.tw/demo#s1'), true)
+  assert.equal(isSafeHttpUrl('javascript:alert(1)'), false)
+  assert.equal(isSafeHttpUrl('data:text/html,<script>alert(1)</script>'), false)
+  assert.equal(isSafeHttpUrl('mailto:test@example.com'), false)
+  assert.equal(isSafeHttpUrl('/relative/path'), false)
+  assert.equal(isSafeHttpUrl('https://archive.tw/demo"onclick="alert'), false)
+
+  const parsed = parseAnswer([
+    '回答 [^1] [^2] [^3] [^4]',
+    '',
+    '[^1]: [JS](javascript:alert(1))',
+    '[^2]: [Data](data:text/html,<script>alert(1)</script>)',
+    '[^3]: [Relative](/demo#s1)',
+    '[^4]: [OK](https://archive.tw/demo#s1)',
+  ].join('\n'))
+
+  assert.deepEqual(sameRealmJson(parsed.sources), [
+    { index: 4, label: 'OK', href: 'https://archive.tw/demo#s1' },
+  ])
+  assert.doesNotMatch(parsed.html, /href="javascript:/i)
+  assert.doesNotMatch(parsed.html, /href="data:text\/html/i)
+  assert.doesNotMatch(parsed.html, /href="\/relative\/path"/i)
+})
+
+test('homepage parser escapes html and markdown link attribute breakout payloads', async () => {
+  const { parseAnswer } = await loadAppTestHooks()
+  const parsed = parseAnswer([
+    '<img src=x onerror=alert(1)>',
+    '[click](https://example.com/"onclick="alert)',
+    '[^1]',
+    '',
+    '[^1]: [Quote](https://archive.tw/demo"onclick="alert)',
+  ].join('\n'))
+
+  assert.doesNotMatch(parsed.html, /<img/i)
+  assert.doesNotMatch(parsed.html, /<a[^>]+onclick/i)
+  assert.match(parsed.html, /&lt;img src=x onerror=alert\(1\)&gt;/)
+  assert.doesNotMatch(parsed.html, /href="https:\/\/example\.com\/&amp;quot;/)
+  assert.deepEqual(sameRealmJson(parsed.sources), [])
 })
 
 async function streamToString(stream: ReadableStream<string>): Promise<string> {

@@ -122,6 +122,7 @@ test('public CAG endpoints ignore client-supplied model', async () => {
   const executionCtx = {
     waitUntil: (_promise: Promise<unknown>) => {},
     passThroughOnException: () => {},
+    props: {},
   }
 
   const getResponse = await app.request(
@@ -295,6 +296,7 @@ test('webhook replies with length warning for questions over 100 characters', as
           waitUntilPromises.push(promise)
         },
         passThroughOnException: () => {},
+        props: {},
       },
     )
     assert.equal(response.status, 200)
@@ -306,6 +308,78 @@ test('webhook replies with length warning for questions over 100 characters', as
     assert.deepEqual(JSON.parse(String(fetchCalls[0].init?.body)), {
       replyToken: 'reply-token',
       messages: [{ type: 'text', text: message }],
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('webhook rate limits group messages without userId by groupId', async () => {
+  const secret = 'test-secret'
+  const body = JSON.stringify({
+    events: [
+      {
+        type: 'message',
+        replyToken: 'reply-token',
+        timestamp: Date.now(),
+        source: { type: 'group', groupId: 'group-123' },
+        message: { type: 'text', text: '地神香火如何' },
+      },
+    ],
+  })
+  const signature = await signLineBody(secret, body)
+  const rateLimitKeys: string[] = []
+  const fetchCalls: { input: RequestInfo | URL; init?: RequestInit }[] = []
+  const waitUntilPromises: Promise<unknown>[] = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    fetchCalls.push({ input, init })
+    return new Response('{}', { status: 200 })
+  }
+
+  try {
+    const response = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-line-signature': signature,
+        },
+        body,
+      },
+      {
+        LINE_CHANNEL_SECRET: secret,
+        LINE_CHANNEL_ACCESS_TOKEN: 'line-token',
+        AI: {
+          run: async () => {
+            throw new Error('AI should not be called when webhook is rate limited')
+          },
+        },
+        RATE_LIMITER: {
+          limit: async ({ key }) => {
+            rateLimitKeys.push(key)
+            return { success: false }
+          },
+        },
+      },
+      {
+        waitUntil: (promise: Promise<unknown>) => {
+          waitUntilPromises.push(promise)
+        },
+        passThroughOnException: () => {},
+        props: {},
+      },
+    )
+    assert.equal(response.status, 200)
+    assert.equal(await response.text(), 'OK')
+    await Promise.all(waitUntilPromises)
+
+    assert.deepEqual(rateLimitKeys, ['line:group:group-123'])
+    assert.equal(fetchCalls.length, 1)
+    assert.deepEqual(JSON.parse(String(fetchCalls[0].init?.body)), {
+      replyToken: 'reply-token',
+      messages: [{ type: 'text', text: '您的發問過於頻繁，請稍候約 10 秒再試，謝謝 🙏' }],
     })
   } finally {
     globalThis.fetch = originalFetch

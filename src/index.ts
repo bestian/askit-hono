@@ -1,4 +1,4 @@
-import { Hono, type Context } from 'hono'
+import { Hono, type Context, type MiddlewareHandler } from 'hono'
 import { secureHeaders } from 'hono/secure-headers'
 
 import { renderHomePage } from './pages/home'
@@ -125,6 +125,7 @@ const RATE_LIMIT_WINDOW_MS = 10_000
 const GLOBAL_GENERATION_LIMIT_PER_MINUTE = 15
 const GLOBAL_GENERATION_LIMIT_PER_DAY = 300
 const MAX_QUESTION_CHARS = 100
+const MAX_API_BODY_BYTES = 32 * 1024
 const MIN_CACHEABLE_CAG_ANSWER_CHARS = 12
 // 限流（同一使用者 10 秒內最多 1 次）觸發時的回覆訊息。
 const RATE_LIMIT_HTTP_MESSAGE = '您的發問過於頻繁，請稍候約 10 秒再試，謝謝 🙏'
@@ -171,6 +172,68 @@ app.use(secureHeaders({
     microphone: [],
   },
 }))
+
+async function readRequestBodyWithinLimit(
+  request: Request,
+  maxBytes: number,
+): Promise<Uint8Array | null> {
+  const contentLength = request.headers.get('content-length')
+  if (contentLength !== null) {
+    const bytes = Number(contentLength)
+    if (Number.isFinite(bytes) && bytes > maxBytes) return null
+  }
+
+  const body = request.body
+  if (!body) return new Uint8Array()
+
+  const reader = body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) {
+        const bytes = new Uint8Array(total)
+        let offset = 0
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset)
+          offset += chunk.byteLength
+        }
+        return bytes
+      }
+      total += value.byteLength
+      if (total > maxBytes) {
+        await reader.cancel()
+        return null
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+const maxApiBodySize: MiddlewareHandler = async (c, next) => {
+  if (c.req.method !== 'POST') {
+    await next()
+    return
+  }
+  const body = await readRequestBodyWithinLimit(c.req.raw, MAX_API_BODY_BYTES)
+  if (!body) {
+    return c.text('Request body too large', 413)
+  }
+  c.req.raw = new Request(c.req.raw.url, {
+    body,
+    headers: c.req.raw.headers,
+    method: c.req.raw.method,
+    redirect: c.req.raw.redirect,
+    signal: c.req.raw.signal,
+  })
+  await next()
+}
+
+app.use('/cag', maxApiBodySize)
+app.use('/webhook', maxApiBodySize)
 
 function decodeRouteParam(value: string): string {
   try {

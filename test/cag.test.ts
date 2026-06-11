@@ -608,6 +608,26 @@ test('question endpoints reject questions over 100 characters before retrieval o
   assert.equal(aiCalls.length, 0)
 })
 
+test('POST APIs reject oversized request bodies', async () => {
+  const oversizedQuestion = '長'.repeat(33 * 1024)
+
+  const cagResponse = await app.request('/cag', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question: oversizedQuestion }),
+  })
+  assert.equal(cagResponse.status, 413)
+  assert.equal(await cagResponse.text(), 'Request body too large')
+
+  const webhookResponse = await app.request('/webhook', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ events: [{ message: { type: 'text', text: oversizedQuestion } }] }),
+  })
+  assert.equal(webhookResponse.status, 413)
+  assert.equal(await webhookResponse.text(), 'Request body too large')
+})
+
 test('IPv6 rate limit keys are bucketed by /64 prefix', () => {
   assert.equal(ipRateLimitKeyFromIp('203.0.113.10'), 'ip:203.0.113.10')
   assert.equal(

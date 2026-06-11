@@ -1,6 +1,7 @@
 import Fuse, { type IFuseOptions } from 'fuse.js'
 
 export const ASK_INDEX_VERSION = 1
+export const ASK_INDEX_R2_PREFIX = 'ask-index/'
 export const ASK_INDEX_R2_KEY = 'ask-index/audrey-tang.json'
 export const ASK_INDEX_MANIFEST_R2_KEY = 'ask-index/audrey-tang.manifest.json'
 
@@ -45,6 +46,10 @@ export function manifestKeyForIndexKey(indexKey: string): string {
   return indexKey.endsWith('.json')
     ? indexKey.replace(/\.json$/, '.manifest.json')
     : `${indexKey}.manifest.json`
+}
+
+export function isAskIndexR2Key(key: string): boolean {
+  return key.startsWith(ASK_INDEX_R2_PREFIX) && !key.includes('..')
 }
 
 export const ASK_FUSE_OPTIONS: IFuseOptions<SectionRow> = {

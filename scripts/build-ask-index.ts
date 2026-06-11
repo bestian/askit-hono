@@ -24,6 +24,7 @@ import {
   ASK_FUSE_OPTIONS,
   ASK_INDEX_R2_KEY,
   ASK_INDEX_VERSION,
+  isAskIndexR2Key,
   manifestKeyForIndexKey,
   type AskIndexManifest,
   type AskIndexPayload,
@@ -40,6 +41,12 @@ const MAX_SECTION_CHARS = Number(process.env.MAX_SECTION_CHARS ?? '175')
 const YEARS_BACK = Number(process.env.YEARS_BACK ?? '2')
 const SKIP_UPLOAD = process.env.SKIP_UPLOAD === '1'
 const D1_FLAG = process.env.LOCAL === '1' ? '--local' : '--remote'
+
+if (!isAskIndexR2Key(R2_KEY)) {
+  throw new Error(
+    `R2_KEY must stay under the ask-index/ prefix so the Worker can safely load it: ${R2_KEY}`,
+  )
+}
 
 type WranglerD1Envelope = {
   success?: boolean

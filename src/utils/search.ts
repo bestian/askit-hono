@@ -1,7 +1,9 @@
 import type Fuse from 'fuse.js'
 import type { CagSource } from './cag'
 import {
+  ASK_INDEX_VERSION,
   ASK_INDEX_R2_KEY,
+  isAskIndexR2Key,
   manifestKeyForIndexKey,
   type AskIndexManifest,
   type AskIndexPayload,
@@ -45,6 +47,8 @@ const LINE_FLEX_BODY_MAX_CHARS = 280
 const LINE_FLEX_ALT_TEXT_MAX_CHARS = 1_500
 const LINE_CAG_BODY_MAX_CHARS = 1_200
 const INDEX_MANIFEST_CHECK_MS = 60_000
+const ASK_INDEX_MAX_BYTES = 16 * 1024 * 1024
+const ASK_INDEX_SIZE_TOLERANCE_BYTES = 1024 * 1024
 
 /**
  * Module-level cache：同個 Worker isolate 在多次請求間共用解析後的 Fuse index。
@@ -67,9 +71,116 @@ function fingerprintForIndex(
     'manifest',
     manifest.indexKey,
     manifest.indexSha256,
+    manifest.indexBytes,
     manifest.generatedAt,
     manifest.rowCount,
   ].join(':')
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function assertAskIndexManifest(
+  value: unknown,
+  manifestKey: string,
+): asserts value is AskIndexManifest {
+  if (!isRecord(value)) {
+    throw new Error(`索引 manifest 格式錯誤：${manifestKey}`)
+  }
+  if (
+    value.v !== ASK_INDEX_VERSION ||
+    typeof value.generatedAt !== 'string' ||
+    typeof value.indexKey !== 'string' ||
+    !isAskIndexR2Key(value.indexKey) ||
+    typeof value.indexSha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/i.test(value.indexSha256) ||
+    typeof value.indexBytes !== 'number' ||
+    !Number.isSafeInteger(value.indexBytes) ||
+    value.indexBytes <= 0 ||
+    value.indexBytes > ASK_INDEX_MAX_BYTES ||
+    typeof value.speakerLike !== 'string' ||
+    typeof value.rowCount !== 'number' ||
+    !Number.isSafeInteger(value.rowCount) ||
+    value.rowCount < 0
+  ) {
+    throw new Error(`索引 manifest 欄位驗證失敗：${manifestKey}`)
+  }
+}
+
+function assertSectionRow(value: unknown): asserts value is SectionRow {
+  if (!isRecord(value)) throw new Error('索引 payload rows 格式錯誤')
+  if (
+    typeof value.filename !== 'string' ||
+    !(typeof value.nest_filename === 'string' || value.nest_filename === null) ||
+    !(typeof value.section_id === 'number' || typeof value.section_id === 'string') ||
+    !(typeof value.section_speaker === 'string' || value.section_speaker === null) ||
+    !(typeof value.section_content === 'string' || value.section_content === null) ||
+    !(typeof value.display_name === 'string' || value.display_name === null) ||
+    !(typeof value.name === 'string' || value.name === null)
+  ) {
+    throw new Error('索引 payload rows 欄位驗證失敗')
+  }
+}
+
+function assertAskIndexPayload(
+  value: unknown,
+  manifest: AskIndexManifest | null,
+): asserts value is AskIndexPayload {
+  if (!isRecord(value)) throw new Error('索引 payload 格式錯誤')
+  if (
+    value.v !== ASK_INDEX_VERSION ||
+    typeof value.generatedAt !== 'string' ||
+    typeof value.speakerLike !== 'string' ||
+    typeof value.rowCount !== 'number' ||
+    !Number.isSafeInteger(value.rowCount) ||
+    value.rowCount < 0 ||
+    !Array.isArray(value.rows) ||
+    value.rows.length !== value.rowCount ||
+    !('index' in value)
+  ) {
+    throw new Error('索引 payload 欄位驗證失敗')
+  }
+  if (manifest && value.rowCount !== manifest.rowCount) {
+    throw new Error(
+      `索引 payload rowCount (${value.rowCount}) 與 manifest (${manifest.rowCount}) 不符`,
+    )
+  }
+  for (const row of value.rows) assertSectionRow(row)
+}
+
+function maxAllowedIndexBytes(manifest: AskIndexManifest | null): number {
+  if (!manifest) return ASK_INDEX_MAX_BYTES
+  return Math.min(
+    ASK_INDEX_MAX_BYTES,
+    manifest.indexBytes + Math.max(ASK_INDEX_SIZE_TOLERANCE_BYTES, manifest.indexBytes),
+  )
+}
+
+function assertIndexSize(
+  actualBytes: number,
+  key: string,
+  manifest: AskIndexManifest | null,
+) {
+  const maxBytes = maxAllowedIndexBytes(manifest)
+  if (actualBytes > maxBytes) {
+    throw new Error(`R2 索引過大：${key} 為 ${actualBytes} bytes，上限 ${maxBytes} bytes`)
+  }
+  if (manifest && actualBytes !== manifest.indexBytes) {
+    throw new Error(
+      `R2 索引大小不符：${key} 為 ${actualBytes} bytes，manifest 為 ${manifest.indexBytes} bytes`,
+    )
+  }
+}
+
+function hexFromBytes(bytes: ArrayBuffer): string {
+  return Array.from(new Uint8Array(bytes), (byte) =>
+    byte.toString(16).padStart(2, '0'),
+  ).join('')
+}
+
+async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
+  return hexFromBytes(await crypto.subtle.digest('SHA-256', bytes))
 }
 
 async function loadManifestFromR2(
@@ -78,7 +189,9 @@ async function loadManifestFromR2(
 ): Promise<AskIndexManifest | null> {
   const obj = await bucket.get(key)
   if (!obj) return null
-  return JSON.parse(await obj.text()) as AskIndexManifest
+  const manifest = JSON.parse(await obj.text()) as unknown
+  assertAskIndexManifest(manifest, key)
+  return manifest
 }
 
 async function loadIndexFromR2(
@@ -86,12 +199,26 @@ async function loadIndexFromR2(
   key: string,
   manifest: AskIndexManifest | null,
 ): Promise<LoadedIndex> {
+  if (!isAskIndexR2Key(key)) {
+    throw new Error(`拒絕載入非預期前綴的 R2 索引 key：${key}`)
+  }
   const obj = await bucket.get(key)
   if (!obj) {
     throw new Error(`找不到 R2 物件：${key}（請先執行 npm run build:index）`)
   }
-  const text = await obj.text()
-  const payload = JSON.parse(text) as AskIndexPayload
+  assertIndexSize(obj.size, key, manifest)
+  const bytes = await obj.arrayBuffer()
+  assertIndexSize(bytes.byteLength, key, manifest)
+  if (manifest) {
+    const actualSha256 = await sha256Hex(bytes)
+    if (actualSha256 !== manifest.indexSha256.toLowerCase()) {
+      throw new Error(
+        `R2 索引 SHA-256 不符：${key} 為 ${actualSha256}，manifest 為 ${manifest.indexSha256}`,
+      )
+    }
+  }
+  const payload = JSON.parse(new TextDecoder().decode(bytes)) as unknown
+  assertAskIndexPayload(payload, manifest)
   const fuse = createAskFuseFromPayload(payload)
   return {
     fuse,

@@ -162,7 +162,7 @@ app.use(secureHeaders({
   xContentTypeOptions: 'nosniff',
   xDnsPrefetchControl: 'off',
   xDownloadOptions: 'noopen',
-  xFrameOptions: 'SAMEORIGIN',
+  xFrameOptions: 'DENY',
   xPermittedCrossDomainPolicies: 'none',
   xXssProtection: '0',
   permissionsPolicy: {

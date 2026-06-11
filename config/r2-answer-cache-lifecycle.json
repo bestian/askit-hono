@@ -1,0 +1,30 @@
+{
+  "rules": [
+    {
+      "id": "expire-answer-cache-after-7-days",
+      "enabled": true,
+      "conditions": {
+        "prefix": "cache/"
+      },
+      "deleteObjectsTransition": {
+        "condition": {
+          "type": "Age",
+          "maxAge": 604800
+        }
+      }
+    },
+    {
+      "id": "abort-incomplete-multipart-uploads-after-7-days",
+      "enabled": true,
+      "conditions": {
+        "prefix": ""
+      },
+      "abortMultipartUploadsTransition": {
+        "condition": {
+          "type": "Age",
+          "maxAge": 604800
+        }
+      }
+    }
+  ]
+}

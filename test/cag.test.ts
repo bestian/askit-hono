@@ -8,6 +8,8 @@ import app, { ipRateLimitKeyFromIp } from '../src/index'
 import {
   ASK_FUSE_OPTIONS,
   ASK_INDEX_R2_KEY,
+  ASK_INDEX_VERSION,
+  manifestKeyForIndexKey,
   type SectionRow,
 } from '../src/utils/askIndexFormat'
 import {
@@ -17,7 +19,10 @@ import {
   parseArchiveSectionId,
   retrieveCagSources,
 } from '../src/utils/cag'
+import { findClosestMatchingSection } from '../src/utils/search'
 import type { VectorizeBinding } from '../src/utils/vectorize'
+
+type AskIndexBucket = Parameters<typeof findClosestMatchingSection>[0]
 
 type AppTestHooks = {
   parseAnswer: (raw: string) => {
@@ -80,8 +85,8 @@ function assertSecurityHeaders(response: Response) {
   assert.match(permissionsPolicy, /microphone=\(\)/)
 }
 
-function createAskIndexBucket() {
-  const rows: SectionRow[] = [
+function createAskRows(): SectionRow[] {
+  return [
     {
       filename: '2024-01-01-demo',
       nest_filename: null,
@@ -92,23 +97,66 @@ function createAskIndexBucket() {
       name: '唐鳳',
     },
   ]
-  const payload = {
-    v: 1,
+}
+
+function createAskIndexPayload(rows: SectionRow[] = createAskRows()) {
+  return {
+    v: ASK_INDEX_VERSION,
     generatedAt: '2026-01-01T00:00:00.000Z',
     speakerLike: '%唐鳳%',
     rowCount: rows.length,
     rows,
     index: Fuse.createIndex(ASK_FUSE_OPTIONS.keys as string[], rows).toJSON(),
   }
+}
+
+function createJsonR2Object(json: string, size = new TextEncoder().encode(json).byteLength) {
+  const bytes = new TextEncoder().encode(json)
+  return {
+    size,
+    async text() {
+      return json
+    },
+    async arrayBuffer() {
+      return new Uint8Array(bytes).buffer
+    },
+  }
+}
+
+async function sha256HexForText(text: string): Promise<string> {
+  const bytes = new TextEncoder().encode(text)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, '0'),
+  ).join('')
+}
+
+async function createAskIndexManifest(indexKey: string, json: string) {
+  const rows = createAskRows()
+  return {
+    v: ASK_INDEX_VERSION,
+    generatedAt: '2026-01-01T00:00:00.000Z',
+    indexKey,
+    indexSha256: await sha256HexForText(json),
+    indexBytes: new TextEncoder().encode(json).byteLength,
+    speakerLike: '%唐鳳%',
+    rowCount: rows.length,
+    queriedRowCount: rows.length,
+    maxSectionChars: 175,
+    yearsBack: 2,
+    cutoffDate: '2024-01-01',
+    d1Database: 'askit',
+    local: false,
+  }
+}
+
+function createAskIndexBucket() {
+  const json = JSON.stringify(createAskIndexPayload())
 
   return {
     async get(key: string) {
       if (key !== ASK_INDEX_R2_KEY) return null
-      return {
-        async text() {
-          return JSON.stringify(payload)
-        },
-      }
+      return createJsonR2Object(json)
     },
   }
 }
@@ -128,6 +176,127 @@ function createCachedResponseBucket(body: string, contentType: string) {
     async delete() {},
   }
 }
+
+test('ask index loader rejects oversized R2 objects before reading the body', async () => {
+  const indexKey = 'ask-index/oversized-test.json'
+  let bodyRead = false
+  const bucket = {
+    async get(key: string) {
+      if (key !== indexKey) return null
+      return {
+        size: 17 * 1024 * 1024,
+        async text() {
+          bodyRead = true
+          return '{}'
+        },
+        async arrayBuffer() {
+          bodyRead = true
+          return new ArrayBuffer(0)
+        },
+      }
+    },
+  } as unknown as AskIndexBucket
+
+  await assert.rejects(
+    () => findClosestMatchingSection(bucket, '地神', { r2Key: indexKey }),
+    /索引過大/,
+  )
+  assert.equal(bodyRead, false)
+})
+
+test('ask index loader validates manifest bytes and sha256 before parsing', async () => {
+  const json = JSON.stringify(createAskIndexPayload())
+
+  const sizeMismatchKey = 'ask-index/size-mismatch-test.json'
+  const sizeMismatchManifest = {
+    ...(await createAskIndexManifest(sizeMismatchKey, json)),
+    indexBytes: new TextEncoder().encode(json).byteLength + 1,
+  }
+  const sizeMismatchBucket = {
+    async get(key: string) {
+      if (key === manifestKeyForIndexKey(sizeMismatchKey)) {
+        return createJsonR2Object(JSON.stringify(sizeMismatchManifest))
+      }
+      if (key === sizeMismatchKey) return createJsonR2Object(json)
+      return null
+    },
+  } as unknown as AskIndexBucket
+
+  await assert.rejects(
+    () => findClosestMatchingSection(sizeMismatchBucket, '地神', { r2Key: sizeMismatchKey }),
+    /索引大小不符/,
+  )
+
+  const hashMismatchKey = 'ask-index/hash-mismatch-test.json'
+  const hashMismatchManifest = {
+    ...(await createAskIndexManifest(hashMismatchKey, json)),
+    indexSha256: '0'.repeat(64),
+  }
+  const hashMismatchBucket = {
+    async get(key: string) {
+      if (key === manifestKeyForIndexKey(hashMismatchKey)) {
+        return createJsonR2Object(JSON.stringify(hashMismatchManifest))
+      }
+      if (key === hashMismatchKey) return createJsonR2Object(json)
+      return null
+    },
+  } as unknown as AskIndexBucket
+
+  await assert.rejects(
+    () => findClosestMatchingSection(hashMismatchBucket, '地神', { r2Key: hashMismatchKey }),
+    /SHA-256 不符/,
+  )
+})
+
+test('ask index loader rejects malformed payloads and unexpected manifest keys', async () => {
+  const malformedKey = 'ask-index/malformed-payload-test.json'
+  const malformedJson = JSON.stringify({
+    v: ASK_INDEX_VERSION,
+    generatedAt: '2026-01-01T00:00:00.000Z',
+    speakerLike: '%唐鳳%',
+    rowCount: 1,
+    rows: [],
+    index: {},
+  })
+  const malformedBucket = {
+    async get(key: string) {
+      if (key === malformedKey) return createJsonR2Object(malformedJson)
+      return null
+    },
+  } as unknown as AskIndexBucket
+
+  await assert.rejects(
+    () => findClosestMatchingSection(malformedBucket, '地神', { r2Key: malformedKey }),
+    /payload/,
+  )
+
+  const indexKey = 'ask-index/manifest-prefix-test.json'
+  const outsideKey = 'evil/index.json'
+  const requestedKeys: string[] = []
+  const manifestJson = JSON.stringify({
+    ...(await createAskIndexManifest(indexKey, JSON.stringify(createAskIndexPayload()))),
+    indexKey: outsideKey,
+  })
+  const manifestKeyBucket = {
+    async get(key: string) {
+      requestedKeys.push(key)
+      if (key === manifestKeyForIndexKey(indexKey)) return createJsonR2Object(manifestJson)
+      if (key === outsideKey) return createJsonR2Object(JSON.stringify(createAskIndexPayload()))
+      return null
+    },
+  } as unknown as AskIndexBucket
+  const originalConsoleError = console.error
+  console.error = () => {}
+  try {
+    await assert.rejects(
+      () => findClosestMatchingSection(manifestKeyBucket, '地神', { r2Key: indexKey }),
+      /找不到 R2 物件/,
+    )
+  } finally {
+    console.error = originalConsoleError
+  }
+  assert.equal(requestedKeys.includes(outsideKey), false)
+})
 
 
 test('home page serves self-hosted scripts with CSP', async () => {

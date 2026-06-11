@@ -154,6 +154,22 @@ app.use(secureHeaders({
     scriptSrcAttr: ["'none'"],
     styleSrc: ["'self'", "'unsafe-inline'"],
   },
+  crossOriginOpenerPolicy: 'same-origin',
+  crossOriginResourcePolicy: 'same-origin',
+  originAgentCluster: '?1',
+  referrerPolicy: 'no-referrer',
+  strictTransportSecurity: 'max-age=15552000; includeSubDomains',
+  xContentTypeOptions: 'nosniff',
+  xDnsPrefetchControl: 'off',
+  xDownloadOptions: 'noopen',
+  xFrameOptions: 'SAMEORIGIN',
+  xPermittedCrossDomainPolicies: 'none',
+  xXssProtection: '0',
+  permissionsPolicy: {
+    camera: [],
+    geolocation: [],
+    microphone: [],
+  },
 }))
 
 function decodeRouteParam(value: string): string {

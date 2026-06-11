@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono'
+import { secureHeaders } from 'hono/secure-headers'
 
 import { renderHomePage } from './pages/home'
 import { renderPrivacyPolicyPage } from './pages/privacy'
@@ -136,6 +137,22 @@ Disallow: /webhook
 `
 
 const app = new Hono<{ Bindings: Bindings }>()
+
+app.use(secureHeaders({
+  contentSecurityPolicy: {
+    defaultSrc: ["'self'"],
+    baseUri: ["'self'"],
+    connectSrc: ["'self'"],
+    fontSrc: ["'self'"],
+    formAction: ["'self'"],
+    frameAncestors: ["'none'"],
+    imgSrc: ["'self'", 'data:'],
+    objectSrc: ["'none'"],
+    scriptSrc: ["'self'"],
+    scriptSrcAttr: ["'none'"],
+    styleSrc: ["'self'", "'unsafe-inline'"],
+  },
+}))
 
 function decodeRouteParam(value: string): string {
   try {

@@ -678,12 +678,24 @@ app.get('/', (c) => {
   return c.html(renderHomePage())
 })
 
+app.get('/en', (c) => {
+  return c.html(renderHomePage('en'))
+})
+
 app.get('/privacy', (c) => {
   return c.html(renderPrivacyPolicyPage())
 })
 
 app.get('/terms', (c) => {
   return c.html(renderTermsOfUsePage())
+})
+
+app.get('/en/privacy', (c) => {
+  return c.html(renderPrivacyPolicyPage('en'))
+})
+
+app.get('/en/terms', (c) => {
+  return c.html(renderTermsOfUsePage('en'))
 })
 
 app.get('/robot.txt', (c) => {

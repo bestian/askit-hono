@@ -119,16 +119,18 @@ const WEBHOOK_CAG_ANSWER_INSTRUCTION =
   '於陳述具體事實時標註 [1]、[2] 等來源編號。'
 const NOT_FOUND_REPLY = '您的問題超出了資料庫的範圍，\n逐字稿網站連結如下：https://archive.tw'
 const ERROR_REPLY = '查詢發生錯誤，請稍後再試'
-// 限流冷卻視窗：同一使用者於此毫秒數內最多 1 次（對齊首頁送出鈕的 10 秒冷卻）。
-const RATE_LIMIT_WINDOW_MS = 10_000
-const GLOBAL_GENERATION_LIMIT_PER_MINUTE = 15
-const GLOBAL_GENERATION_LIMIT_PER_DAY = 300
+// 限流冷卻視窗：同一使用者於此毫秒數內最多 1 次（對齊首頁送出鈕冷卻）。
+const RATE_LIMIT_WINDOW_MS = 3_000
+const RATE_LIMIT_RETRY_AFTER_SECONDS = Math.ceil(RATE_LIMIT_WINDOW_MS / 1000)
+const GLOBAL_GENERATION_LIMIT_PER_MINUTE = 30
+const GLOBAL_GENERATION_LIMIT_PER_DAY = 1_000
 const MAX_QUESTION_CHARS = 100
 const MAX_API_BODY_BYTES = 32 * 1024
 const MIN_CACHEABLE_CAG_ANSWER_CHARS = 12
-// 限流（同一使用者 10 秒內最多 1 次）觸發時的回覆訊息。
-const RATE_LIMIT_HTTP_MESSAGE = '您的發問過於頻繁，請稍候約 10 秒再試，謝謝 🙏'
-const RATE_LIMIT_LINE_REPLY = '您的發問過於頻繁，請稍候約 10 秒再試，謝謝 🙏'
+// 限流（同一使用者冷卻視窗內第 2 次請求）觸發時的回覆訊息。
+const RATE_LIMIT_HTTP_MESSAGE =
+  `您的發問過於頻繁，請稍候約 ${RATE_LIMIT_RETRY_AFTER_SECONDS} 秒再試，謝謝 🙏`
+const RATE_LIMIT_LINE_REPLY = RATE_LIMIT_HTTP_MESSAGE
 const GLOBAL_BUDGET_HTTP_MESSAGE = '目前服務量已達上限，請稍後再試，謝謝'
 const GLOBAL_BUDGET_LINE_REPLY = '目前服務量已達上限，請稍後再試，謝謝'
 const QUESTION_TOO_LONG_MESSAGE = '您的問題字數過長，請縮短問題的長度，謝謝!'
@@ -681,7 +683,9 @@ app.get('/robots.txt', (c) => {
 
 app.get('/ask/:question', async (c) => {
   if (await isIpRateLimited(c)) {
-    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, { 'Retry-After': '10' })
+    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
+      'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
+    })
   }
   const question = decodeRouteParam(c.req.param('question'))
   if (isQuestionTooLong(question)) {
@@ -745,7 +749,9 @@ app.get('/cag/status', (c) => {
 
 app.get('/cag/:question', async (c) => {
   if (await isIpRateLimited(c)) {
-    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, { 'Retry-After': '10' })
+    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
+      'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
+    })
   }
   const question = decodeRouteParam(c.req.param('question'))
   if (isQuestionTooLong(question)) {
@@ -803,7 +809,9 @@ app.get('/cag/:question', async (c) => {
 
 app.post('/cag', async (c) => {
   if (await isIpRateLimited(c)) {
-    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, { 'Retry-After': '10' })
+    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
+      'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
+    })
   }
   let payload: { question?: unknown; topK?: unknown; top_k?: unknown; citableTopK?: unknown; cite_top_k?: unknown; maxTokens?: unknown; max_tokens?: unknown; retriever?: unknown; minScore?: unknown; min_score?: unknown }
   try {
@@ -925,7 +933,7 @@ app.post('/webhook', async (c) => {
     return c.text('OK', 200)
   }
 
-  // 防連續濫用：同一 LINE 來源 10 秒內第 2 則訊息，只回個提示，不再做昂貴的 CAG 生成。
+  // 防連續濫用：同一 LINE 來源冷卻視窗內第 2 則訊息，只回個提示，不再做 CAG 生成。
   // userId 缺席時改以 groupId / roomId / anonymous 做較粗的限流，避免群組事件繞過。
   // （仍須回 200 ack，並用一次性 reply token 送出提示。）
   if (await isRateLimited(c.env, lineRateLimitKey(event.source))) {

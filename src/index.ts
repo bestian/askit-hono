@@ -4,6 +4,7 @@ import { secureHeaders } from 'hono/secure-headers'
 import { renderHomePage } from './pages/home'
 import { renderPrivacyPolicyPage } from './pages/privacy'
 import { renderTermsOfUsePage } from './pages/terms'
+import { NOT_FOUND_REPLY_PLAIN } from './utils/notFoundReply'
 import {
   type AbuseKind,
   type AbusePath,
@@ -135,7 +136,7 @@ const WEBHOOK_LOADING_SECONDS = 30
 const WEBHOOK_CAG_ANSWER_INSTRUCTION =
   '請以繁體中文用 3～5 句話簡潔作答，全文控制在約 200 字內並完整收尾，' +
   '於陳述具體事實時標註 [1]、[2] 等來源編號。'
-const NOT_FOUND_REPLY = '您的問題超出了資料庫的範圍，\n逐字稿網站連結如下：https://archive.tw'
+const NOT_FOUND_REPLY = NOT_FOUND_REPLY_PLAIN
 const ERROR_REPLY = '查詢發生錯誤，請稍後再試'
 // 限流冷卻視窗：同一使用者於此毫秒數內最多 1 次（對齊首頁送出鈕冷卻）。
 const RATE_LIMIT_WINDOW_MS = 3_000
@@ -849,7 +850,7 @@ app.get('/ask/:question', async (c) => {
       : await findClosestMatchingSection(c.env.ASK_INDEX, question)
     if (!hit) {
       await delayUntilMinimumElapsed(startedAt)
-      return c.text('您的問題超出了資料庫的範圍，\n逐字稿網站連結如下：https://archive.tw', 404)
+      return c.text(NOT_FOUND_REPLY, 404)
     }
     const body = formatAskAnswerHtml(hit)
     const html = `<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8"/><title>Ask</title></head><body><p>${body}</p></body></html>`

@@ -19,7 +19,8 @@
     "r2:lifecycle": "npm run r2:lifecycle:cache && npm run r2:lifecycle:cache:preview",
     "vectorize:create": "wrangler vectorize create askit-audrey-tang --dimensions=768 --metric=cosine",
     "vectorize:sync": "tsx --tsconfig scripts/tsconfig.json scripts/vectorize-sync.ts",
-    "eval:cag": "tsx --tsconfig scripts/tsconfig.json scripts/eval-cag-models.ts"
+    "eval:cag": "tsx --tsconfig scripts/tsconfig.json scripts/eval-cag-models.ts",
+    "eval:cag:depth": "tsx --tsconfig scripts/tsconfig.json scripts/eval-cag-depth.ts"
   },
   "dependencies": {
     "fuse.js": "^7.3.0",

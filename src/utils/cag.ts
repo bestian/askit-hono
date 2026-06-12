@@ -364,6 +364,51 @@ async function searchArchive(
   return Array.isArray(payload?.results) ? payload.results : []
 }
 
+function buildHydratedSectionContent(
+  section: ArchiveSectionResponse | null,
+  fallbackContent: string,
+): string {
+  const parts = [
+    section?.previous_content,
+    section?.section_content,
+    section?.next_content,
+  ]
+    .map((value) => htmlToPlainText(value ?? ''))
+    .filter(Boolean)
+  return parts.length > 0 ? parts.join('\n\n') : fallbackContent
+}
+
+/** Hydrate a ranked Vectorize hit with archive.tw prev/current/next section text. */
+export async function hydrateCagSourceFromArchive(
+  baseUrl: string,
+  source: CagSource,
+): Promise<CagSource | null> {
+  if (source.sectionId === null) return source
+
+  const normalizedBase = normalizeArchiveBaseUrl(baseUrl)
+  const url = new URL(`/api/section/${source.sectionId}`, normalizedBase)
+  const section = await fetchArchiveJson<ArchiveSectionResponse>(url)
+  const fallbackContent = htmlToPlainText(source.content)
+  const content = buildHydratedSectionContent(section, fallbackContent)
+  if (content.trim() === '') return null
+
+  const [labelTitle, labelSpeaker] = source.label.split(' — ')
+  const displayName = section?.display_name?.trim() || labelTitle?.trim() || source.href
+  const speaker = section?.name?.trim() || labelSpeaker?.trim()
+  const label = speaker ? `${displayName} — ${speaker}` : source.label
+  return { content, href: source.href, label, sectionId: source.sectionId }
+}
+
+export async function hydrateCagSourcesFromArchive(
+  baseUrl: string,
+  sources: CagSource[],
+): Promise<CagSource[]> {
+  const hydrated = await Promise.all(
+    sources.map((source) => hydrateCagSourceFromArchive(baseUrl, source)),
+  )
+  return hydrated.filter((source): source is CagSource => source !== null)
+}
+
 async function hydrateArchiveSection(
   baseUrl: string,
   hit: ArchiveSearchResult,
@@ -381,14 +426,7 @@ async function hydrateArchiveSection(
 
   const url = new URL(`/api/section/${sectionId}`, baseUrl)
   const section = await fetchArchiveJson<ArchiveSectionResponse>(url)
-  const parts = [
-    section?.previous_content,
-    section?.section_content,
-    section?.next_content,
-  ]
-    .map((value) => htmlToPlainText(value ?? ''))
-    .filter(Boolean)
-  const content = parts.length > 0 ? parts.join('\n\n') : (hit.snippet ?? '')
+  const content = buildHydratedSectionContent(section, hit.snippet ?? '')
   if (content.trim() === '') return null
 
   const displayName = section?.display_name?.trim() || hit.title?.trim() || href

@@ -71,6 +71,17 @@
     { "binding": "VECTORIZE", "index_name": "askit-audrey-tang" }
   ],
 
+  // KV：CAG 檢索來源快取（1h TTL）。R2 ASK_CACHE 仍負責完整答案快取（7 天）。
+  // 建立：npx wrangler kv namespace create CAG_CACHE
+  //       npx wrangler kv namespace create CAG_CACHE --preview
+  "kv_namespaces": [
+    {
+      "binding": "CAG_CACHE",
+      "id": "a388af13d43f4748837134b8aea36c2a",
+      "preview_id": "75c2f64040ef421296f2dc29cb5c8a34"
+    }
+  ],
+
   // 防連續濫用：兩層限流（兩層共用同一個 key：line:<userId>、ip:<IPv4> 或 ip6:<IPv6 /64>）。
   //
   // 第一層 RATE_LIMITER —— 內建限流，便宜（非 subrequest、in-memory、零有感延遲）、

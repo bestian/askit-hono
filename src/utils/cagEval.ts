@@ -12,7 +12,7 @@ export const CAG_MODEL_PRICING: Record<string, CagModelPricing> = {
 }
 
 /** Typical CAG request token profile used for /cag/status cost estimates. */
-export const CAG_TYPICAL_INPUT_TOKENS = 6_700
+export const CAG_TYPICAL_INPUT_TOKENS = 4_500
 export const CAG_TYPICAL_OUTPUT_TOKENS = 300
 
 export type CagEvalCase = {

@@ -8,6 +8,11 @@ import {
   htmlToPlainText,
 } from './search'
 import {
+  buildCagSourceCacheKey,
+  getCachedCagSources,
+  putCachedCagSources,
+} from './cagCache'
+import {
   DEFAULT_VECTORIZE_MIN_COSINE_SCORE,
   retrieveCagSourcesFromVectorize,
   type VectorizeBinding,
@@ -42,16 +47,21 @@ export type CagOptions = {
   vectorize?: VectorizeBinding
   /** Vectorize cosine score 最低納入門檻，預設 0.8。 */
   vectorizeMinScore?: number
+  /** KV 來源快取；未綁時優雅降級。 */
+  cagCache?: KVNamespace
+  /** 略過 KV 來源快取（例如 `?refresh=1`）。 */
+  skipSourceCache?: boolean
 }
 
 export { CAG_MODEL_GEMMA } from './cagEval'
 export const DEFAULT_CAG_MODEL = CAG_MODEL_GEMMA
 export const DEFAULT_ARCHIVE_BASE_URL = 'https://archive.tw'
-const DEFAULT_TOP_K = 6
+export const DEFAULT_TOP_K = 4
 const MAX_TOP_K = 8
-const DEFAULT_MAX_COMPLETION_TOKENS = 900
-const MAX_CONTEXT_SECTION_CHARS = 2_200
+export const DEFAULT_MAX_COMPLETION_TOKENS = 500
+export const MAX_CONTEXT_SECTION_CHARS = 1_200
 const MAX_SEARCH_VARIANTS = 6
+export const MIN_ARCHIVE_HITS_BEFORE_FALLBACK = 3
 
 type ArchiveSearchResult = {
   title?: string
@@ -97,6 +107,8 @@ export type CagStatus = {
   vectorizeMinScore: number
   maxTopK: number
   maxContextSectionChars: number
+  /** runtime 是否綁了 CAG_CACHE KV（來源快取）。 */
+  sourceCacheBound: boolean
   estimatedCostPerRequestUsd: number | null
   typicalTokenProfile: {
     inputTokens: number
@@ -280,6 +292,33 @@ export function buildCagQueryVariants(question: string): string[] {
   return variants.slice(0, MAX_SEARCH_VARIANTS)
 }
 
+/** Primary + one fallback query for archive.tw search (replaces 6-way fan-out). */
+export function buildCagRetrievalQueries(question: string): {
+  primary: string
+  fallback: string
+} {
+  const variants = buildCagQueryVariants(question)
+  const primary = variants[0] || stripQuestionDirectives(question)
+  const fallback = variants[1] || primary
+  return { primary, fallback }
+}
+
+function mergeArchiveHits(
+  baseUrl: string,
+  existing: ArchiveSearchResult[],
+  seen: Set<string>,
+  incoming: ArchiveSearchResult[],
+): ArchiveSearchResult[] {
+  const hits = [...existing]
+  for (const result of incoming) {
+    const href = absoluteArchiveHref(baseUrl, result.url)
+    if (!href || seen.has(href)) continue
+    seen.add(href)
+    hits.push(result)
+  }
+  return hits
+}
+
 export function parseArchiveSectionId(href: string): number | null {
   const match = href.match(/#s(\d+)\b/)
   if (!match) return null
@@ -364,23 +403,31 @@ export async function retrieveCagSources(
 ): Promise<CagSource[]> {
   const topK = clampInteger(options?.topK ?? DEFAULT_TOP_K, 1, MAX_TOP_K)
   const baseUrl = normalizeArchiveBaseUrl(options?.archiveBaseUrl)
-  const variants = buildCagQueryVariants(question)
+  const { primary, fallback } = buildCagRetrievalQueries(question)
   const perQueryLimit = Math.max(topK * 2, 8)
-
-  const searchResults = await Promise.all(
-    variants.map((variant) => searchArchive(baseUrl, variant, perQueryLimit)),
-  )
   const seen = new Set<string>()
-  const hits: ArchiveSearchResult[] = []
-  for (const result of searchResults.flat()) {
-    const href = absoluteArchiveHref(baseUrl, result.url)
-    if (!href || seen.has(href)) continue
-    seen.add(href)
-    hits.push(result)
+
+  let hits = mergeArchiveHits(
+    baseUrl,
+    [],
+    seen,
+    await searchArchive(baseUrl, primary, perQueryLimit),
+  )
+  if (
+    hits.length < MIN_ARCHIVE_HITS_BEFORE_FALLBACK
+    && fallback
+    && fallback !== primary
+  ) {
+    hits = mergeArchiveHits(
+      baseUrl,
+      hits,
+      seen,
+      await searchArchive(baseUrl, fallback, perQueryLimit),
+    )
   }
 
   const hydrated = await Promise.all(
-    hits.slice(0, Math.max(topK * 3, 12)).map((hit) => hydrateArchiveSection(baseUrl, hit)),
+    hits.slice(0, topK * 2).map((hit) => hydrateArchiveSection(baseUrl, hit)),
   )
   return hydrated.filter((source): source is CagSource => source !== null).slice(0, topK)
 }
@@ -399,31 +446,58 @@ async function resolveCagSources(
     retriever?: CagRetriever
     vectorize?: VectorizeBinding
     vectorizeMinScore?: number
+    cagCache?: KVNamespace
+    skipSourceCache?: boolean
   },
 ): Promise<CagSource[]> {
-  if (options.retriever === 'vectorize' && options.vectorize) {
-    return retrieveCagSourcesFromVectorize(
+  const retriever = options.retriever ?? 'archive'
+  const cacheKey = options.skipSourceCache
+    ? null
+    : await buildCagSourceCacheKey({
+      question,
+      topK: options.topK,
+      retriever,
+      archiveBaseUrl: options.archiveBaseUrl,
+      vectorizeMinScore: options.vectorizeMinScore,
+    })
+
+  if (cacheKey) {
+    const cached = await getCachedCagSources(options.cagCache, cacheKey)
+    if (cached) return cached
+  }
+
+  let sources: CagSource[]
+  if (retriever === 'vectorize' && options.vectorize) {
+    sources = await retrieveCagSourcesFromVectorize(
       ai,
       options.vectorize,
       question,
       { topK: options.topK, minScore: options.vectorizeMinScore },
     )
+  } else {
+    sources = await retrieveCagSources(question, {
+      topK: options.topK,
+      archiveBaseUrl: options.archiveBaseUrl,
+    })
   }
-  return retrieveCagSources(question, {
-    topK: options.topK,
-    archiveBaseUrl: options.archiveBaseUrl,
-  })
+
+  if (cacheKey && sources.length > 0) {
+    await putCachedCagSources(options.cagCache, cacheKey, sources)
+  }
+  return sources
 }
 
 export function getCagStatus(options?: {
   archiveBaseUrl?: string
   retriever?: CagRetriever
   vectorizeBound?: boolean
+  sourceCacheBound?: boolean
   vectorizeMinScore?: number
 }): CagStatus {
   return {
     retriever: options?.retriever ?? 'archive',
     vectorizeBound: options?.vectorizeBound ?? false,
+    sourceCacheBound: options?.sourceCacheBound ?? false,
     archiveBaseUrl: normalizeArchiveBaseUrl(options?.archiveBaseUrl),
     model: DEFAULT_CAG_MODEL,
     vectorizeMinScore: options?.vectorizeMinScore ?? DEFAULT_VECTORIZE_MIN_COSINE_SCORE,
@@ -728,6 +802,8 @@ export async function generateCagAnswer(
     retriever: normalized.retriever,
     vectorize: normalized.vectorize,
     vectorizeMinScore: normalized.vectorizeMinScore,
+    cagCache: options?.cagCache,
+    skipSourceCache: options?.skipSourceCache,
   })
   if (sources.length === 0) return null
 
@@ -761,6 +837,8 @@ export async function streamCagAnswer(
     retriever: normalized.retriever,
     vectorize: normalized.vectorize,
     vectorizeMinScore: normalized.vectorizeMinScore,
+    cagCache: options?.cagCache,
+    skipSourceCache: options?.skipSourceCache,
   })
   if (sources.length === 0) {
     return new Response('您的問題超出了資料庫的範圍，逐字稿網站連結如下：https://archive.tw', {

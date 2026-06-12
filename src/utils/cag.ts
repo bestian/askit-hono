@@ -52,6 +52,8 @@ export type CagOptions = {
   cagCache?: KVNamespace
   /** 略過 KV 來源快取（例如 `?refresh=1`）。 */
   skipSourceCache?: boolean
+  /** 'en' 時明確要求以英文作答（/en 介面經 ?lang=en 帶入）。 */
+  answerLanguage?: 'en'
 }
 
 export { CAG_MODEL_GEMMA } from './cagEval'
@@ -127,6 +129,7 @@ export type NormalizedCagOptions = {
   retriever: CagRetriever
   vectorize?: VectorizeBinding
   vectorizeMinScore: number
+  answerLanguage?: 'en'
 }
 
 function clampInteger(value: number, min: number, max: number): number {
@@ -152,6 +155,7 @@ export function normalizeCagOptions(options?: CagOptions): NormalizedCagOptions 
     retriever: options?.retriever ?? 'archive',
     vectorize: options?.vectorize,
     vectorizeMinScore: options?.vectorizeMinScore ?? DEFAULT_VECTORIZE_MIN_COSINE_SCORE,
+    answerLanguage: options?.answerLanguage,
   }
 }
 
@@ -185,6 +189,7 @@ export function buildCagMessages(
   sources: CagSource[],
   background: CagSource[] = [],
   answerInstruction = 'Answer concisely. Prefer exact wording from the excerpts where useful.',
+  answerLanguage?: 'en',
 ): ChatMessage[] {
   const lore = sources
     .map((source, index) => sourceBlock(source, {
@@ -214,9 +219,15 @@ export function buildCagMessages(
       'use it to inform your answer but never cite it and never invent source numbers for it.',
     )
   }
-  systemLines.push(
-    'Use Traditional Chinese when the user asks in Chinese or includes #zh-tw.',
-  )
+  if (answerLanguage === 'en') {
+    systemLines.push(
+      'Answer in English, even when the excerpts are in Chinese — translate the material you use into English and keep the numeric citation markers.',
+    )
+  } else {
+    systemLines.push(
+      'Use Traditional Chinese when the user asks in Chinese or includes #zh-tw.',
+    )
+  }
 
   const userLines = ['<lore>', lore, '</lore>']
   if (background.length > 0) {
@@ -257,6 +268,31 @@ function pushUnique(values: string[], value: string) {
   if (normalized && !values.includes(normalized)) values.push(normalized)
 }
 
+/** 英文疑問詞／功能詞：archive.tw 搜尋對這些 stopword 回空集合，需先剝除。 */
+const EN_STOPWORDS = new Set([
+  'what', 'who', 'whom', 'whose', 'which', 'when', 'where', 'why', 'how',
+  'is', 'are', 'was', 'were', 'am', 'be', 'been',
+  'do', 'does', 'did', 'can', 'could', 'will', 'would', 'should', 'shall',
+  'may', 'might', 'must',
+  'the', 'a', 'an', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'about',
+  'your', 'you', 'my', 'we', 'us', 'our', 'their', 'his', 'her', 'its',
+  'i', 'me', 'he', 'she', 'they', 'them',
+  'it', 'this', 'that', 'these', 'those',
+  'and', 'or', 'not', 'see', 'think', 'view', 'opinion',
+])
+
+// 只比對小寫與句首大寫形（case-sensitive），讓全大寫縮寫（US、IT、WHO）留在詞組裡。
+const EN_STOPWORD_FORMS = [...EN_STOPWORDS].flatMap((word) => [
+  word,
+  word[0].toUpperCase() + word.slice(1),
+])
+const EN_STOPWORD_PATTERN = new RegExp(
+  `\\b(?:${EN_STOPWORD_FORMS.join('|')})\\b`,
+  'g',
+)
+
+const HAN_PATTERN = /\p{Script=Han}/u
+
 export function buildCagQueryVariants(question: string): string[] {
   const cleaned = stripQuestionDirectives(question)
     .replace(/[?？!！。.,，;；:：()[\]{}「」『』"“”'‘’]/g, ' ')
@@ -268,8 +304,11 @@ export function buildCagQueryVariants(question: string): string[] {
 
   const withoutQuestionWords = cleaned
     .replace(/(如何|怎麼|怎么|為何|爲何|什麼|什么|請問|請|回答|說明|解釋)/g, ' ')
+    .replace(EN_STOPWORD_PATTERN, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+    .replace(/^[^\p{L}\p{N}]+/u, '')
+    .replace(/[^\p{L}\p{N}]+$/u, '')
   pushUnique(variants, withoutQuestionWords)
 
   const hanRuns = [...withoutQuestionWords.matchAll(/\p{Script=Han}{2,}/gu)]
@@ -289,7 +328,13 @@ export function buildCagQueryVariants(question: string): string[] {
   }
 
   const latinTokens = withoutQuestionWords.match(/[A-Za-z0-9][A-Za-z0-9._-]{1,}/g) ?? []
-  for (const token of latinTokens) pushUnique(variants, token)
+  for (const token of latinTokens) {
+    // 全大寫者視為縮寫（US、IT、WHO），即使拼法撞上 stopword 也保留。
+    if (token !== token.toUpperCase() && EN_STOPWORDS.has(token.toLowerCase())) continue
+    // 短字略過，但保留含大寫的縮寫（如 AI、G7）。
+    if (token.length < 3 && !/[A-Z]/.test(token)) continue
+    pushUnique(variants, token)
+  }
 
   return variants.slice(0, MAX_SEARCH_VARIANTS)
 }
@@ -300,7 +345,16 @@ export function buildCagRetrievalQueries(question: string): {
   fallback: string
 } {
   const variants = buildCagQueryVariants(question)
-  const primary = variants[0] || stripQuestionDirectives(question)
+  const cleaned = variants[0] || stripQuestionDirectives(question)
+  if (cleaned && !HAN_PATTERN.test(cleaned)) {
+    // archive.tw 搜尋是逐字詞組比對：拉丁文字問題若用整句查詢幾乎必空，
+    // 先用剝除疑問詞後的內容詞組，再退到最具辨識度（最長）的單一內容詞。
+    const primary = variants[1] || cleaned
+    const singleTokens = variants.slice(1).filter((variant) => !variant.includes(' '))
+    const fallback = [...singleTokens].sort((a, b) => b.length - a.length)[0] || primary
+    return { primary, fallback }
+  }
+  const primary = cleaned
   const fallback = variants[1] || primary
   return { primary, fallback }
 }
@@ -476,6 +530,9 @@ export async function retrieveCagSources(
  * 依設定挑選檢索器。retriever='vectorize' 時先查 Vectorize；
  * 無 binding 時優雅回退 archive.tw 檢索；若 Vectorize 已綁定但低於相關度門檻，
  * 則保留空集合，讓上層能誠實回覆「您的問題超出了資料庫的範圍，逐字稿網站連結如下：https://archive.tw'」。
+ * 例外：拉丁文字（無漢字）問題查無向量時改走 archive.tw 全文檢索——
+ * Vectorize 索引只涵蓋「唐鳳」掛名的繁中段落，對英文問題回空反映的是
+ * 索引涵蓋率而非語料範圍，誠實回空反而誤導。
  */
 async function resolveCagSources(
   ai: WorkersAiBinding,
@@ -517,9 +574,16 @@ async function resolveCagSources(
       question,
       { topK: options.topK, minScore: options.vectorizeMinScore },
     )
-    sources = thin.length > 0
-      ? await hydrateCagSourcesFromArchive(baseUrl, thin)
-      : []
+    if (thin.length > 0) {
+      sources = await hydrateCagSourcesFromArchive(baseUrl, thin)
+    } else if (!HAN_PATTERN.test(question)) {
+      sources = await retrieveCagSources(question, {
+        topK: options.topK,
+        archiveBaseUrl: options.archiveBaseUrl,
+      })
+    } else {
+      sources = []
+    }
   } else {
     sources = await retrieveCagSources(question, {
       topK: options.topK,
@@ -859,6 +923,7 @@ export async function generateCagAnswer(
     cited,
     background,
     normalized.answerInstruction,
+    normalized.answerLanguage,
   )
   const result = await runCagCompletion(
     ai,
@@ -899,6 +964,7 @@ export async function streamCagAnswer(
     cited,
     background,
     normalized.answerInstruction,
+    normalized.answerLanguage,
   )
   const stream = await runCagCompletion(
     ai,

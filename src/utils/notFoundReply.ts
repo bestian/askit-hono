@@ -13,3 +13,11 @@ export const NOT_FOUND_REPLY_PLAIN =
 export const NOT_FOUND_REPLY_HTML =
   '您的問題超出了資料庫的範圍，逐字稿網站連結如下：' +
   `<a href="${ARCHIVE_TW_URL}" rel="nofollow noreferrer noopener" target="_blank">${ARCHIVE_TW_URL}</a>`
+
+/** /en 介面（?lang=en）的英文版本，純文字與 HTML 各一，結構對齊繁中版。 */
+export const NOT_FOUND_REPLY_PLAIN_EN =
+  'Your question is outside the scope of this archive.\nBrowse the transcripts at https://archive.tw'
+
+export const NOT_FOUND_REPLY_HTML_EN =
+  'Your question is outside the scope of this archive. Browse the transcripts at ' +
+  `<a href="${ARCHIVE_TW_URL}" rel="nofollow noreferrer noopener" target="_blank">${ARCHIVE_TW_URL}</a>`

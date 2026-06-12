@@ -37,6 +37,26 @@
 - 壽命以 R2 物件上傳時間判斷，過期視為未命中並順手刪除。
 - 快取放在獨立的 `ASK_CACHE`（`askit-answer-cache`）bucket；未綁定或讀寫出錯時一律優雅降級（當作未命中、照常生成），不會阻斷回答。實作見 `src/utils/cache.ts`。
 
+### 異常請求追蹤 log 與黑名單
+
+對「超量或異常的請求」建立 D1 追蹤 log，並對累犯自動建立黑名單（issue #27）。資料放在獨立的 `askit-abuse-log` D1 資料庫（binding `ABUSE_DB`），兩張表（schema 見 `db/abuse-log-schema.sql`）：
+
+- **`abuse_log`**：「單一 IP/Id 超量」（觸發限流，全域配額用罄不算）或「問題字串過長」發生時自動寫入一筆：問題（截斷至 200 碼點）、IP（網頁/API 若有）、LINE userId／groupId（若有）、時間戳記，以及與限流同一套的正規化身分 key（`ip:…`／`ip6:…/64`／`line:…`）。
+- **`blacklist`**：同一 key 在計數視窗內累積達門檻次數時，與寫 log 同一筆 D1 batch 交易自動寫入。預設「24 小時內 3 次」，可用 vars 調整（`ABUSE_BLACKLIST_THRESHOLD`、`ABUSE_COUNT_WINDOW_HOURS`；視窗設 `0` = 全期間累計）。
+
+收到請求時，**在任何 DO/KV 限流記帳之前**先比對黑名單：黑名單成員直接擋下（HTTP 回 `403`；LINE 來源僅 ack 不回覆，避免平台重送），完全不消耗全域生成額度，以保障善意使用者。未綁 `ABUSE_DB` 時優雅降級：不寫 log、黑名單視為空。實作見 `src/utils/abuse.ts`。
+
+維運指令：
+
+```bash
+npm run abuse:db:init:local       # 本機 dev 用的 D1 建表（本機 dev 寫本機 D1，不污染正式環境）
+npm run abuse:report              # 近端分析 log → build/abuse-report.html 視覺化報告（遠端資料）
+LOCAL=1 npm run abuse:report      # 同上，改讀本機 D1
+npm run abuse:unban -- <key>      # 解除封鎖（同時清掉該 key 的 log 舊紀錄，否則再犯一次就回到黑名單）
+```
+
+報告內容：事件總數／近 24 小時數、每日趨勢（依異常類型堆疊）、類型與路徑分佈、最常觸發來源 Top 20（標示黑名單）、黑名單清單與最近事件明細。
+
 ### LINE webhook 的 CAG 三段式回覆
 
 CAG 需先檢索 `archive.tw` 再讓 Workers AI 生成，通常要數秒到十幾秒，超過 LINE 對 webhook「**2 秒內必須回 2xx**」的限制；而 LINE Reply API 不支援串流、reply token 為一次性。因此 `/webhook` 採三段式非同步回覆：
@@ -75,9 +95,14 @@ Worker 端 `src/utils/search.ts` 第一次請求時從 R2 抓索引、用 `Fuse.
 │   └── utils/
 │       ├── search.ts              # R2 載入索引 + Fuse 搜尋 + HTML 輸出
 │       ├── cache.ts               # 相同問題的 R2 答案快取（7 天，issue #25）
+│       ├── abuse.ts               # 異常請求追蹤 log 與黑名單（issue #27）
 │       └── askIndexFormat.ts      # build / runtime 共用的型別與 Fuse 設定
+├── db/
+│   └── abuse-log-schema.sql       # abuse_log + blacklist 兩張表的 D1 schema
 ├── scripts/
 │   ├── build-ask-index.ts         # 從 D1 撈段落 → 建 Fuse 索引 → 上傳 R2
+│   ├── abuse-report.ts            # 分析異常請求 log → HTML 視覺化報告
+│   ├── abuse-unban.ts             # 把指定 key 從黑名單移除
 │   └── tsconfig.json
 ├── wrangler.jsonc                 # Workers 設定（R2 binding ASK_INDEX）
 ├── tsconfig.json

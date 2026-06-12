@@ -14,6 +14,7 @@
  *   YEARS_BACK    只保留最近幾年的內容（預設 2，以 filename 開頭日期判斷）
  *   LOCAL=1       對 D1 下 --local（預設用 --remote 對線上資料庫查詢）
  *   SKIP_UPLOAD=1 只在本地產出 JSON，不上傳 R2
+ *   WRANGLER_USE_API_TOKEN=1  wrangler 子行程強制使用 CLOUDFLARE_API_TOKEN（CI 自動啟用）
  */
 import { execSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -30,7 +31,9 @@ import {
   type AskIndexPayload,
   type SectionRow,
 } from '../src/utils/askIndexFormat'
+import { buildWranglerEnv } from './wranglerEnv'
 
+const WRANGLER_ENV = buildWranglerEnv()
 const D1_DATABASE = process.env.D1_DATABASE ?? 'sayit-database'
 const R2_BUCKET = process.env.R2_BUCKET ?? 'askit-fuse-index-cache' // or askit-fuse-index-cache-preview
 const SPEAKER_LIKE = process.env.SPEAKER_LIKE ?? '唐鳳%'
@@ -95,6 +98,7 @@ function runD1Query(sql: string): SectionRow[] {
   const out = execSync(cmd, {
     encoding: 'utf-8',
     maxBuffer: 1024 * 1024 * 256,
+    env: WRANGLER_ENV,
   })
 
   let parsed: unknown
@@ -206,7 +210,7 @@ async function main() {
     `--file ${shellQuote(outPath)} ` +
     `--content-type "application/json; charset=utf-8" ` +
     `--remote`
-  execSync(upCmd, { stdio: 'inherit' })
+  execSync(upCmd, { stdio: 'inherit', env: WRANGLER_ENV })
   console.log(
     `[build-ask-index] Uploading manifest to R2 ${R2_BUCKET}/${R2_MANIFEST_KEY} ...`,
   )
@@ -215,7 +219,7 @@ async function main() {
     `--file ${shellQuote(manifestPath)} ` +
     `--content-type "application/json; charset=utf-8" ` +
     `--remote`
-  execSync(manifestCmd, { stdio: 'inherit' })
+  execSync(manifestCmd, { stdio: 'inherit', env: WRANGLER_ENV })
   console.log('[build-ask-index] Done.')
 }
 

@@ -8,8 +8,22 @@ ASK_ARCHIVE_BASE_URL=https://archive.tw
 # CAG 預設檢索器（vectorize|archive）；可不設，預設 vectorize（無索引時自動回退 archive）
 CAG_RETRIEVER=vectorize
 
-# ── Vectorize 同步腳本（npm run vectorize:sync）所需 ──
-# Cloudflare 帳號 ID 與 API token；token 權限需含：
-#   Workers AI (Read + Edit)、Vectorize (Edit)、D1 (Edit)
-CLOUDFLARE_ACCOUNT_ID=your-cloudflare-account-id
-CLOUDFLARE_API_TOKEN=your-cloudflare-api-token
+# ── Cloudflare 帳號（vectorize:sync 嵌入 REST 需要）────────────────────────────
+# CLOUDFLARE_ACCOUNT_ID=your-cloudflare-account-id
+# CLOUDFLARE_API_TOKEN=your-workers-ai-api-token
+#
+# wrangler 子行程（d1 / vectorize / r2）本機預設走 OAuth（wrangler login），
+# 不會讀取這裡的 CLOUDFLARE_API_TOKEN，以免僅 Workers AI 權限的 token
+# 蓋過 OAuth 並令 d1 / vectorize 失敗。token 只供 vectorize:sync 的 REST 嵌入。
+# GitHub Actions 無 OAuth，會自動把 CLOUDFLARE_API_TOKEN 傳給 wrangler。
+# 若要在本機強制 wrangler 也用 token：WRANGLER_USE_API_TOKEN=1
+#
+# Cloudflare account (vectorize:sync REST embedding only)
+# CLOUDFLARE_ACCOUNT_ID=your-cloudflare-account-id
+# CLOUDFLARE_API_TOKEN=your-workers-ai-api-token
+#
+# Wrangler subprocesses (d1 / vectorize / r2) use OAuth locally (wrangler login)
+# and ignore CLOUDFLARE_API_TOKEN here, so a Workers-AI-only token does not
+# shadow OAuth and break d1 / vectorize. The token is only for vectorize:sync
+# REST embedding. GitHub Actions has no OAuth and passes the token to wrangler.
+# To force wrangler to use the token locally: WRANGLER_USE_API_TOKEN=1

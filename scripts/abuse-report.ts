@@ -15,11 +15,14 @@
  *   REPORT_MAX_ROWS          最多撈取最近幾筆 log（預設 5000，避免一次撈爆）
  *   REPORT_TZ_OFFSET_HOURS   報表顯示時區位移（預設 8 = 台北時間）
  *   REPORT_OUT               輸出路徑（預設 build/abuse-report.html）
+ *   WRANGLER_USE_API_TOKEN=1  wrangler 子行程強制使用 CLOUDFLARE_API_TOKEN（CI 自動啟用）
  */
 import { execSync } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { buildWranglerEnv } from './wranglerEnv'
 
+const WRANGLER_ENV = buildWranglerEnv()
 const D1_DATABASE = process.env.ABUSE_D1_DATABASE ?? 'askit-abuse-log'
 const D1_FLAG = process.env.LOCAL === '1' ? '--local' : '--remote'
 const REPORT_DAYS = Math.max(1, Number(process.env.REPORT_DAYS ?? '14'))
@@ -65,7 +68,7 @@ function d1Query(sql: string): Record<string, unknown>[] {
   const cmd =
     `npx wrangler d1 execute ${shellQuote(D1_DATABASE)} ${D1_FLAG} ` +
     `--json --command ${shellQuote(sql)}`
-  const out = execSync(cmd, { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 256 })
+  const out = execSync(cmd, { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 256, env: WRANGLER_ENV })
   return parseD1Json(out).results ?? []
 }
 

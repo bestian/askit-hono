@@ -11,9 +11,12 @@
  *
  * 選填環境變數：
  *   ABUSE_D1_DATABASE   D1 資料庫名（預設 askit-abuse-log）
+ *   WRANGLER_USE_API_TOKEN=1  wrangler 子行程強制使用 CLOUDFLARE_API_TOKEN（CI 自動啟用）
  */
 import { execSync } from 'node:child_process'
+import { buildWranglerEnv } from './wranglerEnv'
 
+const WRANGLER_ENV = buildWranglerEnv()
 const D1_DATABASE = process.env.ABUSE_D1_DATABASE ?? 'askit-abuse-log'
 const D1_FLAG = process.env.LOCAL === '1' ? '--local' : '--remote'
 
@@ -33,7 +36,7 @@ function d1Command(sql: string): void {
   const cmd =
     `npx wrangler d1 execute ${shellQuote(D1_DATABASE)} ${D1_FLAG} ` +
     `--command ${shellQuote(sql)} --yes`
-  execSync(cmd, { stdio: 'inherit' })
+  execSync(cmd, { stdio: 'inherit', env: WRANGLER_ENV })
 }
 
 const key = process.argv[2]

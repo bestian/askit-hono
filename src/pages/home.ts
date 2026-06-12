@@ -61,7 +61,7 @@ export function renderHomePage(): string {
       text-align: center;
     }
     .hero { display: grid; place-items: center; }
-    .logo-wrap { display: grid; place-items: center; }
+    .logo-wrap { display: grid; place-items: center; margin-top: 24px; }
     img.logo {
       width: clamp(112px, 28vw, 176px);
       height: auto;

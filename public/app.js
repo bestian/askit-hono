@@ -192,6 +192,8 @@
 
       return () => h('div', [
         h('div', { class: 'hero' }, [
+          h('h1', '鳳問'),
+          h('p', { class: 'tagline' }, '透過問答機器人，認識唐鳳的思想'),
           h('div', { class: 'logo-wrap' }, [
             // 點擊 logo 會在「鳳問 logo」與「LINE 加好友 QR code」之間切換
             h('img', {
@@ -218,11 +220,9 @@
               }, '加入 LINE 好友 →')
               : h('div', { class: 'click-hint' }, [
                 h('div', { class: 'arrow' }, '↑'),
-                h('div', { class: 'click-me' }, 'Click Me'),
+                h('div', { class: 'click-me' }, '按我'),
               ]),
           ]),
-          h('h1', '鳳問'),
-          h('p', { class: 'tagline' }, '透過問答機器人，認識唐鳳的思想'),
         ]),
         h('label', { class: 'consent' }, [
           h('input', {

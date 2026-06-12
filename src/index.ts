@@ -308,6 +308,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+// UX 拖延 helper：只在「準備回覆超範圍／模型答不出等失敗訊息」的路徑使用，
+// 讓正常使用者看見失敗訊息後不會立刻重送而撞到同一個冷卻視窗。
+// 成功串流與一般快取處理不應等待，避免拖慢正常首包。
 async function delayUntilMinimumElapsed(
   startedAt: number,
   minElapsedMs = NOT_FOUND_REPLY_MIN_DELAY_MS,
@@ -324,8 +327,10 @@ function respondFromCache(body: string, contentType: string): Response {
   })
 }
 
-// CAG 成功文字才快取；查無結果或模型答不出時，補足限流冷卻時間再回覆，
-// 避免使用者在看到失敗訊息後立刻重試而誤觸同一個 10 秒限流視窗。
+// 把串流回應分流：一份照常串給使用者，一份在背景累積成完整文字後寫入快取。
+// 只快取可快取的 200 成功文字；非 200 或無 body 時原樣回傳、不快取。
+// 注意：這個函式不做 UX 拖延；需要拖延的 handler 必須在回傳失敗訊息前自行呼叫
+// delayUntilMinimumElapsed(startedAt)。
 function cacheCagResponse(
   c: Context<{ Bindings: Bindings }>,
   cacheKey: string | null,

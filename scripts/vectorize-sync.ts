@@ -15,7 +15,8 @@
  *
  * 必要環境變數（嵌入走 Workers AI REST）：
  *   CLOUDFLARE_ACCOUNT_ID   目標帳號 ID
- *   CLOUDFLARE_API_TOKEN    需含 Workers AI Read + Edit、Vectorize Edit、D1 Edit 權限
+ *   CLOUDFLARE_API_TOKEN    只需 Workers AI 權限（僅供 REST 嵌入；wrangler 子行程
+ *                           一律改走 OAuth 登入，避免低權限 token 蓋過 OAuth）
  *
  * 選填環境變數：
  *   D1_DATABASE             逐字稿來源 D1（預設 sayit-database）
@@ -23,7 +24,11 @@
  *   VECTORIZE_PROGRESS_TABLE 記帳表名（預設 askit_vectorize_progress）
  *   VECTORIZE_INDEX         Vectorize 索引名（預設 askit-audrey-tang）
  *   SPEAKER_LIKE            speakers.name LIKE（預設 '唐鳳%'，與 build:index 一致）
- *   MAX_SECTION_CHARS       段落純文字字數上限（預設 175，與 build:index 不一致，較寬鬆）
+ *   MAX_SECTION_CHARS       段落純文字字數上限（預設 175，與 build:index 不一致，較寬鬆）。
+ *                           超長段落並不會撐爆向量（768 維固定），嵌入輸入與 metadata
+ *                           皆已截斷保護（EMBED_INPUT_MAX_CHARS / METADATA_CONTENT_MAX_CHARS），
+ *                           故可放心調大（例如英文語料 100000 = 形同不設限）；
+ *                           runtime 會再用 section API 取回完整前後文。
  *   YEARS_BACK              只收最近幾年（預設 2，與 build:index 一致）
  *   EMBED_BATCH             每次 REST 嵌入筆數（預設 32，上限 100）
  *   UPSERT_BATCH            wrangler vectorize upsert 的 --batch-size（預設 1000）
@@ -148,6 +153,23 @@ function sqlString(value: string): string {
   return `'${value.replace(/'/g, "''")}'`
 }
 
+// 嵌入模型（embeddinggemma-300m）約 2,048 token 視窗：繁中以字≈token 估算，
+// 1,800 字以內穩妥；英文同上限時遠低於視窗。超出部分模型本來就讀不到。
+const EMBED_INPUT_MAX_CHARS = 1_800
+// Vectorize metadata 上限 10 KiB/vector；CJK 每字最多 3 bytes，2,500 字 ≈ 7.5 KiB，
+// 加其餘欄位仍安全。runtime 會以 section API 取回完整內容，截斷不影響回答品質。
+const METADATA_CONTENT_MAX_CHARS = 2_500
+
+function truncateChars(s: string, max: number): string {
+  const chars = Array.from(s)
+  return chars.length <= max ? s : chars.slice(0, max).join('')
+}
+
+// wrangler 子行程一律走 OAuth 登入：CLOUDFLARE_API_TOKEN 只供 REST 嵌入使用，
+// 若留在子行程環境會蓋過 OAuth，低權限 token 將令 d1 / vectorize 指令失敗。
+const WRANGLER_ENV: NodeJS.ProcessEnv = { ...process.env }
+delete WRANGLER_ENV.CLOUDFLARE_API_TOKEN
+
 // ── D1 CLI（沿用 build-ask-index 的 execSync + --json envelope 解析）────────────
 type D1Envelope = {
   success?: boolean
@@ -179,7 +201,7 @@ function d1Query(database: string, sql: string): Record<string, unknown>[] {
   const cmd =
     `npx wrangler d1 execute ${shellQuote(database)} ${D1_FLAG} ` +
     `--json --command ${shellQuote(sql)}`
-  const out = execSync(cmd, { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 256 })
+  const out = execSync(cmd, { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 256, env: WRANGLER_ENV })
   return parseD1Json(out).results ?? []
 }
 
@@ -187,14 +209,14 @@ function d1ExecFile(database: string, filePath: string): void {
   const cmd =
     `npx wrangler d1 execute ${shellQuote(database)} ${D1_FLAG} ` +
     `--file ${shellQuote(filePath)} --yes`
-  execSync(cmd, { stdio: 'inherit' })
+  execSync(cmd, { stdio: 'inherit', env: WRANGLER_ENV })
 }
 
 function d1ExecCommand(database: string, sql: string): void {
   const cmd =
     `npx wrangler d1 execute ${shellQuote(database)} ${D1_FLAG} ` +
     `--command ${shellQuote(sql)} --yes`
-  execSync(cmd, { stdio: 'inherit' })
+  execSync(cmd, { stdio: 'inherit', env: WRANGLER_ENV })
 }
 
 // ── 安全護欄：絕不蓋過任何已存在的 table ─────────────────────────────────────
@@ -305,12 +327,12 @@ function vectorizeUpsert(ndjsonPath: string): void {
   const cmd =
     `npx wrangler vectorize upsert ${shellQuote(VECTORIZE_INDEX)} ` +
     `--file ${shellQuote(ndjsonPath)} --batch-size ${UPSERT_BATCH}`
-  execSync(cmd, { stdio: 'inherit' })
+  execSync(cmd, { stdio: 'inherit', env: WRANGLER_ENV })
 }
 
 function assertVectorizeIndexExists(): void {
   try {
-    execSync(`npx wrangler vectorize info ${shellQuote(VECTORIZE_INDEX)}`, { stdio: 'ignore' })
+    execSync(`npx wrangler vectorize info ${shellQuote(VECTORIZE_INDEX)}`, { stdio: 'ignore', env: WRANGLER_ENV })
   } catch {
     throw new Error(
       `找不到 Vectorize 索引「${VECTORIZE_INDEX}」。請先建立：\n` +
@@ -353,7 +375,7 @@ function loadQualifyingRows(): Map<number, QualifyingRow> {
     const metadata: VectorizeSectionMetadata = {
       section_id: sectionId,
       filename: row.filename,
-      content: row.section_content ?? '',
+      content: truncateChars(row.section_content ?? '', METADATA_CONTENT_MAX_CHARS),
       display_name: row.display_name ?? row.filename,
     }
     if (row.nest_filename) metadata.nest_filename = row.nest_filename
@@ -463,7 +485,9 @@ async function processPending(
     }
     if (rows.length === 0) continue
 
-    const inputs = rows.map((r) => buildDocumentEmbeddingInput(r.plainText))
+    const inputs = rows.map((r) =>
+      buildDocumentEmbeddingInput(truncateChars(r.plainText, EMBED_INPUT_MAX_CHARS)),
+    )
     const vectors = await embedTexts(inputs)
 
     const ndjson = rows

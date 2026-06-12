@@ -11,6 +11,7 @@ import {
   type SectionRow,
 } from '../src/utils/askIndexFormat'
 import {
+  buildCagMessages,
   buildCagQueryVariants,
   buildCagRetrievalQueries,
   DEFAULT_CAG_MODEL,
@@ -433,9 +434,98 @@ test('buildCagRetrievalQueries returns primary and fallback search terms', () =>
   assert.equal(queries.fallback, '地神香火')
 })
 
+const EN_STOPWORD_SAMPLE = new Set([
+  'what', 'who', 'which', 'when', 'where', 'why', 'how',
+  'is', 'are', 'do', 'does', 'did', 'can', 'will', 'would', 'should',
+  'the', 'a', 'an', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'about',
+  'your', 'you', 'my', 'we', 'us', 'our', 'it', 'this', 'that',
+  'and', 'or', 'not', 'see', 'think', 'view', 'opinion',
+])
+
+function assertNoBareStopwordVariants(variants: string[]) {
+  for (const variant of variants) {
+    assert.ok(
+      !EN_STOPWORD_SAMPLE.has(variant.toLowerCase()),
+      `variant must not be a bare stopword: ${JSON.stringify(variant)}`,
+    )
+  }
+}
+
+test('buildCagQueryVariants strips English question words down to content terms', () => {
+  const variants = buildCagQueryVariants('What is Plurality?')
+  assert.deepEqual(variants, ['What is Plurality', 'Plurality'])
+  assertNoBareStopwordVariants(variants.slice(1))
+
+  const queries = buildCagRetrievalQueries('What is Plurality?')
+  assert.equal(queries.primary, 'Plurality')
+  assert.equal(queries.fallback, 'Plurality')
+})
+
+test('buildCagRetrievalQueries leads Latin-only questions with the content phrase', () => {
+  // archive.tw search is verbatim phrase matching — the full question never hits.
+  const openGov = buildCagRetrievalQueries('How do you see open government?')
+  assert.equal(openGov.primary, 'open government')
+  assert.equal(openGov.fallback, 'government')
+
+  // Non-verbatim phrase remainder: fallback is the longest single content token
+  // (stable sort — first of the equal-longest wins).
+  const plurality = buildCagRetrievalQueries('Why does Plurality matter for democracy?')
+  assert.equal(plurality.primary, 'Plurality matter democracy')
+  assert.equal(plurality.fallback, 'Plurality')
+
+  // zh questions keep the original behaviour: full cleaned text first.
+  const zh = buildCagRetrievalQueries('用 #zh-tw 回答：地神香火如何')
+  assert.equal(zh.primary, '地神香火如何')
+  assert.equal(zh.fallback, '地神香火')
+})
+
+test('buildCagQueryVariants keeps ALL-CAPS acronyms that collide with stopwords', () => {
+  const variants = buildCagQueryVariants('What is your view on US-China relations?')
+  assert.ok(variants.includes('US-China relations'), 'US must survive in the remainder phrase')
+  assert.ok(variants.includes('US-China'), 'the hyphenated token must survive')
+  for (const variant of variants) {
+    assert.ok(!/^[^A-Za-z0-9一-鿿]/.test(variant), `variant must not start with punctuation: ${JSON.stringify(variant)}`)
+  }
+})
+
+test('buildCagQueryVariants keeps multi-word English remainder before single tokens', () => {
+  const variants = buildCagQueryVariants('How do you see open government?')
+  const remainderIndex = variants.indexOf('open government')
+  assert.ok(remainderIndex >= 0, 'must include stripped remainder "open government"')
+  for (const [index, variant] of variants.entries()) {
+    if (variant.includes(' ')) continue
+    assert.ok(
+      index > remainderIndex,
+      `single token ${JSON.stringify(variant)} must come after the remainder`,
+    )
+  }
+  assertNoBareStopwordVariants(variants.slice(1))
+})
+
+test('buildCagQueryVariants keeps short uppercase tokens like AI', () => {
+  const variants = buildCagQueryVariants('Will AI control us?')
+  assert.ok(variants.includes('AI'), 'ALL-CAPS 2-char tokens must survive the length rule')
+  assert.ok(variants.includes('AI control'), 'must include the stripped non-stopword remainder')
+  assert.ok(!variants.includes('us'), 'short lowercase stopword tokens must be dropped')
+  assert.ok(!variants.includes('Will'), 'auxiliary question words must be dropped')
+  assertNoBareStopwordVariants(variants.slice(1))
+})
+
 test('normalizeCagOptions defaults topK to tightened profile', () => {
   const options = normalizeCagOptions()
   assert.equal(options.topK, DEFAULT_TOP_K)
+})
+
+test('buildCagMessages steers the answer language only when answerLanguage=en', () => {
+  const source = { content: '內容', href: 'https://archive.tw/x#s1', label: 'x — 唐鳳', sectionId: 1 }
+  const zhSystem = buildCagMessages('What is Plurality?', [source])[0].content
+  assert.match(zhSystem, /Use Traditional Chinese/)
+  assert.doesNotMatch(zhSystem, /Answer in English/)
+
+  const enSystem = buildCagMessages('What is Plurality?', [source], [], undefined, 'en')[0].content
+  assert.match(enSystem, /Answer in English/)
+  assert.doesNotMatch(enSystem, /Use Traditional Chinese/)
+  assert.equal(normalizeCagOptions({ answerLanguage: 'en' }).answerLanguage, 'en')
 })
 
 test('parseArchiveSectionId extracts archive anchors', () => {

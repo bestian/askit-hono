@@ -869,7 +869,7 @@ test('webhook rate limits group messages without userId by groupId', async () =>
     assert.equal(fetchCalls.length, 1)
     assert.deepEqual(JSON.parse(String(fetchCalls[0].init?.body)), {
       replyToken: 'reply-token',
-      messages: [{ type: 'text', text: '您的發問過於頻繁，請稍候約 10 秒再試，謝謝 🙏' }],
+      messages: [{ type: 'text', text: '您的發問過於頻繁，請稍候約 3 秒再試，謝謝 🙏' }],
     })
   } finally {
     globalThis.fetch = originalFetch

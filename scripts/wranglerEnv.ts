@@ -3,7 +3,8 @@
  *
  * Local dev often keeps a low-permission CLOUDFLARE_API_TOKEN (Workers AI only)
  * in .dev.vars for REST embedding. Passing it to wrangler shadows OAuth and
- * breaks d1 / vectorize. CI has no OAuth session and must keep the token.
+ * breaks d1 / vectorize / r2. CI has no OAuth session and must keep the token.
+ * Used by vectorize-sync, build-ask-index, abuse-report, and abuse-unban.
  */
 export function buildWranglerEnv(
   source: NodeJS.ProcessEnv = process.env,

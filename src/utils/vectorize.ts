@@ -35,7 +35,8 @@ export function buildQueryEmbeddingInput(question: string): string {
 }
 
 // ── 每個向量附帶的 metadata（runtime 直接據此組出 CagSource，不必再打 D1/archive）──
-// metadata 大小上限 10 KiB/vector；段落 ≤100 字，綽綽有餘。
+// metadata 大小上限 10 KiB/vector；sync 腳本會把 content 截斷在安全範圍內，
+// 完整內容由 runtime 的 section API hydrate 補齊。
 // key 不可為空、含 "."／'"'、或以 $ 開頭 → 以下命名皆安全。
 export type VectorizeSectionMetadata = {
   section_id: number

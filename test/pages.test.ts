@@ -16,6 +16,8 @@ test('GET /en serves the English home page', async () => {
   assert.match(html, /href="\/en\/privacy"/)
   assert.match(html, /href="\/en\/terms"/)
   assert.match(html, /href="\/">華語<\/a>/)
+  assert.match(html, /<script src="\/lang-init\.js"><\/script>/)
+  assert.match(html, /id="lang-switch" lang="zh-Hant" hreflang="zh-Hant" data-lang="zh-Hant"/)
 })
 
 test('GET / stays zh-Hant and gains only the toggle and hreflang links', async () => {
@@ -33,6 +35,8 @@ test('GET / stays zh-Hant and gains only the toggle and hreflang links', async (
   assert.match(html, /href="\/en">English<\/a>/)
   assert.match(html, /href="\/privacy">隱私權政策<\/a>/)
   assert.match(html, /<script src="\/app\.js" defer><\/script>/)
+  assert.match(html, /<script src="\/lang-init\.js"><\/script>/)
+  assert.match(html, /id="lang-switch" lang="en" hreflang="en" data-lang="en"/)
 })
 
 test('GET /en/privacy serves English-first privacy page', async () => {

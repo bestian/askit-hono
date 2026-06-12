@@ -15,6 +15,7 @@ const HOME_STRINGS = {
     termsLabel: '使用條款',
     langSwitchHref: '/en',
     langSwitchLabel: 'English',
+    langSwitchTarget: 'en',
   },
   en: {
     title: '鳳問 Ask Audrey — Audrey Tang’s thinking, with sources',
@@ -31,6 +32,7 @@ const HOME_STRINGS = {
     termsLabel: 'Terms of Use',
     langSwitchHref: '/',
     langSwitchLabel: '華語',
+    langSwitchTarget: 'zh-Hant',
   },
 } as const
 
@@ -66,6 +68,8 @@ export function renderHomePage(lang: PageLang = 'zh-Hant'): string {
   <meta name="twitter:title" content="${s.title}">
   <meta name="twitter:description" content="${s.ogDescription}">
   <meta name="twitter:image" content="https://ask.archive.tw/og-image.png">
+
+  <script src="/lang-init.js"></script>
   <style>
     :root {
       color-scheme: light dark;
@@ -258,7 +262,7 @@ export function renderHomePage(lang: PageLang = 'zh-Hant'): string {
   <footer>
     <a href="${s.privacyHref}">${s.privacyLabel}</a>
     <a href="${s.termsHref}">${s.termsLabel}</a>
-    <a href="${s.langSwitchHref}">${s.langSwitchLabel}</a>
+    <a id="lang-switch" lang="${s.langSwitchTarget}" hreflang="${s.langSwitchTarget}" data-lang="${s.langSwitchTarget}" href="${s.langSwitchHref}">${s.langSwitchLabel}</a>
   </footer>
 
   <script src="/vendor/vue.global.prod.js" defer></script>

@@ -719,7 +719,7 @@ async function replyWithFuseFallback(
       env,
       replyToken,
       hits.length > 0
-        ? formatFuseAnswerFlex(hits)
+        ? formatFuseAnswerFlex(hits, lang)
         : { type: 'text', text: webMessage('notFound', lang) },
     )
   } catch (e) {
@@ -782,7 +782,7 @@ async function replyWithCag(
         sources: CagSource[]
       }
       const refresh = refreshCachedResponse(env.ASK_CACHE, cacheKey, cached)
-      await replyToLine(env, replyToken, formatCagAnswerFlex(answer, sources))
+      await replyToLine(env, replyToken, formatCagAnswerFlex(answer, sources, lang))
       await refresh
       return
     } catch (e) {
@@ -835,7 +835,7 @@ async function replyWithCag(
   if (!cacheable) {
     await delayUntilMinimumElapsed(startedAt)
   }
-  await replyToLine(env, replyToken, formatCagAnswerFlex(answer, cag.sources))
+  await replyToLine(env, replyToken, formatCagAnswerFlex(answer, cag.sources, lang))
   // 成功生成才寫入快取（answer + sources），供下次相同問題直接取用。
   if (cacheable) {
     await putCachedResponse(

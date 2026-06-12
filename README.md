@@ -35,8 +35,9 @@ Also available as a LINE bot.
   `chat/loading/start`, then a single Reply API call with a Flex Message
   (answer + up to four source cards). Falls back to the top-2 fuzzy-search
   sections if CAG fails. A quick character check answers questions that contain
-  only English and symbols (no Han characters) in English — answer plus the
-  fixed not-found / rate-limit / too-long replies.
+  only English and symbols (no Han characters) in English — answer, the Flex
+  source labels (`Source N` / `Visit`), and the fixed not-found / rate-limit /
+  too-long replies.
 - **Caching** — identical questions are served from a 7-day R2 answer cache
   (`X-Cache: HIT`); retrieval sources are cached in KV for 1 hour.
 - **Abuse protection** — two-layer rate limiting (edge limiter 15 req/10 s

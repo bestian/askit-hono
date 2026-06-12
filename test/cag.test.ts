@@ -24,7 +24,11 @@ import {
   retrieveCagSources,
 } from '../src/utils/cag'
 import { NOT_FOUND_REPLY_HTML } from '../src/utils/notFoundReply'
-import { findClosestMatchingSection } from '../src/utils/search'
+import {
+  findClosestMatchingSection,
+  formatCagAnswerFlex,
+  formatFuseAnswerFlex,
+} from '../src/utils/search'
 import type { VectorizeBinding } from '../src/utils/vectorize'
 import { loadAppTestHooks } from './helpers/loadApp'
 
@@ -583,6 +587,53 @@ test('detectCagAnswerLanguage treats letter-free input as default zh', () => {
   assert.equal(detectCagAnswerLanguage('🙏🙏🙏'), undefined)
 })
 
+test('formatCagAnswerFlex localises the source labels per language (issue #38)', () => {
+  const sources = [
+    {
+      content: 'Plurality means collaborative diversity.',
+      href: 'https://archive.tw/2024-01-01-plurality#s1',
+      label: '2024-01-01 Plurality talk — Audrey Tang',
+      sectionId: 1,
+    },
+  ]
+
+  // 預設（繁中）維持既有字樣
+  const zh = JSON.stringify(formatCagAnswerFlex('多元宇宙是什麼 [1]', sources))
+  assert.match(zh, /出處 1/)
+  assert.match(zh, /前往來源/)
+  assert.doesNotMatch(zh, /Source 1/)
+
+  // 全英文提問換成短英文字
+  const en = JSON.stringify(formatCagAnswerFlex('Answer [1]', sources, 'en'))
+  assert.match(en, /Source 1/)
+  assert.match(en, /"label":"Visit"/)
+  assert.doesNotMatch(en, /出處/)
+  assert.doesNotMatch(en, /前往來源/)
+})
+
+test('formatFuseAnswerFlex forwards the language to the source labels (issue #38)', () => {
+  const results = [
+    {
+      content: 'Plurality means collaborative diversity.',
+      filename: '2024-01-01-plurality',
+      nest_filename: null,
+      section_id: 1,
+      display_name: '2024-01-01 Plurality talk',
+      section_speaker: 'Audrey Tang',
+      name: 'Audrey Tang',
+    },
+  ]
+
+  const en = JSON.stringify(formatFuseAnswerFlex(results, 'en'))
+  assert.match(en, /Source 1/)
+  assert.match(en, /"label":"Visit"/)
+  assert.doesNotMatch(en, /出處/)
+
+  const zh = JSON.stringify(formatFuseAnswerFlex(results))
+  assert.match(zh, /出處 1/)
+  assert.match(zh, /前往來源/)
+})
+
 test('parseArchiveSectionId extracts archive anchors', () => {
   assert.equal(parseArchiveSectionId('https://archive.tw/a/b#s619731'), 619731)
   assert.equal(parseArchiveSectionId('/demo#s42'), 42)
@@ -1114,7 +1165,13 @@ test('webhook answers all-English questions in English (issue #37)', async () =>
     assert.ok(replyCall, 'expected a LINE reply call')
     const replyBody = JSON.parse(String(replyCall.init?.body))
     assert.equal(replyBody.replyToken, 'reply-token')
-    assert.match(JSON.stringify(replyBody.messages), /Plurality is collaborative diversity/)
+    const messagesJson = JSON.stringify(replyBody.messages)
+    assert.match(messagesJson, /Plurality is collaborative diversity/)
+    // 出處標籤也跟著英文（issue #38）。
+    assert.match(messagesJson, /Source 1/)
+    assert.match(messagesJson, /"label":"Visit"/)
+    assert.doesNotMatch(messagesJson, /出處/)
+    assert.doesNotMatch(messagesJson, /前往來源/)
   } finally {
     globalThis.fetch = originalFetch
   }

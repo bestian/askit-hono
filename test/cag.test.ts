@@ -23,6 +23,7 @@ import {
   parseArchiveSectionId,
   retrieveCagSources,
 } from '../src/utils/cag'
+import { NOT_FOUND_REPLY_HTML } from '../src/utils/notFoundReply'
 import { findClosestMatchingSection } from '../src/utils/search'
 import type { VectorizeBinding } from '../src/utils/vectorize'
 
@@ -34,6 +35,7 @@ type AppTestHooks = {
     sources: { index: number; label: string; href: string }[]
   }
   isSafeHttpUrl: (value: string) => boolean
+  formatErrorHtml: (message: string) => string
 }
 
 async function loadAppTestHooks(): Promise<AppTestHooks> {
@@ -418,6 +420,35 @@ test('homepage parser rejects non-http citation URLs and relative URLs', async (
   assert.doesNotMatch(parsed.html, /href="javascript:/i)
   assert.doesNotMatch(parsed.html, /href="data:text\/html/i)
   assert.doesNotMatch(parsed.html, /href="\/relative\/path"/i)
+})
+
+test('homepage renders out-of-scope errors as sanitized html with archive.tw link', async () => {
+  const { formatErrorHtml } = await loadAppTestHooks()
+  const html = formatErrorHtml(NOT_FOUND_REPLY_HTML)
+
+  assert.match(html, /<a href="https:\/\/archive\.tw"/)
+  assert.doesNotMatch(html, /<script\b/i)
+})
+
+test('public CAG returns html not-found body with archive.tw link when retrieval is empty', async () => {
+  const env = {
+    AI: {
+      run: async () => ({ data: [[0.1, 0.2, 0.3]] }),
+    },
+    VECTORIZE: {
+      query: async () => ({ matches: [] }),
+    },
+    CAG_RETRIEVER: 'vectorize',
+  }
+
+  const response = await app.request('/cag/zzzzzz', undefined, env)
+
+  assert.equal(response.status, 404)
+  assert.equal(response.headers.get('Content-Type'), 'text/html; charset=UTF-8')
+  const body = await response.text()
+  assert.equal(body, NOT_FOUND_REPLY_HTML)
+  assert.match(body, /<a href="https:\/\/archive\.tw"/)
+  assert.doesNotMatch(body, /<script\b/i)
 })
 
 test('homepage parser escapes html and markdown link attribute breakout payloads', async () => {

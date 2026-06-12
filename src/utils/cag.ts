@@ -17,6 +17,7 @@ import {
   retrieveCagSourcesFromVectorize,
   type VectorizeBinding,
 } from './vectorize'
+import { NOT_FOUND_REPLY_HTML } from './notFoundReply'
 
 type WorkersAiBinding = {
   run: (model: string, input: Record<string, unknown>) => Promise<unknown>
@@ -55,6 +56,7 @@ export type CagOptions = {
 
 export { CAG_MODEL_GEMMA } from './cagEval'
 export const DEFAULT_CAG_MODEL = CAG_MODEL_GEMMA
+
 export const DEFAULT_ARCHIVE_BASE_URL = 'https://archive.tw'
 export const DEFAULT_TOP_K = 4
 const MAX_TOP_K = 8
@@ -885,9 +887,9 @@ export async function streamCagAnswer(
     skipSourceCache: options?.skipSourceCache,
   })
   if (sources.length === 0) {
-    return new Response('您的問題超出了資料庫的範圍，逐字稿網站連結如下：https://archive.tw', {
+    return new Response(NOT_FOUND_REPLY_HTML, {
       status: 404,
-      headers: { 'Content-Type': 'text/plain; charset=UTF-8' },
+      headers: { 'Content-Type': 'text/html; charset=UTF-8' },
     })
   }
 

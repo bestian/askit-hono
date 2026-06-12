@@ -136,6 +136,7 @@ const NOT_FOUND_REPLY = '您的問題超出了資料庫的範圍，\n逐字稿�
 const ERROR_REPLY = '查詢發生錯誤，請稍後再試'
 // 限流冷卻視窗：同一使用者於此毫秒數內最多 1 次（對齊首頁送出鈕的 10 秒冷卻）。
 const RATE_LIMIT_WINDOW_MS = 10_000
+const NOT_FOUND_REPLY_MIN_DELAY_MS = RATE_LIMIT_WINDOW_MS
 const GLOBAL_GENERATION_LIMIT_PER_MINUTE = 15
 const GLOBAL_GENERATION_LIMIT_PER_DAY = 300
 const MAX_QUESTION_CHARS = 100
@@ -297,6 +298,18 @@ function isCacheableCagAnswerText(text: string): boolean {
   return !knownBadAnswerPhrases.some((phrase) => normalized.includes(phrase))
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function delayUntilMinimumElapsed(
+  startedAt: number,
+  minElapsedMs = NOT_FOUND_REPLY_MIN_DELAY_MS,
+): Promise<void> {
+  const remainingMs = minElapsedMs - (Date.now() - startedAt)
+  if (remainingMs > 0) await sleep(remainingMs)
+}
+
 // 用快取內容組出回應（命中時走這條，不跑檢索與 AI）。
 function respondFromCache(body: string, contentType: string): Response {
   return new Response(body, {
@@ -305,26 +318,31 @@ function respondFromCache(body: string, contentType: string): Response {
   })
 }
 
-// 把串流回應「分流」：一份照常串給使用者，一份在背景累積成完整文字後寫入快取。
-// 只快取 200 成功回應；非 200（如 404 查無範圍）或無 body 時原樣回傳、不快取。
-function cacheStreamingResponse(
+// CAG 成功文字才快取；查無結果或模型答不出時，補足限流冷卻時間再回覆，
+// 避免使用者在看到失敗訊息後立刻重試而誤觸同一個 10 秒限流視窗。
+async function cacheCagResponse(
   c: Context<{ Bindings: Bindings }>,
   cacheKey: string,
   response: Response,
-): Response {
-  if (response.status !== 200 || !response.body) return response
-  const [toClient, toCache] = response.body.tee()
+  startedAt: number,
+): Promise<Response> {
+  if (response.status !== 200 || !response.body) {
+    if (response.status === 404) await delayUntilMinimumElapsed(startedAt)
+    return response
+  }
+
   const contentType =
     response.headers.get('Content-Type') || 'text/markdown; charset=UTF-8'
-  c.executionCtx.waitUntil(
-    readStreamToString(toCache)
-      .then((text) => {
-        if (!isCacheableCagAnswerText(text)) return
-        return putCachedResponse(c.env.ASK_CACHE, cacheKey, text, contentType)
-      })
-      .catch((e) => console.error('快取串流寫入失敗:', e)),
-  )
-  return new Response(toClient, {
+  const text = await readStreamToString(response.body)
+  if (isCacheableCagAnswerText(text)) {
+    c.executionCtx.waitUntil(
+      putCachedResponse(c.env.ASK_CACHE, cacheKey, text, contentType)
+        .catch((e) => console.error('快取 CAG 回應失敗:', e)),
+    )
+  } else {
+    await delayUntilMinimumElapsed(startedAt)
+  }
+  return new Response(text, {
     status: response.status,
     headers: response.headers,
   })
@@ -633,11 +651,13 @@ async function replyWithFuseFallback(
   env: Bindings,
   replyToken: string,
   question: string,
+  startedAt: number,
 ): Promise<void> {
   try {
     const hits = await findClosestMatchingSections(env.ASK_INDEX, question, {
       limit: 2,
     })
+    if (hits.length === 0) await delayUntilMinimumElapsed(startedAt)
     await replyToLine(
       env,
       replyToken,
@@ -681,6 +701,7 @@ async function replyWithCag(
   replyToken: string,
   userId: string | undefined,
   question: string,
+  startedAt: number,
 ): Promise<void> {
   const retriever = resolveCagRetriever(env.CAG_RETRIEVER)
   const model = env.ASK_MODEL || DEFAULT_CAG_MODEL
@@ -731,21 +752,28 @@ async function replyWithCag(
 
   if (!cag || cag.answer.trim() === '') {
     if (!cagFailed && retriever === 'vectorize' && env.VECTORIZE) {
+      await delayUntilMinimumElapsed(startedAt)
       await replyToLine(env, replyToken, { type: 'text', text: NOT_FOUND_REPLY })
       return
     }
-    await replyWithFuseFallback(env, replyToken, question)
+    await replyWithFuseFallback(env, replyToken, question, startedAt)
     return
   }
   const answer = splitSentencesToLines(trimToCompleteSentence(cag.answer))
+  const cacheable = isCacheableCagAnswerText(answer)
+  if (!cacheable) {
+    await delayUntilMinimumElapsed(startedAt)
+  }
   await replyToLine(env, replyToken, formatCagAnswerFlex(answer, cag.sources))
   // 成功生成才寫入快取（answer + sources），供下次相同問題直接取用。
-  await putCachedResponse(
-    env.ASK_CACHE,
-    cacheKey,
-    JSON.stringify({ answer, sources: cag.sources }),
-    'application/json; charset=UTF-8',
-  )
+  if (cacheable) {
+    await putCachedResponse(
+      env.ASK_CACHE,
+      cacheKey,
+      JSON.stringify({ answer, sources: cag.sources }),
+      'application/json; charset=UTF-8',
+    )
+  }
 }
 
 app.get('/', (c) => {
@@ -769,6 +797,7 @@ app.get('/robots.txt', (c) => {
 })
 
 app.get('/ask/:question', async (c) => {
+  const startedAt = Date.now()
   const question = decodeRouteParam(c.req.param('question'))
   // 黑名單比對在任何 DO/KV 限流記帳之前（issue #27）。
   const abuse = await checkHttpBlacklist(c)
@@ -807,6 +836,7 @@ app.get('/ask/:question', async (c) => {
       ? await findRandomSection(c.env.ASK_INDEX)
       : await findClosestMatchingSection(c.env.ASK_INDEX, question)
     if (!hit) {
+      await delayUntilMinimumElapsed(startedAt)
       return c.text('您的問題超出了資料庫的範圍，\n逐字稿網站連結如下：https://archive.tw', 404)
     }
     const body = formatAskAnswerHtml(hit)
@@ -841,6 +871,7 @@ app.get('/cag/status', (c) => {
 })
 
 app.get('/cag/:question', async (c) => {
+  const startedAt = Date.now()
   const question = decodeRouteParam(c.req.param('question'))
   // 黑名單比對在任何 DO/KV 限流記帳之前（issue #27）。
   const abuse = await checkHttpBlacklist(c)
@@ -904,10 +935,11 @@ app.get('/cag/:question', async (c) => {
   }
 
   const response = await streamCagAnswer(c.env.AI, question, cagOptions)
-  return cacheStreamingResponse(c, cacheKey, response)
+  return cacheCagResponse(c, cacheKey, response, startedAt)
 })
 
 app.post('/cag', async (c) => {
+  const startedAt = Date.now()
   // 黑名單比對在任何 DO/KV 限流記帳之前（issue #27）。
   const abuse = await checkHttpBlacklist(c)
   if (abuse.blocked) {
@@ -1008,10 +1040,11 @@ app.post('/cag', async (c) => {
   }
 
   const response = await streamCagAnswer(c.env.AI, question, cagOptions)
-  return cacheStreamingResponse(c, cacheKey, response)
+  return cacheCagResponse(c, cacheKey, response, startedAt)
 })
 
 app.post('/webhook', async (c) => {
+  const startedAt = Date.now()
   const rawBody = await c.req.text()
   const signature = c.req.header('x-line-signature')
 
@@ -1075,7 +1108,7 @@ app.post('/webhook', async (c) => {
   // 關鍵：CAG 生成需數秒到十幾秒，超過 LINE 對 webhook 的「2 秒內回 2xx」限制，
   // 因此把慢工作交給 ctx.waitUntil 背景執行（回應後最多 30 秒預算），handler 立刻 ack。
   // reply token 約 1 分鐘有效，留待背景用 Reply API 送出「唯一一次」回覆。
-  c.executionCtx.waitUntil(replyWithCag(c.env, replyToken, userId, userText))
+  c.executionCtx.waitUntil(replyWithCag(c.env, replyToken, userId, userText, startedAt))
 
   return c.text('OK', 200)
 })

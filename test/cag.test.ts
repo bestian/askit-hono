@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
+import type { TestContext } from 'node:test'
 import { runInNewContext } from 'node:vm'
 
 import Fuse from 'fuse.js'
@@ -608,6 +609,28 @@ test('question endpoints reject questions over 100 characters before retrieval o
   assert.equal(aiCalls.length, 0)
 })
 
+test('ask not-found replies wait until the rate-limit cooldown has elapsed', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
+  let settled = false
+  const responsePromise = app
+    .request(
+      `/ask/${encodeURIComponent('zzzzzz')}`,
+      undefined,
+      { ASK_INDEX: createAskIndexBucket() },
+    )
+    .then((response) => {
+      settled = true
+      return response
+    })
+
+  for (let i = 0; i < 8; i += 1) await Promise.resolve()
+  assert.equal(settled, false)
+
+  const response = await resolveAfterCooldown(responsePromise, t)
+  assert.equal(response.status, 404)
+  assert.equal(Date.now(), 10_000)
+})
+
 test('POST APIs reject oversized request bodies', async () => {
   const oversizedQuestion = '長'.repeat(33 * 1024)
 
@@ -674,7 +697,14 @@ test('global generation budget blocks uncached CAG before AI', async () => {
   assert.equal(new URL(quotaUrls[0]).pathname, '/quota')
 })
 
-test('public CAG does not cache blank, short, or known-bad streamed answers', async () => {
+async function resolveAfterCooldown<T>(promise: Promise<T>, t: TestContext): Promise<T> {
+  for (let i = 0; i < 8; i += 1) await Promise.resolve()
+  t.mock.timers.tick(10_000)
+  return promise
+}
+
+test('public CAG does not cache blank, short, or known-bad streamed answers', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
   const badAnswers = [
     '   ',
     '太短',
@@ -718,7 +748,7 @@ test('public CAG does not cache blank, short, or known-bad streamed answers', as
       CAG_RETRIEVER: 'vectorize',
     }
 
-    const response = await app.request(
+    const responsePromise = app.request(
       '/cag/%E6%B8%AC%E8%A9%A6',
       undefined,
       env,
@@ -730,6 +760,7 @@ test('public CAG does not cache blank, short, or known-bad streamed answers', as
         props: {},
       },
     )
+    const response = await resolveAfterCooldown(responsePromise, t)
 
     assert.equal(response.status, 200)
     await response.text()

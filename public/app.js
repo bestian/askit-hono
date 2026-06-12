@@ -2,6 +2,67 @@
   const { createApp, ref, computed, h } = Vue
 
   const COOLDOWN_SECONDS = 3
+  const DOC_LANG = (typeof document !== 'undefined' && document.documentElement)
+    ? document.documentElement.lang
+    : ''
+  const LANG = DOC_LANG === 'en' ? 'en' : 'zh-Hant'
+  const STRINGS = {
+    'zh-Hant': {
+      logoAlt: '鳳問 logo',
+      heading: '鳳問',
+      tagline: '透過問答機器人，認識唐鳳的思想',
+      consentPrefix: '我已閱讀並同意 ',
+      consentJoin: ' 和 ',
+      privacyHref: '/privacy',
+      privacyLabel: '隱私權政策',
+      termsHref: '/terms',
+      termsLabel: '使用條款',
+      placeholderReady: '輸入你的問題，例如：什麼是仁工智慧？',
+      placeholderConsent: '請先同意隱私權政策和使用條款，才能發問',
+      questionAria: '問題',
+      submit: '送出',
+      thinking: '思考中…',
+      cooldownSuffix: ' 秒…',
+      searching: '檢索逐字稿中…',
+      fetchError: '查詢發生錯誤，請稍後再試。',
+      networkError: '連線發生錯誤，請稍後再試。',
+      sourcesHeading: '出處',
+      samples: [
+        '什麼是仁工智慧？',
+        '什麼是數位民主？',
+        '如何看待開放政府？',
+        '唐鳳對 AI 的看法？',
+      ],
+    },
+    en: {
+      logoAlt: 'Ask Audrey Anything logo',
+      heading: 'Ask Audrey Anything',
+      tagline: 'Get to know Audrey Tang’s thinking, one question at a time',
+      consentPrefix: 'I have read and agree to the ',
+      consentJoin: ' and the ',
+      privacyHref: '/en/privacy',
+      privacyLabel: 'Privacy Policy',
+      termsHref: '/en/terms',
+      termsLabel: 'Terms of Use',
+      placeholderReady: 'Type your question, e.g. “What is Plurality?”',
+      placeholderConsent: 'Please agree to the Privacy Policy and Terms of Use first',
+      questionAria: 'Question',
+      submit: 'Ask',
+      thinking: 'Thinking…',
+      cooldownSuffix: ' s…',
+      searching: 'Searching the transcripts…',
+      fetchError: 'Something went wrong. Please try again later.',
+      networkError: 'Connection error. Please try again later.',
+      sourcesHeading: 'Sources',
+      samples: [
+        'What is Plurality?',
+        'How do you see open government?',
+        'Will AI control us?',
+        'What is digital democracy?',
+      ],
+    },
+  }
+  const T = STRINGS[LANG]
   const BLOCKED_ELEMENT_SELECTOR = 'script, iframe, object, embed, base, meta, link'
   const ALLOWED_LINK_PROTOCOLS = new Set(['http:', 'https:'])
   const URL_ATTRIBUTE_NAMES = new Set(['href', 'src', 'xlink:href', 'action', 'formaction', 'poster'])
@@ -108,7 +169,7 @@
   }
 
   if (globalThis.__ASKIT_ENABLE_TEST_HOOKS__) {
-    globalThis.__ASKIT_TESTS__ = { parseAnswer, isSafeHttpUrl, sanitizeHtml, formatErrorHtml }
+    globalThis.__ASKIT_TESTS__ = { parseAnswer, isSafeHttpUrl, sanitizeHtml, formatErrorHtml, STRINGS }
   }
 
   createApp({
@@ -135,12 +196,7 @@
         }, 1000)
       }
 
-      const samples = [
-        '什麼是仁工智慧？',
-        '什麼是數位民主？',
-        '如何看待開放政府？',
-        '唐鳳對 AI 的看法？',
-      ]
+      const samples = T.samples
 
       const parsed = computed(() => parseAnswer(raw.value))
       const bodyHtml = computed(() => parsed.value.html)
@@ -163,9 +219,9 @@
         raw.value = ''
 
         try {
-          const res = await fetch('/cag/' + encodeURIComponent(query))
+          const res = await fetch('/cag/' + encodeURIComponent(query) + (LANG === 'en' ? '?lang=en' : ''))
           if (!res.ok) {
-            error.value = (await res.text()) || '查詢發生錯誤，請稍後再試。'
+            error.value = (await res.text()) || T.fetchError
             return
           }
           const reader = res.body.getReader()
@@ -177,7 +233,7 @@
           }
           raw.value += decoder.decode()
         } catch (e) {
-          error.value = '連線發生錯誤，請稍後再試。'
+          error.value = T.networkError
         } finally {
           loading.value = false
           startCooldown()
@@ -186,9 +242,9 @@
 
       return () => h('div', [
         h('div', { class: 'hero' }, [
-          h('img', { class: 'logo', src: '/logo.png', alt: '鳳問 logo' }),
-          h('h1', '鳳問'),
-          h('p', { class: 'tagline' }, '透過問答機器人，認識唐鳳的思想'),
+          h('img', { class: 'logo', src: '/logo.png', alt: T.logoAlt }),
+          h('h1', T.heading),
+          h('p', { class: 'tagline' }, T.tagline),
         ]),
         h('label', { class: 'consent' }, [
           h('input', {
@@ -200,10 +256,10 @@
             },
           }),
           h('span', [
-            '我已閱讀並同意 ',
-            h('a', { href: '/privacy', target: '_blank', rel: 'noopener noreferrer' }, '隱私權政策'),
-            ' 和 ',
-            h('a', { href: '/terms', target: '_blank', rel: 'noopener noreferrer' }, '使用條款'),
+            T.consentPrefix,
+            h('a', { href: T.privacyHref, target: '_blank', rel: 'noopener noreferrer' }, T.privacyLabel),
+            T.consentJoin,
+            h('a', { href: T.termsHref, target: '_blank', rel: 'noopener noreferrer' }, T.termsLabel),
           ]),
         ]),
         h('section', { class: 'demo' }, [
@@ -218,10 +274,10 @@
               value: question.value,
               type: 'text',
               placeholder: consentAccepted.value
-                ? '輸入你的問題，例如：什麼是仁工智慧？'
-                : '請先同意隱私權政策和使用條款，才能發問',
+                ? T.placeholderReady
+                : T.placeholderConsent,
               disabled: loading.value,
-              'aria-label': '問題',
+              'aria-label': T.questionAria,
               onInput: (event) => {
                 question.value = event.target.value
               },
@@ -230,7 +286,7 @@
               type: 'submit',
               disabled: !canSubmit.value,
               class: { loading: loading.value },
-            }, loading.value ? '思考中…' : (cooldown.value > 0 ? cooldown.value + ' 秒…' : '送出')),
+            }, loading.value ? T.thinking : (cooldown.value > 0 ? cooldown.value + T.cooldownSuffix : T.submit)),
           ]),
           !answered.value
             ? h('div', { class: 'samples' }, samples.map((sample) =>
@@ -245,14 +301,14 @@
           answered.value
             ? h('div', { class: 'answer' }, [
               !bodyHtml.value && !error.value && loading.value
-                ? h('p', { class: 'placeholder' }, '檢索逐字稿中…')
+                ? h('p', { class: 'placeholder' }, T.searching)
                 : null,
               error.value ? h('p', { class: 'error', innerHTML: errorHtml.value }) : null,
               h('div', { class: 'body', innerHTML: bodyHtml.value }),
               loading.value ? h('span', { class: 'cursor' }, '▌') : null,
               sources.value.length
                 ? h('div', { class: 'sources' }, [
-                  h('h2', '出處'),
+                  h('h2', T.sourcesHeading),
                   h('ol', sources.value.map((src) =>
                     h('li', { key: src.index, value: src.index }, [
                       h('a', { href: src.href, target: '_blank', rel: 'noopener noreferrer' }, src.label),

@@ -4,7 +4,11 @@ import { secureHeaders } from 'hono/secure-headers'
 import { renderHomePage } from './pages/home'
 import { renderPrivacyPolicyPage } from './pages/privacy'
 import { renderTermsOfUsePage } from './pages/terms'
-import { NOT_FOUND_REPLY_PLAIN } from './utils/notFoundReply'
+import {
+  NOT_FOUND_REPLY_HTML_EN,
+  NOT_FOUND_REPLY_PLAIN,
+  NOT_FOUND_REPLY_PLAIN_EN,
+} from './utils/notFoundReply'
 import {
   type AbuseKind,
   type AbusePath,
@@ -136,26 +140,60 @@ const WEBHOOK_LOADING_SECONDS = 30
 const WEBHOOK_CAG_ANSWER_INSTRUCTION =
   '請以繁體中文用 3～5 句話簡潔作答，全文控制在約 200 字內並完整收尾，' +
   '於陳述具體事實時標註 [1]、[2] 等來源編號。'
-const NOT_FOUND_REPLY = NOT_FOUND_REPLY_PLAIN
-const ERROR_REPLY = '查詢發生錯誤，請稍後再試'
 // 限流冷卻視窗：同一使用者於此毫秒數內最多 1 次（對齊首頁送出鈕冷卻）。
 const RATE_LIMIT_WINDOW_MS = 3_000
 const NOT_FOUND_REPLY_MIN_DELAY_MS = RATE_LIMIT_WINDOW_MS
 const RATE_LIMIT_RETRY_AFTER_SECONDS = Math.ceil(RATE_LIMIT_WINDOW_MS / 1000)
+
+// 網頁串流路由（GET /cag/:question）使用者可見訊息的雙語表：?lang=en 取英文、其餘繁中。
+// zh-Hant 字串須與既有字面值逐字相同；LINE webhook 與其他路由沿用 zh-Hant 這一份。
+export const WEB_MESSAGES = {
+  'zh-Hant': {
+    notFound: NOT_FOUND_REPLY_PLAIN,
+    rateLimited:
+      `您的發問過於頻繁，請稍候約 ${RATE_LIMIT_RETRY_AFTER_SECONDS} 秒再試，謝謝 🙏`,
+    tooLong: '您的問題字數過長，請縮短問題的長度，謝謝!',
+    budget: '目前服務量已達上限，請稍後再試，謝謝',
+    blacklisted: '由於多次異常請求，您的存取已被暫停',
+  },
+  en: {
+    notFound: NOT_FOUND_REPLY_PLAIN_EN,
+    rateLimited:
+      `You are asking a bit too quickly — please wait about ${RATE_LIMIT_RETRY_AFTER_SECONDS} seconds and try again 🙏`,
+    tooLong: 'Your question is too long — please shorten it and try again. Thank you!',
+    budget:
+      'The service has reached its generation budget for now — please try again later 🙏',
+    blacklisted: 'Your access has been suspended due to repeated abnormal requests.',
+  },
+} as const
+
+export type WebMessageLang = keyof typeof WEB_MESSAGES
+type WebMessageKey = keyof (typeof WEB_MESSAGES)['zh-Hant']
+
+export function webMessage(key: WebMessageKey, lang: WebMessageLang): string {
+  return WEB_MESSAGES[lang][key]
+}
+
+// 網頁路由的語言只看 ?lang=en；其餘一律繁中（與既有行為相同）。
+function resolveWebLang(lang: string | undefined): WebMessageLang {
+  return lang === 'en' ? 'en' : 'zh-Hant'
+}
+
+const NOT_FOUND_REPLY = WEB_MESSAGES['zh-Hant'].notFound
+const ERROR_REPLY = '查詢發生錯誤，請稍後再試'
 const GLOBAL_GENERATION_LIMIT_PER_MINUTE = 30
 const GLOBAL_GENERATION_LIMIT_PER_DAY = 1_000
 const MAX_QUESTION_CHARS = 100
 const MAX_API_BODY_BYTES = 32 * 1024
 const MIN_CACHEABLE_CAG_ANSWER_CHARS = 12
 // 限流（同一使用者冷卻視窗內第 2 次請求）觸發時的回覆訊息。
-const RATE_LIMIT_HTTP_MESSAGE =
-  `您的發問過於頻繁，請稍候約 ${RATE_LIMIT_RETRY_AFTER_SECONDS} 秒再試，謝謝 🙏`
+const RATE_LIMIT_HTTP_MESSAGE = WEB_MESSAGES['zh-Hant'].rateLimited
 const RATE_LIMIT_LINE_REPLY = RATE_LIMIT_HTTP_MESSAGE
-const GLOBAL_BUDGET_HTTP_MESSAGE = '目前服務量已達上限，請稍後再試，謝謝'
-const GLOBAL_BUDGET_LINE_REPLY = '目前服務量已達上限，請稍後再試，謝謝'
-const QUESTION_TOO_LONG_MESSAGE = '您的問題字數過長，請縮短問題的長度，謝謝!'
+const GLOBAL_BUDGET_HTTP_MESSAGE = WEB_MESSAGES['zh-Hant'].budget
+const GLOBAL_BUDGET_LINE_REPLY = WEB_MESSAGES['zh-Hant'].budget
+const QUESTION_TOO_LONG_MESSAGE = WEB_MESSAGES['zh-Hant'].tooLong
 // 黑名單成員的回覆（issue #27）。LINE 來源被封鎖時不回覆、僅 ack。
-const BLACKLISTED_HTTP_MESSAGE = '由於多次異常請求，您的存取已被暫停'
+const BLACKLISTED_HTTP_MESSAGE = WEB_MESSAGES['zh-Hant'].blacklisted
 const ROBOTS_TXT = `User-agent: *
 Disallow: /ask/
 Disallow: /cag/
@@ -300,6 +338,7 @@ function isCacheableCagAnswerText(text: string): boolean {
     '不能回答這個問題',
     'I cannot answer',
     'I can’t answer',
+    WEB_MESSAGES.en.notFound,
   ]
   return !knownBadAnswerPhrases.some((phrase) => normalized.includes(phrase))
 }
@@ -796,12 +835,24 @@ app.get('/', (c) => {
   return c.html(renderHomePage())
 })
 
+app.get('/en', (c) => {
+  return c.html(renderHomePage('en'))
+})
+
 app.get('/privacy', (c) => {
   return c.html(renderPrivacyPolicyPage())
 })
 
 app.get('/terms', (c) => {
   return c.html(renderTermsOfUsePage())
+})
+
+app.get('/en/privacy', (c) => {
+  return c.html(renderPrivacyPolicyPage('en'))
+})
+
+app.get('/en/terms', (c) => {
+  return c.html(renderTermsOfUsePage('en'))
 })
 
 app.get('/robot.txt', (c) => {
@@ -890,21 +941,24 @@ app.get('/cag/status', (c) => {
 
 app.get('/cag/:question', async (c) => {
   const startedAt = Date.now()
+  // 網頁 UI 從這條路由串流，使用者可見訊息依 ?lang=en 在地化；一次解析、整路沿用。
+  const lang = resolveWebLang(c.req.query('lang'))
+  const messages = WEB_MESSAGES[lang]
   const question = decodeRouteParam(c.req.param('question'))
   // 黑名單比對在任何 DO/KV 限流記帳之前（issue #27）。
   const abuse = await checkHttpBlacklist(c)
   if (abuse.blocked) {
-    return c.text(BLACKLISTED_HTTP_MESSAGE, 403)
+    return c.text(messages.blacklisted, 403)
   }
   if (await isIpRateLimited(c)) {
     reportAbuse(c, { key: abuse.key, kind: 'rate_limit', path: 'cag', question, ip: abuse.ip })
-    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
+    return c.text(messages.rateLimited, 429, {
       'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
     })
   }
   if (isQuestionTooLong(question)) {
     reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'cag', question, ip: abuse.ip })
-    return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
+    return c.text(messages.tooLong, 400)
   }
   const bypassCache = shouldBypassCaches(c.req.query('refresh'))
   const topK = parsePositiveInteger(c.req.query('top_k') ?? c.req.query('topK'), DEFAULT_TOP_K)
@@ -930,9 +984,11 @@ app.get('/cag/:question', async (c) => {
     vectorizeMinScore,
     cagCache: c.env.CAG_CACHE,
     skipSourceCache: bypassCache,
+    answerLanguage: lang === 'en' ? 'en' : undefined,
   })
 
   // 快取 key 納入實際生效的參數（含 clamp/default 後的值），避免用超大參數繞過快取。
+  // lang=en 會改變生成語言，必須一併納入 key；繁中（預設）不帶，沿用既有快取項。
   const cacheKey = await buildCacheKey('cag', question, {
     archiveBaseUrl: cagOptions.archiveBaseUrl,
     model: DEFAULT_CAG_MODEL,
@@ -941,6 +997,7 @@ app.get('/cag/:question', async (c) => {
     maxCompletionTokens: cagOptions.maxCompletionTokens,
     retriever: cagOptions.retriever,
     vectorizeMinScore: cagOptions.vectorizeMinScore,
+    ...(lang === 'en' ? { answerLanguage: 'en' } : {}),
   })
   if (!bypassCache) {
     const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
@@ -952,12 +1009,21 @@ app.get('/cag/:question', async (c) => {
 
   const budget = await checkGlobalGenerationBudget(c.env)
   if (!budget.allowed) {
-    return c.text(GLOBAL_BUDGET_HTTP_MESSAGE, 429, {
+    return c.text(messages.budget, 429, {
       'Retry-After': retryAfterForBudget(budget),
     })
   }
 
   const response = await streamCagAnswer(c.env.AI, question, cagOptions)
+  // streamCagAnswer 查無來源時回 404（內文為繁中 HTML，issue #29）；
+  // 英文介面（?lang=en）換成對應的英文 HTML 版本。
+  if (response.status === 404 && lang === 'en') {
+    await response.body?.cancel()
+    return new Response(NOT_FOUND_REPLY_HTML_EN, {
+      status: 404,
+      headers: response.headers,
+    })
+  }
   return cacheCagResponse(c, bypassCache ? null : cacheKey, response)
 })
 

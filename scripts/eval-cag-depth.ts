@@ -54,6 +54,7 @@ type CaseArmResult = {
   hydrateMs: number
   generateMs: number
   answerPreview: string
+  answerFull: string
 }
 
 type CompareCaseResult = {
@@ -66,6 +67,10 @@ function parseCaseFilter(argv: string[]): string[] | null {
   const flag = argv.find((arg) => arg.startsWith('--cases='))
   if (!flag) return null
   return flag.slice('--cases='.length).split(',').map((id) => id.trim()).filter(Boolean)
+}
+
+function parseFullAnswers(argv: string[]): boolean {
+  return argv.includes('--full')
 }
 
 function parseMode(argv: string[]): EvalArm | 'compare' {
@@ -245,10 +250,11 @@ async function evalCaseArm(
     hydrateMs,
     generateMs,
     answerPreview: preview(answer),
+    answerFull: answer.trim(),
   }
 }
 
-function printCaseComparison(result: CompareCaseResult) {
+function printCaseComparison(result: CompareCaseResult, fullAnswers: boolean) {
   console.log(`\n${result.caseId}`)
   for (const arm of ['thin', 'hydrate'] as const) {
     const row = result[arm]
@@ -265,7 +271,14 @@ function printCaseComparison(result: CompareCaseResult) {
       `t=${(row.retrievalMs + row.hydrateMs + row.generateMs).toFixed(0)}ms ` +
       `(r${row.retrievalMs.toFixed(0)}+h${row.hydrateMs.toFixed(0)}+g${row.generateMs.toFixed(0)})`,
     )
-    console.log(`        ${row.answerPreview}`)
+    const text = fullAnswers ? row.answerFull ?? row.answerPreview : row.answerPreview
+    if (fullAnswers) {
+      console.log(`  --- ${arm} answer ---`)
+      console.log(text)
+      console.log(`  --- end ${arm} ---`)
+    } else {
+      console.log(`        ${text}`)
+    }
   }
   if (result.thin && result.hydrate) {
     const deltaChars = result.hydrate.answerChars - result.thin.answerChars
@@ -320,6 +333,7 @@ function printSummary(comparisons: CompareCaseResult[]) {
 
 async function main() {
   const argv = process.argv.slice(2)
+  const fullAnswers = parseFullAnswers(argv)
   const mode = parseMode(argv)
   const filter = parseCaseFilter(argv)
   const cases = filter
@@ -344,7 +358,7 @@ async function main() {
       const hydrate = await evalCaseArm(ai, vectorize, testCase, 'hydrate', archiveBaseUrl, topK)
       const comparison = { caseId: testCase.id, thin, hydrate }
       comparisons.push(comparison)
-      printCaseComparison(comparison)
+      printCaseComparison(comparison, fullAnswers)
       continue
     }
 
@@ -359,7 +373,7 @@ async function main() {
         caseId: testCase.id,
         thin: mode === 'thin' ? result : null,
         hydrate: mode === 'hydrate' ? result : null,
-      })
+      }, fullAnswers)
     }
   }
 

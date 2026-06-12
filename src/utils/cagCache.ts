@@ -9,6 +9,8 @@ export type CagSourceCacheParams = {
   retriever: CagRetriever
   archiveBaseUrl?: string
   vectorizeMinScore?: number
+  /** Busts pre-hydrate KV entries when vectorize sources are archive-expanded. */
+  sourceHydrate?: boolean
 }
 
 async function sha256Hex(input: string): Promise<string> {

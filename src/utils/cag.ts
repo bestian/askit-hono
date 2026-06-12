@@ -489,6 +489,7 @@ async function resolveCagSources(
   },
 ): Promise<CagSource[]> {
   const retriever = options.retriever ?? 'archive'
+  const hydrateVectorize = retriever === 'vectorize' && Boolean(options.vectorize)
   const cacheKey = options.skipSourceCache
     ? null
     : await buildCagSourceCacheKey({
@@ -497,6 +498,7 @@ async function resolveCagSources(
       retriever,
       archiveBaseUrl: options.archiveBaseUrl,
       vectorizeMinScore: options.vectorizeMinScore,
+      sourceHydrate: hydrateVectorize ? true : undefined,
     })
 
   if (cacheKey) {
@@ -506,12 +508,16 @@ async function resolveCagSources(
 
   let sources: CagSource[]
   if (retriever === 'vectorize' && options.vectorize) {
-    sources = await retrieveCagSourcesFromVectorize(
+    const baseUrl = normalizeArchiveBaseUrl(options.archiveBaseUrl)
+    const thin = await retrieveCagSourcesFromVectorize(
       ai,
       options.vectorize,
       question,
       { topK: options.topK, minScore: options.vectorizeMinScore },
     )
+    sources = thin.length > 0
+      ? await hydrateCagSourcesFromArchive(baseUrl, thin)
+      : []
   } else {
     sources = await retrieveCagSources(question, {
       topK: options.topK,

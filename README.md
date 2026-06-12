@@ -1,448 +1,109 @@
-# askit-hono — LINE Bot for SayIt fuzzy search (Cloudflare Workers + Hono)
+# 鳳問 · Ask Audrey Anything
 
-[華語](#華語) ｜ [English](#english)
+[![CI](https://github.com/bestian/askit-hono/actions/workflows/ci.yml/badge.svg)](https://github.com/bestian/askit-hono/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
----
+**English | [華語](README.zh-TW.md)**
 
-## 華語
+Ask Audrey Anything — AI answers grounded in Audrey Tang's 30-year public
+transcript archive ([archive.tw](https://archive.tw)), with every answer cited
+back to its original source.
 
-讓使用者向 LINE Bot 提問（例如「AI 會不會控制我們」），Bot 從 [SayIt](https://archive.tw)（亦即 sayit-hono 專案）的逐字稿中找出指定講者（預設「唐鳳」）說過、最相近的一段話回覆，並附上原文連結。
+**Try it → <https://ask.archive.tw/en>** (華語: <https://ask.archive.tw>) ·
+Also available as a LINE bot.
 
-實作上以 [Hono](https://hono.dev/) 跑在 Cloudflare Workers。`/ask/:question` 走 build-time R2 Fuse 索引；`/cag` 與 LINE `/webhook` 則直接使用 `archive.tw` 的搜尋 API 與 section API 做 long-lore retrieval（CAG），再呼叫 Workers AI 生成帶引註的回答，避免 Worker 冷啟動時載入巨大索引。由於 CAG 生成需數秒，`/webhook` 採三段式非同步回覆（見下）。
-
-### 功能與路由
-
-| 路由 | 用途 |
+| English (`/en`) | 華語 (`/`) |
 | --- | --- |
-| `GET /` | Healthcheck，回 `Hello World!` |
-| `GET /ask/:question` | **暫時測試用**：把 question URL-decode 後跑搜尋，回傳 HTML 顯示最相近段落 + 原文連結。方便用瀏覽器或 curl 驗證索引與搜尋結果。 |
-| `GET /cag/status` | 顯示 CAG retriever、archive base URL、模型與 top-k 上限。 |
-| `GET /cag/:question` | 從 `archive.tw/api/search.json` 找相關段落，再用 `/api/section/:id` 取回前後文，組成 CAG prompt，呼叫 Cloudflare Workers AI（預設 Kimi K2.6），並串流 Markdown 回答與 `archive.tw#s...` footnote。 |
-| `POST /cag` | JSON 版本的 CAG endpoint：`{ "question": "...", "topK": 6 }`，同樣串流 Markdown。 |
-| `POST /webhook` | LINE Messaging API webhook。收到文字訊息後以 **CAG**（`archive.tw` 檢索 + Workers AI）生成帶引註的回答，並以 Flex Message 回覆答案與來源。因生成需數秒，採三段式非同步回覆（見「LINE webhook 的 CAG 三段式回覆」）；CAG 失敗或查無結果時退回 R2 Fuse 前兩則最相近段落。 |
-
-### 回覆格式
-
-`/ask/:question` 會回 HTML，方便瀏覽器測試；`/webhook` 則回 LINE Flex Message：主文是 CAG 生成的答案（逐句斷行、附 `[1][2]` 引註），下方最多兩欄來源卡片，含出處、日期與原文連結（hero 圖用 `https://archive.tw/og/...png`）。查無結果或錯誤時回純文字。
-
-### 相同問題的 R2 答案快取
-
-對「相同問題（且影響答案的參數也相同）」的回應做 **7 天** R2 快取（issue #25）。收到問題時先簡單確認快取是否存在，命中就**直接取用、不再跑檢索與 AI**，命中時 HTTP 回應帶 `X-Cache: HIT`。
-
-- 三條路徑各自獨立命名空間（key 前綴 `cache/<scope>/<sha256>`），互不污染：
-  - `/ask/:question`：以正規化問題為 key（隨機問題 `隨機`／`random` 不快取）。
-  - `/cag/:question`、`POST /cag`：key 納入所有影響答案的參數（`model`、`topK`、`citableTopK`、`maxCompletionTokens`、`retriever`、`vectorizeMinScore`），參數順序無關。串流回應會「分流」——一份照常串給使用者，一份在背景累積成完整文字後寫入快取。
-  - `/webhook`：以問題＋（`retriever`、`model`）為 key，快取 `answer` 與 `sources`，命中時直接重組 Flex Message 回覆。
-- 問題正規化：壓縮空白、去前後空白、轉小寫，讓「實質相同」的問題命中同一筆。
-- 壽命以 R2 物件上傳時間判斷，過期視為未命中並順手刪除。
-- 快取放在獨立的 `ASK_CACHE`（`askit-answer-cache`）bucket；未綁定或讀寫出錯時一律優雅降級（當作未命中、照常生成），不會阻斷回答。實作見 `src/utils/cache.ts`。
-
-### 異常請求追蹤 log 與黑名單
-
-對「超量或異常的請求」建立 D1 追蹤 log，並對累犯自動建立黑名單（issue #27）。資料放在獨立的 `askit-abuse-log` D1 資料庫（binding `ABUSE_DB`），兩張表（schema 見 `db/abuse-log-schema.sql`）：
-
-- **`abuse_log`**：「單一 IP/Id 超量」（觸發限流，全域配額用罄不算）或「問題字串過長」發生時自動寫入一筆：問題（截斷至 200 碼點）、IP（網頁/API 若有）、LINE userId／groupId（若有）、時間戳記，以及與限流同一套的正規化身分 key（`ip:…`／`ip6:…/64`／`line:…`）。
-- **`blacklist`**：同一 key 在計數視窗內累積達門檻次數時，與寫 log 同一筆 D1 batch 交易自動寫入。預設「24 小時內 3 次」，可用 vars 調整（`ABUSE_BLACKLIST_THRESHOLD`、`ABUSE_COUNT_WINDOW_HOURS`；視窗設 `0` = 全期間累計）。
-
-收到請求時，**在任何 DO/KV 限流記帳之前**先比對黑名單：黑名單成員直接擋下（HTTP 回 `403`；LINE 來源僅 ack 不回覆，避免平台重送），完全不消耗全域生成額度，以保障善意使用者。未綁 `ABUSE_DB` 時優雅降級：不寫 log、黑名單視為空。實作見 `src/utils/abuse.ts`。
-
-維運指令：
-
-```bash
-npm run abuse:db:init:local       # 本機 dev 用的 D1 建表（本機 dev 寫本機 D1，不污染正式環境）
-npm run abuse:report              # 近端分析 log → build/abuse-report.html 視覺化報告（遠端資料）
-LOCAL=1 npm run abuse:report      # 同上，改讀本機 D1
-npm run abuse:unban -- <key>      # 解除封鎖（同時清掉該 key 的 log 舊紀錄，否則再犯一次就回到黑名單）
-```
-
-報告內容：事件總數／近 24 小時數、每日趨勢（依異常類型堆疊）、類型與路徑分佈、最常觸發來源 Top 20（標示黑名單）、黑名單清單與最近事件明細。
-
-### LINE webhook 的 CAG 三段式回覆
-
-CAG 需先檢索 `archive.tw` 再讓 Workers AI 生成，通常要數秒到十幾秒，超過 LINE 對 webhook「**2 秒內必須回 2xx**」的限制；而 LINE Reply API 不支援串流、reply token 為一次性。因此 `/webhook` 採三段式非同步回覆：
-
-1. **立即 ack**：驗證簽章後 2 秒內回 `200 OK`，把慢工作交給 `c.executionCtx.waitUntil()` 在背景執行（回應後最多約 30 秒預算）。回 200 這步**不消耗 reply token**。
-2. **載入動畫**：對 1:1 聊天呼叫 `chat/loading/start` 顯示「輸入中…」，蓋住等待時間（不是訊息、不消耗 token）。
-3. **生成並回覆一次**：`generateCagAnswer()`（非串流，`top_k=2`、`max_tokens=240`）取得答案與來源，補完句尾、逐句斷行後，用 reply token 呼叫**一次** Reply API 送出 Flex；CAG 失敗或查無結果時退回 R2 Fuse 前兩則。
-
-> reply token 約 1 分鐘有效，CAG 通常 4～16 秒完成，仍在窗內；若要更保險可改用 Push API（無時限，但計入訊息配額）。
-
-### 索引建置流程（不在 Worker 內執行）
-
-```
-D1 sections view  ──┐
-                    │  npm run build:index
-speakers.name LIKE ─┤  (scripts/build-ask-index.ts)
-'唐鳳%'             │
-                    ▼
-              Fuse.createIndex
-                    │
-                    ▼
-            JSON: { rows, index, meta }
-                    │
-                    ▼
-   R2: askit-fuse-index-cache/ask-index/audrey-tang.json
-```
-
-Worker 端 `src/utils/search.ts` 第一次請求時從 R2 抓索引、用 `Fuse.parseIndex` 還原，之後同個 isolate 都共用。build script 也會上傳一個很小的 manifest sidecar（預設 `ask-index/audrey-tang.manifest.json`）；Worker 會定期讀 manifest，發現 `indexSha256` 變更時自動重載大索引，不需要每次 transcript 更新都 redeploy。
-
-### 專案結構
-
-```
-.
-├── src/
-│   ├── index.ts                   # Hono app（/, /ask/:question, /webhook）
-│   └── utils/
-│       ├── search.ts              # R2 載入索引 + Fuse 搜尋 + HTML 輸出
-│       ├── cache.ts               # 相同問題的 R2 答案快取（7 天，issue #25）
-│       ├── abuse.ts               # 異常請求追蹤 log 與黑名單（issue #27）
-│       └── askIndexFormat.ts      # build / runtime 共用的型別與 Fuse 設定
-├── db/
-│   └── abuse-log-schema.sql       # abuse_log + blacklist 兩張表的 D1 schema
-├── scripts/
-│   ├── build-ask-index.ts         # 從 D1 撈段落 → 建 Fuse 索引 → 上傳 R2
-│   ├── abuse-report.ts            # 分析異常請求 log → HTML 視覺化報告
-│   ├── abuse-unban.ts             # 把指定 key 從黑名單移除
-│   └── tsconfig.json
-├── wrangler.jsonc                 # Workers 設定（R2 binding ASK_INDEX）
-├── tsconfig.json
-├── package.json
-└── .dev.vars.example              # 本機開發環境變數範例
-```
-
-### 開始使用
-
-需要 Node.js 22 或更新版本（Wrangler 4.87+ 需要 Node 22）。本 repo 提供 `.nvmrc` 與 `.node-version`，可讓常見版本管理器自動切換。
-
-```bash
-# 1. 安裝依賴
-npm install
-```
-
-#### 一次性：建立 R2 bucket
-
-build script 把索引上傳到 `askit-fuse-index-cache`（preview 對應 `askit-fuse-index-cache-preview`）。第一次使用先建好：
-
-```bash
-npx wrangler r2 bucket create askit-fuse-index-cache
-npx wrangler r2 bucket create askit-fuse-index-cache-preview
-```
-
-另外，答案快取（見「相同問題的 R2 答案快取」）使用獨立的 `askit-answer-cache` bucket，第一次使用也先建好（未建時程式會優雅降級、當作未命中）：
-
-```bash
-npx wrangler r2 bucket create askit-answer-cache
-npx wrangler r2 bucket create askit-answer-cache-preview
-```
-
-#### 建索引並上傳到 R2
-
-```bash
-npm run build:index
-```
-
-可用環境變數覆蓋：
-
-| 變數 | 預設 | 說明 |
-| --- | --- | --- |
-| `D1_DATABASE` | `sayit-database` | D1 資料庫名稱（要與 sayit-hono 相同） |
-| `SPEAKER_LIKE` | `唐鳳%` | `speakers.name LIKE` 條件 |
-| `R2_BUCKET` | `askit-fuse-index-cache` | 上傳到的 R2 bucket |
-| `R2_KEY` | `ask-index/audrey-tang.json` | R2 物件 key |
-| `R2_MANIFEST_KEY` | `ask-index/audrey-tang.manifest.json` | 小型 sidecar manifest key，會在索引 JSON 上傳成功後才上傳 |
-| `MAX_SECTION_CHARS` | `100` | 只保留純文字長度不超過此值的段落 |
-| `YEARS_BACK` | `2` | 只保留最近幾年的逐字稿 |
-| `LOCAL=1` | — | 對 D1 下 `--local`（預設 `--remote` 用線上資料庫） |
-| `SKIP_UPLOAD=1` | — | 只在 `build/` 產出 JSON 不上傳 |
-
-上傳順序是「大索引 JSON 先、manifest 後」。Worker 只把 manifest 當作版本訊號，所以不會在 R2 還沒拿到新索引時切換。
-
-#### CAG + Workers AI
-
-`/cag/:question` 是把 DS4 CAG 實驗搬進 Cloudflare runtime 的部分：
-retrieve 使用 `ASK_ARCHIVE_BASE_URL`（預設 `https://archive.tw`）的 `/api/search.json`
-做第一階段搜尋，再用 `/api/section/:id` 取回命中段落與前後文；生成由 Workers AI
-binding `AI` 執行，預設模型由 `ASK_MODEL` 控制。這避免把 30 年 long-lore 索引塞進 Worker isolate。
-
-```bash
-curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%EF%BC%9A%E5%9C%B0%E7%A5%9E%E9%A6%99%E7%81%AB%E5%A6%82%E4%BD%95?top_k=6'
-```
-
-輸出是 streaming Markdown。模型若輸出 `[1]` 這類來源標記，Worker 會轉成
-`[^1]` 並在結尾補上 footnote，連到對應的 `archive.tw/<speech>#s<section_id>`。
-
-#### 隨 transcript / sayit-hono 更新
-
-本 repo 的 `.github/workflows/refresh-cag-index.yml` 會刷新 `/ask` / LINE webhook 用的 R2 Fuse 索引；`/cag` 直接讀 `archive.tw` API，所以在 `sayit-hono` 部署成功後自然讀到新內容。workflow 提供三種入口：
-
-- `repository_dispatch` 的 `sayit-updated` event：給 `transcript` repo 在成功上傳 Markdown 並部署 `sayit-hono` 後觸發。
-- `workflow_dispatch`：手動重建索引；可勾選 `deploy` 讓 Worker 也一起部署，作為立即 cache reset。
-- 每日 schedule：漏掉 dispatch 時的保底。
-
-建議在 `transcript` repo 的 `Sync markdown on push` workflow、`rebuild-search-index` job 成功部署 `sayit-hono` 後加上，讓 `/ask` 與 LINE 索引也跟著更新：
-
-```yaml
-- name: Refresh AskIt index
-  env:
-    GH_TOKEN: ${{ secrets.ASKIT_REBUILD_TOKEN }}
-  run: |
-    gh api repos/bestian/askit-hono/dispatches \
-      -f event_type=sayit-updated \
-      -F client_payload[transcript_sha]="${GITHUB_SHA}"
-```
-
-`ASKIT_REBUILD_TOKEN` 需要能對 `bestian/askit-hono` 發送 repository dispatch；細粒度 PAT 可給該 repo `Contents: read/write` 權限。dispatch 進來後，askit-hono workflow 會 `npm run build:index` 上傳新的 R2 索引與 manifest，然後 dry-run 驗證 Worker bundle。線上 Worker 最多在約一分鐘內看到 manifest 變更並重載 `/ask` index；部署只保留為手動 cache reset。
-
-#### 本機開發
-
-前置作業：建立 `.dev.vars` 並填入 LINE 的 Channel access token 與 Channel secret（[詳細說明](#兩個必要的-secret)）。
-
-```bash
-cp .dev.vars.example .dev.vars
-# 編輯 .dev.vars，填入實際值
-
-npm run dev        # 本機 Worker + 遠端 R2 / Workers AI binding
-npm run preview    # wrangler dev --remote，整個 Worker 也跑在 Cloudflare
-```
-
-> 注意：`ASK_INDEX` R2 binding 與 `AI` binding 在 `wrangler.jsonc` 裡設為 `remote: true`。本機測 `/ask` 會讀雲端 preview R2 bucket；本機測 `/cag` 會呼叫 `archive.tw` API 與 Workers AI。這會用到 Cloudflare 帳號配額。若 preview bucket 還沒有 `/ask` 索引，可先執行：
-
-```bash
-npx wrangler r2 object put 'askit-fuse-index-cache-preview/ask-index/audrey-tang.json' \
-  --file build/audrey-tang.json \
-  --content-type 'application/json; charset=utf-8' \
-  --remote
-npx wrangler r2 object put 'askit-fuse-index-cache-preview/ask-index/audrey-tang.manifest.json' \
-  --file build/audrey-tang.manifest.json \
-  --content-type 'application/json; charset=utf-8' \
-  --remote
-```
-
-開發時可用 `/ask/:question` 直接以瀏覽器或 curl 測：
-
-```bash
-curl 'http://127.0.0.1:8787/ask/AI%E6%9C%83%E4%B8%8D%E6%9C%83%E6%8E%A7%E5%88%B6%E6%88%91%E5%80%91'
-```
-
-#### 部署到 Cloudflare Workers
-
-前置作業：
-
-1. **登入 Cloudflare**（首次執行 wrangler 時會自動開瀏覽器要求授權）：
-
-   ```bash
-   npx wrangler login
-   ```
-
-2. **設定兩個 Secret 到 Cloudflare 帳號**（生產環境不會讀 `.dev.vars`）：
-
-   ```bash
-   npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
-   npx wrangler secret put LINE_CHANNEL_SECRET
-   ```
-
-   每個指令會提示貼上值，按 Enter 完成。詳見 [兩個必要的 Secret](#兩個必要的-secret) 一節。
-
-   > 注意：Secret 是綁在「已部署的 Worker」上，所以實際上要先 `npm run deploy` 一次才能設定。第一次部署時 secret 還沒設，webhook 會回 `401`；設好後再部署或重新觸發即可。或者可先用 Dashboard 的 Variables and Secrets 頁面預先建立。
-
-3. 部署：
-
-   ```bash
-   npm run deploy
-   ```
-
-部署完成後，將顯示的 Worker URL 加上 `/webhook` 路徑（例如 `https://askit-hono.YOUR-SUBDOMAIN.workers.dev/webhook`）填入 LINE Developers Console 的「Webhook URL」欄位，並啟用 webhook。可在該頁面按 **Verify** 測試簽章驗證是否通過。
-
-### 兩個必要的 Secret
-
-| 名稱 | 用途 |
-| --- | --- |
-| `LINE_CHANNEL_ACCESS_TOKEN` | 呼叫 LINE Reply API 時的 Bearer token |
-| `LINE_CHANNEL_SECRET` | 驗證 webhook 請求簽章（HMAC-SHA256 金鑰） |
-
-兩者皆屬於機敏資訊，**不可** 寫入 `wrangler.jsonc` 或提交至版本控制。請使用 Cloudflare Workers 的 Secret 機制：
-
-#### 方法 1：使用 `wrangler secret put`（推薦）
-
-```bash
-npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
-npx wrangler secret put LINE_CHANNEL_SECRET
-```
-
-每次執行都會提示輸入值，按 Enter 即可。Cloudflare 會將其加密儲存，並在 Worker 執行時以 `env.LINE_CHANNEL_ACCESS_TOKEN` / `env.LINE_CHANNEL_SECRET`（在 Hono 中為 `c.env.LINE_CHANNEL_ACCESS_TOKEN` / `c.env.LINE_CHANNEL_SECRET`）注入。
-
-確認已設定：
-
-```bash
-npx wrangler secret list
-```
-
-更新 secret：再執行一次 `wrangler secret put` 即可覆寫。
-
-刪除：
-
-```bash
-npx wrangler secret delete LINE_CHANNEL_ACCESS_TOKEN
-```
-
-#### 方法 2：使用 Cloudflare Dashboard
-
-1. 前往 [Cloudflare Dashboard](https://dash.cloudflare.com/) → Workers & Pages
-2. 選擇對應的 Worker → Settings → **Variables and Secrets**
-3. 點擊 **Add variable**，Type 選 **Secret**
-4. 分別新增 `LINE_CHANNEL_ACCESS_TOKEN` 與 `LINE_CHANNEL_SECRET`
-5. 儲存
-
-#### 本機開發（`.dev.vars`）
-
-`wrangler dev` 會讀取專案根目錄的 `.dev.vars` 檔案作為本機 secret：
-
-```bash
-cp .dev.vars.example .dev.vars
-# 編輯 .dev.vars，填入實際 token 與 secret
-```
-
-`.dev.vars` 已被 `.gitignore` 排除，不會被提交。
-
-### 取得 LINE Channel Access Token 與 Channel Secret
-
-1. 至 [LINE Developers Console](https://developers.line.biz/) 建立 Provider 與 Messaging API Channel
-2. **Channel secret**：於 Channel 的「Basic settings」頁籤可看到（複製即可）
-3. **Channel access token**：於「Messaging API」頁籤底部，發行（Issue）一組 **Channel access token (long-lived)**
-
-### 簽章驗證原理
-
-LINE 平台會用你的 Channel secret 對 raw request body 計算 HMAC-SHA256，再以 Base64 編碼放入 `x-line-signature` header。Worker 收到請求時會用同一把金鑰重新計算，並以等長時間比較。簽章不符（含缺少 header）時會回 `401 Invalid signature`。
-
-> 在 LINE Developers Console 的「Webhook settings」可按 **Verify** 測試你的端點是否能通過簽章驗證。
-
-### 測試
-
-從 LINE App 直接傳訊息給 bot 是最可靠的測試方式。`curl` 測 webhook（簽章驗證）：
-
-```bash
-SECRET="your-channel-secret"
-BODY='{"events":[]}'
-SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -binary | base64)
-
-curl -X POST https://YOUR-WORKER-URL/webhook \
-  -H "Content-Type: application/json" \
-  -H "x-line-signature: $SIG" \
-  -d "$BODY"
-```
-
-> 上述 `events` 為空陣列時 Worker 會回 `200 OK`。注意：`/webhook` 一律在 2 秒內回 `200`（符合 LINE 的 webhook 回應時限），CAG 生成與 Reply 呼叫改在 `ctx.waitUntil` 背景執行；因此即使塞入假的 `replyToken`，也只會在背景記錄 Reply 失敗，不再回 `502`。要驗證實際回覆，請從 LINE App 傳訊息。
-
-搜尋本身可獨立測：
-
-```bash
-curl 'https://YOUR-WORKER-URL/ask/AI%E6%9C%83%E4%B8%8D%E6%9C%83%E6%8E%A7%E5%88%B6%E6%88%91%E5%80%91'
-```
-
-CAG 串流可用：
-
-```bash
-curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%EF%BC%9A%E5%9C%B0%E7%A5%9E%E9%A6%99%E7%81%AB%E5%A6%82%E4%BD%95?top_k=6'
-```
-
-### 已知議題 / TODO
-
-- **索引大小**：當前 `唐鳳%` 範圍下索引約 75 MB（105k 段落）。Workers isolate 記憶體上限 128MB，第一次 `JSON.parse` + `Fuse.parseIndex` 會吃不少；後續可能需要瘦身（拿掉 runtime 用不到的欄位、縮短 key 名、或分片）。
-- **manifest 輪詢不是瞬間同步**：`npm run build:index` 上傳後，已存在的 Worker isolate 最多等約一分鐘才會看到 manifest 變更並重載 index。需要立刻刷新時，可手動跑 workflow 並勾選 `deploy`。
-
-### 授權
-
-本專案以 [MIT License](LICENSE) 釋出，可自由用於個人或商業用途。
-
----
-
-## English
-
-A LINE bot that, when a user asks a question (e.g. "Will AI control us?"), finds the closest matching paragraph from a chosen speaker's transcripts on [SayIt](https://archive.tw) (the sayit-hono project) — defaulting to **Audrey Tang** — and replies with the excerpt plus a link to the source.
-
-Built with [Hono](https://hono.dev/) on Cloudflare Workers. `/ask/:question` uses a build-time R2 Fuse index. `/cag` and the LINE `/webhook` retrieve from the `archive.tw` search and section APIs (CAG) and call Workers AI to generate a cited answer, so the Worker does not cold-load a giant transcript index. Because CAG generation takes several seconds, `/webhook` replies asynchronously in three stages (see below).
-
-### Routes
+| ![Ask Audrey Anything English UI](docs/img/home-en.png) | ![鳳問華語介面](docs/img/home-zh.png) |
+
+## How it works
+
+![CAG system design](design/CAG-system-design.svg)
+
+- **Retrieval** — questions are embedded with `@cf/google/embeddinggemma-300m`
+  (768-dim) and matched against the Vectorize index `askit-audrey-tang`
+  (cosine); hits are hydrated through the archive.tw section API for
+  surrounding context. If the Vectorize binding is missing, retrieval falls
+  back to archive.tw full-text search; an empty Vectorize result falls back
+  only for Latin-script questions (the index covers the 華語 transcripts),
+  while 華語 questions get an honest "outside the archive" reply.
+- **Generation** — Cloudflare Workers AI runs `@cf/google/gemma-4-26b-a4b-it`
+  (pinned in `src/utils/cagEval.ts`); `[1]`-style markers are rewritten to
+  `[^1]` footnotes linking to `archive.tw/<speech>#s<section_id>`.
+- **LINE bot** — webhooks must ack within 2 s, so replies are three-stage:
+  immediate `200 OK` (work moves to `waitUntil`), a typing indicator via
+  `chat/loading/start`, then a single Reply API call with a Flex Message
+  (answer + up to four source cards). Falls back to the top-2 fuzzy-search
+  sections if CAG fails.
+- **Caching** — identical questions are served from a 7-day R2 answer cache
+  (`X-Cache: HIT`); retrieval sources are cached in KV for 1 hour.
+- **Abuse protection** — two-layer rate limiting (edge limiter 15 req/10 s
+  per key, then a per-key Durable Object cooldown), a global generation
+  budget (30/min, 1000/day), 30 s CPU cap, strict CSP and security headers.
+  Rate-limit hits and over-long questions are logged to a D1 abuse log, and
+  repeat offenders are auto-blacklisted (default: 3 events in 24 h → `403`);
+  unbind `ABUSE_DB` and it degrades gracefully (no log, empty blacklist).
+- **Quality** — an offline eval harness (`npm run eval:cag`,
+  `npm run eval:cag:depth`) scores answer depth and grounding before model
+  or retrieval changes ship.
+
+## Routes
 
 | Route | Purpose |
 | --- | --- |
-| `GET /` | Healthcheck — returns `Hello World!` |
-| `GET /ask/:question` | **Temporary debug endpoint** — URL-decodes the question, runs the search, returns HTML with the closest section and a link to the source. Handy for testing from a browser or `curl`. |
-| `GET /cag/status` | Shows the CAG retriever, archive base URL, model, and top-k limit. |
-| `GET /cag/:question` | Searches `archive.tw/api/search.json`, hydrates hits through `/api/section/:id`, builds a CAG prompt, calls Cloudflare Workers AI (Kimi K2.6 by default), and streams Markdown with `archive.tw#s...` footnotes. |
-| `POST /cag` | JSON CAG endpoint: `{ "question": "...", "topK": 6 }`, also streaming Markdown. |
-| `POST /webhook` | LINE Messaging API webhook. For text messages it generates a cited answer via **CAG** (`archive.tw` retrieval + Workers AI) and replies with a Flex Message (answer + up to two source cards). Generation takes seconds, so it replies asynchronously in three stages (see "Three-stage CAG reply over the LINE webhook"); on CAG failure or no results it falls back to the top-2 R2 Fuse sections. |
+| `GET /` | 鳳問 web app (華語); returning visitors who saved an English preference are redirected client-side to `/en` |
+| `GET /en` | Ask Audrey Anything web app (English); a saved 華語 preference redirects back to `/` (client-side) |
+| `GET /privacy` · `GET /terms` | Legal pages, 華語-first (`/en/privacy` · `/en/terms` are English-first twins) |
+| `GET /cag/status` | Current retriever, archive base URL, model and top-k caps |
+| `GET /cag/:question` | Streaming Markdown answer with footnote citations |
+| `POST /cag` | JSON `{ "question": "...", "topK": 6 }`; same streaming output |
+| `GET /ask/:question` | Debug: closest single transcript section via the R2 Fuse index |
+| `POST /webhook` | LINE Messaging API webhook (three-stage async reply) |
 
-### Reply Format
+## Deploy your own
 
-`/ask/:question` returns HTML for browser testing; `/webhook` returns a LINE Flex Message whose body is the CAG-generated answer (one sentence per line, with `[1][2]` citations), followed by up to two source cards (source, date, and a link to the section; hero image from `https://archive.tw/og/...png`). Missing results and errors return plain text.
-
-### Three-stage CAG reply over the LINE webhook
-
-CAG must first search `archive.tw` and then have Workers AI generate, which usually takes several to a dozen-plus seconds — beyond LINE's "**must return 2xx within 2 seconds**" webhook limit. The LINE Reply API also cannot stream, and a reply token is single-use. So `/webhook` replies asynchronously in three stages:
-
-1. **Ack immediately** — after verifying the signature, return `200 OK` within 2s and hand the slow work to `c.executionCtx.waitUntil()` (up to ~30s budget after the response). Returning 200 does **not** consume the reply token.
-2. **Loading animation** — for 1:1 chats, call `chat/loading/start` to show a typing indicator (not a message, does not consume the token).
-3. **Generate, then reply once** — `generateCagAnswer()` (non-streaming, `top_k=2`, `max_tokens=240`) produces the answer and sources; after completing the final sentence and breaking lines per sentence, the reply token is used to call the Reply API **once** with a Flex message. On CAG failure or no results it falls back to the top-2 R2 Fuse sections.
-
-> A reply token is valid for ~1 minute and CAG typically finishes in 4–16s, so it stays within the window; for extra robustness you can switch to the Push API (no expiry, but it counts against the message quota).
-
-### Index pipeline (runs offline, not in the Worker)
-
-```
-D1 sections view  ──┐
-                    │  npm run build:index
-speakers.name LIKE ─┤  (scripts/build-ask-index.ts)
-'唐鳳%'             │
-                    ▼
-              Fuse.createIndex
-                    │
-                    ▼
-            JSON: { rows, index, meta }
-                    │
-                    ▼
-   R2: askit-fuse-index-cache/ask-index/audrey-tang.json
-```
-
-On first request, the Worker reads the index from R2 and rehydrates it via `Fuse.parseIndex`. The parsed index is cached at module scope so subsequent requests in the same isolate skip the load. The build script also uploads a tiny manifest sidecar, defaulting to `ask-index/audrey-tang.manifest.json`; the Worker periodically reads that manifest and reloads the large index when `indexSha256` changes, so transcript refreshes do not require a Worker redeploy.
-
-### Project structure
-
-```
-.
-├── src/
-│   ├── index.ts                   # Hono app (/, /ask/:question, /webhook)
-│   └── utils/
-│       ├── search.ts              # R2 loader + Fuse search + HTML output
-│       └── askIndexFormat.ts      # Types and Fuse options shared by build + runtime
-├── scripts/
-│   ├── build-ask-index.ts         # D1 → Fuse index → R2 uploader
-│   └── tsconfig.json
-├── wrangler.jsonc                 # Workers config (R2 binding ASK_INDEX)
-├── tsconfig.json
-├── package.json
-└── .dev.vars.example              # Example local dev environment variables
-```
-
-### Getting started
-
-Requires Node.js 22 or newer (Wrangler 4.87+ requires Node 22). This repo includes `.nvmrc` and `.node-version` for common version managers.
+Requires Node.js 22 or newer (Wrangler 4.87+ requires Node 22; `.nvmrc` and
+`.node-version` are included for common version managers).
 
 ```bash
-# 1. Install dependencies
 npm install
+npx wrangler login   # first run opens a browser for OAuth
 ```
 
-#### One-time: create the R2 buckets
+### 1. Create the R2 buckets
 
-The build script uploads to `askit-fuse-index-cache` (with `askit-fuse-index-cache-preview` for `wrangler dev`). Create them once:
+The Fuse index lives in `askit-fuse-index-cache` (with a `-preview` twin for
+`wrangler dev`); the answer cache uses a separate `askit-answer-cache` bucket
+(the code degrades gracefully — treats reads as cache misses — if a bucket is
+missing):
 
 ```bash
 npx wrangler r2 bucket create askit-fuse-index-cache
 npx wrangler r2 bucket create askit-fuse-index-cache-preview
+npx wrangler r2 bucket create askit-answer-cache
+npx wrangler r2 bucket create askit-answer-cache-preview
+npm run r2:lifecycle   # apply the 7-day lifecycle rule to the answer-cache buckets
 ```
 
-#### Build the index and upload to R2
+### 2. Create the Vectorize index
+
+```bash
+npm run vectorize:create   # askit-audrey-tang, 768 dimensions, cosine
+npm run vectorize:sync     # backfill embeddings from the transcript archive
+```
+
+### 3. Create the KV namespace
+
+The retrieval-source cache (1 hour TTL) lives in KV:
+
+```bash
+npx wrangler kv namespace create CAG_CACHE
+npx wrangler kv namespace create CAG_CACHE --preview
+```
+
+Put the printed ids into the `kv_namespaces` block of `wrangler.jsonc`.
+
+### 4. Build the Fuse index and upload it to R2
 
 ```bash
 npm run build:index
@@ -457,39 +118,105 @@ Optional environment variables:
 | `R2_BUCKET` | `askit-fuse-index-cache` | Target R2 bucket |
 | `R2_KEY` | `ask-index/audrey-tang.json` | R2 object key |
 | `R2_MANIFEST_KEY` | `ask-index/audrey-tang.manifest.json` | Tiny sidecar manifest key, uploaded only after the index JSON succeeds |
-| `MAX_SECTION_CHARS` | `100` | Keep sections whose plain-text length is at most this value |
+| `MAX_SECTION_CHARS` | `175` | Keep sections whose plain-text length is at most this value |
 | `YEARS_BACK` | `2` | Keep transcripts from the last N years |
 | `LOCAL=1` | — | Use `--local` against D1 (defaults to `--remote`) |
 | `SKIP_UPLOAD=1` | — | Write the JSON to `build/` only, skip the R2 upload |
 
-Upload order is "large index JSON first, manifest second." The Worker treats the manifest as the version signal, so it does not switch before R2 has the new index object.
+Upload order is "large index JSON first, manifest second." The Worker treats
+the manifest as the version signal, so it does not switch before R2 has the
+new index object.
 
-#### CAG + Workers AI
+### 5. LINE webhook setup (optional)
 
-`/cag/:question` is the Cloudflare-native slice of the DS4 CAG experiment:
-retrieval uses `ASK_ARCHIVE_BASE_URL` (`https://archive.tw` by default) for
-`/api/search.json`, then hydrates each section through `/api/section/:id` to get
-neighbor context. Generation runs through the Workers AI `AI` binding. The
-default model is controlled by `ASK_MODEL`. This avoids loading a 30-year
-long-lore index into the Worker isolate.
+Only needed if you want the LINE bot; the web app works without it.
+
+<details>
+<summary>LINE webhook setup</summary>
+
+Two secrets are required:
+
+| Name | Purpose |
+| --- | --- |
+| `LINE_CHANNEL_ACCESS_TOKEN` | Bearer token used when calling the LINE Reply API |
+| `LINE_CHANNEL_SECRET` | HMAC-SHA256 key used to verify webhook request signatures |
+
+Both are sensitive — **do not** put them in `wrangler.jsonc` or commit them.
+Upload them to your Cloudflare account (production does *not* read
+`.dev.vars`):
 
 ```bash
-curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%EF%BC%9A%E5%9C%B0%E7%A5%9E%E9%A6%99%E7%81%AB%E5%A6%82%E4%BD%95?top_k=6'
+npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
+npx wrangler secret put LINE_CHANNEL_SECRET
 ```
 
-The response is streaming Markdown. If the model emits source markers like
-`[1]`, the Worker rewrites them to `[^1]` and appends footnotes linked to the
-matching `archive.tw/<speech>#s<section_id>` source.
+Each prompts for the value — paste and press Enter. Cloudflare stores it
+encrypted and injects it at runtime as `c.env.LINE_CHANNEL_ACCESS_TOKEN` /
+`c.env.LINE_CHANNEL_SECRET`. Verify with `npx wrangler secret list`; re-run
+`secret put` to overwrite. (Secrets attach to a *deployed* Worker, so in
+practice you `npm run deploy` once first; until they are set, webhook calls
+return `401`.)
 
-#### Keeping Transcript Updates Fresh
+To obtain the values:
 
-This repo includes `.github/workflows/refresh-cag-index.yml` to refresh the R2 Fuse index used by `/ask` and the LINE webhook. `/cag` reads the `archive.tw` APIs directly, so it sees new content once `sayit-hono` deploys. The workflow has three entrypoints:
+1. Open [LINE Developers Console](https://developers.line.biz/) and create a
+   Provider + Messaging API Channel
+2. **Channel secret**: shown on the channel's **Basic settings** tab — copy it
+3. **Channel access token**: on the **Messaging API** tab, scroll to the
+   bottom and **Issue** a long-lived **Channel access token**
 
-- `repository_dispatch` event `sayit-updated`: intended for the `transcript` repo after Markdown upload and `sayit-hono` deploy succeed.
-- `workflow_dispatch`: manual index refresh; set `deploy=true` to deploy the Worker too as an immediate cache reset.
+After deploy, take the printed Worker URL, append `/webhook` (e.g.
+`https://askit-hono.YOUR-SUBDOMAIN.workers.dev/webhook`), paste it into the
+**Webhook URL** field of your channel, and enable the webhook. Click
+**Verify** on that page to confirm signature verification works end-to-end.
+
+How verification works: LINE computes HMAC-SHA256 over the raw request body
+using your Channel secret, Base64-encodes it, and sends it in the
+`x-line-signature` header. The Worker recomputes the MAC with the same key
+and compares them in constant time. Mismatches (including a missing header)
+return `401 Invalid signature`.
+
+To test the webhook with `curl`:
+
+```bash
+SECRET="your-channel-secret"
+BODY='{"events":[]}'
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -binary | base64)
+
+curl -X POST https://YOUR-WORKER-URL/webhook \
+  -H "Content-Type: application/json" \
+  -H "x-line-signature: $SIG" \
+  -d "$BODY"
+```
+
+An empty `events` array returns `200 OK`. `/webhook` always acks within 2 s
+and does the slow work in `ctx.waitUntil`, so a faked `replyToken` only logs
+a background Reply failure — to verify real replies, message the bot from the
+LINE app.
+
+</details>
+
+### 6. Deploy
+
+```bash
+npm run deploy
+```
+
+### Keeping the index fresh
+
+This repo includes `.github/workflows/refresh-cag-index.yml` to refresh the
+R2 Fuse index used by `/ask` and the LINE fallback. `/cag` reads the
+archive.tw APIs directly, so it sees new content once `sayit-hono` deploys.
+The workflow has three entrypoints:
+
+- `repository_dispatch` event `sayit-updated`: intended for the `transcript`
+  repo after Markdown upload and `sayit-hono` deploy succeed.
+- `workflow_dispatch`: manual index refresh; set `deploy=true` to deploy the
+  Worker too as an immediate cache reset.
 - Daily schedule: a backstop if a dispatch is missed.
 
-Recommended final step in the `transcript` repo's `Sync markdown on push` workflow, after the `rebuild-search-index` job deploys `sayit-hono`, so `/ask` and LINE stay fresh too:
+Recommended final step in the `transcript` repo's `Sync markdown on push`
+workflow, after the `rebuild-search-index` job deploys `sayit-hono`:
 
 ```yaml
 - name: Refresh AskIt index
@@ -501,21 +228,29 @@ Recommended final step in the `transcript` repo's `Sync markdown on push` workfl
       -F client_payload[transcript_sha]="${GITHUB_SHA}"
 ```
 
-`ASKIT_REBUILD_TOKEN` must be able to send repository dispatches to `bestian/askit-hono`; a fine-grained PAT with `Contents: read/write` for that repo works. Once the dispatch arrives, askit-hono runs `npm run build:index`, uploads the refreshed R2 index and manifest, then dry-run validates the Worker bundle. The live Worker sees the manifest change and reloads the `/ask` index within roughly one minute; deploy is kept only as a manual cache reset.
+`ASKIT_REBUILD_TOKEN` must be able to send repository dispatches to
+`bestian/askit-hono`; a fine-grained PAT with `Contents: read/write` for that
+repo works. Once the dispatch arrives, askit-hono runs `npm run build:index`,
+uploads the refreshed R2 index and manifest, then dry-run validates the
+Worker bundle. The live Worker sees the manifest change and reloads the
+`/ask` index within roughly one minute; deploy is kept only as a manual
+cache reset.
 
-#### Run locally
-
-Prerequisite: create `.dev.vars` with your LINE channel access token and channel secret (see [Two required secrets](#two-required-secrets)).
+## Local development
 
 ```bash
-cp .dev.vars.example .dev.vars
+cp .dev.vars.example .dev.vars   # only needed for /webhook (LINE secrets)
 # Edit .dev.vars and paste real values
 
 npm run dev        # local Worker + remote R2 / Workers AI bindings
 npm run preview    # wrangler dev --remote — the Worker itself also runs on Cloudflare
 ```
 
-> Note: `ASK_INDEX` and `AI` are marked `remote: true` in `wrangler.jsonc`. Local `/ask` tests read the cloud preview R2 bucket; local `/cag` tests call `archive.tw` APIs and Workers AI. That uses your Cloudflare account quota. If the preview bucket does not have the `/ask` index yet, seed it first:
+> Note: `ASK_INDEX` and `AI` are marked `remote: true` in `wrangler.jsonc`.
+> Local `/ask` tests read the cloud preview R2 bucket; local `/cag` tests
+> call `archive.tw` APIs and Workers AI. That uses your Cloudflare account
+> quota. If the preview bucket does not have the `/ask` index yet, seed it
+> first:
 
 ```bash
 npx wrangler r2 object put 'askit-fuse-index-cache-preview/ask-index/audrey-tang.json' \
@@ -534,132 +269,63 @@ You can hit `/ask/:question` directly while developing:
 curl 'http://127.0.0.1:8787/ask/AI%E6%9C%83%E4%B8%8D%E6%9C%83%E6%8E%A7%E5%88%B6%E6%88%91%E5%80%91'
 ```
 
-#### Deploy to Cloudflare Workers
-
-Prerequisites:
-
-1. **Authenticate with Cloudflare** (the first wrangler command opens a browser for OAuth):
-
-   ```bash
-   npx wrangler login
-   ```
-
-2. **Upload both secrets to your Cloudflare account** (production does *not* read `.dev.vars`):
-
-   ```bash
-   npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
-   npx wrangler secret put LINE_CHANNEL_SECRET
-   ```
-
-   Each prompts for the value — paste and press Enter. See [Two required secrets](#two-required-secrets) for details.
-
-   > Note: secrets are attached to a *deployed* Worker, so in practice you'll `npm run deploy` once first; until the secrets are set, webhook calls will return `401`. After setting them, redeploy or just retrigger. Alternatively you can pre-create them via the Dashboard's Variables and Secrets page.
-
-3. Deploy:
-
-   ```bash
-   npm run deploy
-   ```
-
-After deploy, take the printed Worker URL, append `/webhook` (e.g. `https://askit-hono.YOUR-SUBDOMAIN.workers.dev/webhook`), and paste it into the **Webhook URL** field of your LINE Developers Console channel. Enable the webhook. Click **Verify** on that page to confirm signature verification works end-to-end.
-
-### Two required secrets
-
-| Name | Purpose |
-| --- | --- |
-| `LINE_CHANNEL_ACCESS_TOKEN` | Bearer token used when calling the LINE Reply API |
-| `LINE_CHANNEL_SECRET` | HMAC-SHA256 key used to verify webhook request signatures |
-
-Both are sensitive — **do not** put them in `wrangler.jsonc` or commit them. Use Cloudflare Workers' Secret mechanism:
-
-#### Option 1: `wrangler secret put` (recommended)
-
-```bash
-npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
-npx wrangler secret put LINE_CHANNEL_SECRET
-```
-
-Each command prompts for the value. Cloudflare stores it encrypted and injects it at runtime as `env.LINE_CHANNEL_ACCESS_TOKEN` / `env.LINE_CHANNEL_SECRET` (in Hono: `c.env.LINE_CHANNEL_ACCESS_TOKEN` / `c.env.LINE_CHANNEL_SECRET`).
-
-Verify:
-
-```bash
-npx wrangler secret list
-```
-
-To update, re-run `wrangler secret put` — it overwrites.
-
-To delete:
-
-```bash
-npx wrangler secret delete LINE_CHANNEL_ACCESS_TOKEN
-```
-
-#### Option 2: Cloudflare Dashboard
-
-1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com/) → Workers & Pages
-2. Select the Worker → Settings → **Variables and Secrets**
-3. Click **Add variable**, set Type to **Secret**
-4. Add both `LINE_CHANNEL_ACCESS_TOKEN` and `LINE_CHANNEL_SECRET`
-5. Save
-
-#### Local development (`.dev.vars`)
-
-`wrangler dev` reads `.dev.vars` from the project root as local secrets:
-
-```bash
-cp .dev.vars.example .dev.vars
-# Edit .dev.vars and paste the real token + secret
-```
-
-`.dev.vars` is gitignored.
-
-### Getting your LINE Channel access token and Channel secret
-
-1. Open [LINE Developers Console](https://developers.line.biz/) and create a Provider + Messaging API Channel
-2. **Channel secret**: shown on the channel's **Basic settings** tab — copy it
-3. **Channel access token**: on the **Messaging API** tab, scroll to the bottom and **Issue** a long-lived **Channel access token**
-
-### How signature verification works
-
-LINE computes HMAC-SHA256 over the raw request body using your Channel secret, Base64-encodes it, and sends it in the `x-line-signature` header. The Worker recomputes the MAC with the same key and compares them in constant time. Mismatches (including a missing header) return `401 Invalid signature`.
-
-> In the LINE Developers Console's **Webhook settings**, click **Verify** to test that your endpoint accepts a properly-signed request.
-
-### Testing
-
-Sending a real message from the LINE app is the most reliable test (once `/webhook` is wired up to the search pipeline). To test the webhook with `curl`:
-
-```bash
-SECRET="your-channel-secret"
-BODY='{"events":[]}'
-SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -binary | base64)
-
-curl -X POST https://YOUR-WORKER-URL/webhook \
-  -H "Content-Type: application/json" \
-  -H "x-line-signature: $SIG" \
-  -d "$BODY"
-```
-
-> An empty `events` array returns `200 OK`. If you fake a `replyToken` and actually hit the Reply API, LINE will return 400 and the Worker responds with `502 LINE API error`.
-
-You can also exercise the search directly:
-
-```bash
-curl 'https://YOUR-WORKER-URL/ask/AI%E6%9C%83%E4%B8%8D%E6%9C%83%E6%8E%A7%E5%88%B6%E6%88%91%E5%80%91'
-```
-
 Streaming CAG test:
 
 ```bash
 curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%EF%BC%9A%E5%9C%B0%E7%A5%9E%E9%A6%99%E7%81%AB%E5%A6%82%E4%BD%95?top_k=6'
 ```
 
-### Known issues / TODO
+## Scripts
 
-- **Index size.** The default `唐鳳%` range produces ~75 MB (~105k sections). Workers isolates have a 128 MB memory limit, so the first `JSON.parse` + `Fuse.parseIndex` is a meaningful cost. We may need to slim the payload (drop unused fields, shorter keys, or shard) once it actually starts hitting the ceiling.
-- **Manifest polling is not instant.** After `npm run build:index` re-uploads, existing isolates can take roughly one minute to see the manifest change and reload the index. For immediate reset, run the manual workflow with `deploy=true`.
+| Script | What it does |
+| --- | --- |
+| `npm run dev` / `npm run preview` | Local Worker (remote R2/AI bindings) / fully remote |
+| `npm run deploy` | Deploy to Cloudflare Workers |
+| `npm test` / `npm run typecheck` | Node test suite / TypeScript check |
+| `npm run build:index` | Build the Fuse index from D1 and upload to R2 |
+| `npm run vectorize:create` / `vectorize:sync` | Create / backfill the Vectorize index |
+| `npm run eval:cag` / `eval:cag:depth` | Model / retrieval-depth eval harnesses |
+| `npm run r2:lifecycle` | Apply the 7-day lifecycle to the answer-cache buckets |
+| `npm run abuse:db:create` / `abuse:db:init` | Create / initialise the `askit-abuse-log` D1 database (`:local` for dev) |
+| `npm run abuse:report` | Analyse the abuse log into `build/abuse-report.html` (`LOCAL=1` for local D1) |
+| `npm run abuse:unban -- <key>` | Remove a key from the blacklist (also clears its old log entries) |
+| `npm run tail` | Live-tail Worker logs |
 
-### License
+## Project structure
 
-Released under the [MIT License](LICENSE) — free to use for personal or commercial projects.
+```
+.
+├── src/
+│   ├── index.ts                   # Hono app: routes, webhook, rate limiting
+│   ├── pages/                     # Server-rendered pages (home/privacy/terms, zh + en)
+│   └── utils/
+│       ├── cag.ts                 # CAG retrieval + generation + citations
+│       ├── vectorize.ts           # Embeddings + Vectorize query
+│       ├── cagCache.ts            # KV source cache (1 h)
+│       ├── cache.ts               # R2 answer cache (7 days)
+│       ├── cagEval.ts             # Eval scoring (incl. pinned model id)
+│       ├── abuse.ts               # D1 abuse log + auto-blacklist (issue #27)
+│       ├── notFoundReply.ts       # Out-of-scope replies (plain + HTML, zh + en)
+│       ├── search.ts              # R2 Fuse index loader + fuzzy search
+│       └── askIndexFormat.ts      # Shared index types/options
+├── public/                        # Static assets + Vue front-end (app.js)
+├── db/                            # D1 schema for the abuse log + blacklist
+├── scripts/                       # build-ask-index / vectorize-sync / evals / abuse ops
+├── test/                          # node --test suites
+├── design/                        # Architecture notes + system diagram
+├── config/                        # R2 lifecycle rules
+└── wrangler.jsonc                 # Workers config (R2, KV, Vectorize, AI, DO)
+```
+
+## Related projects
+
+- [sayit-hono](https://github.com/bestian/sayit-hono) — the archive.tw backend this bot retrieves from
+- [transcript](https://github.com/audreyt/transcript) — the source transcripts
+
+## Contributing & security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
+
+## License
+
+[MIT](LICENSE) © bestian

@@ -52,6 +52,7 @@ import {
   extractEmbeddings,
   type VectorizeSectionMetadata,
 } from '../src/utils/vectorize'
+import { buildWranglerEnv } from './wranglerEnv'
 
 function loadDevVarsFallback(): void {
   let raw = ''
@@ -165,21 +166,6 @@ const METADATA_CONTENT_MAX_CHARS = 2_500
 function truncateChars(s: string, max: number): string {
   const chars = Array.from(s)
   return chars.length <= max ? s : chars.slice(0, max).join('')
-}
-
-// wrangler 子行程：本機預設走 OAuth（.dev.vars 常只有 Workers AI 權限的 token，
-// 若傳給 wrangler 會蓋過 OAuth 並令 d1 / vectorize 失敗）。CI 無 OAuth session，
-// 需保留 CLOUDFLARE_API_TOKEN；亦可設 WRANGLER_USE_API_TOKEN=1 強制走 token。
-function buildWranglerEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env }
-  const useApiToken =
-    process.env.WRANGLER_USE_API_TOKEN === '1' ||
-    process.env.GITHUB_ACTIONS === 'true' ||
-    process.env.CI === 'true'
-  if (!useApiToken) {
-    delete env.CLOUDFLARE_API_TOKEN
-  }
-  return env
 }
 
 const WRANGLER_ENV = buildWranglerEnv()

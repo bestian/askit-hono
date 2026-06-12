@@ -11,4 +11,6 @@ test('app.js zh-Hant and en string tables stay in parity', async () => {
   assert.deepEqual(Object.keys(zh).sort(), Object.keys(en).sort())
   assert.equal((zh.samples as string[]).length, (en.samples as string[]).length)
   assert.match(String(en.submit), /^Ask$/)
+  assert.equal(String(en.heading), 'Ask Audrey Anything')
+  assert.equal(String(zh.heading), '鳳問')
 })

@@ -18,12 +18,12 @@ const HOME_STRINGS = {
     langSwitchTarget: 'en',
   },
   en: {
-    title: '鳳問 Ask Audrey — Audrey Tang’s thinking, with sources',
+    title: 'Ask Audrey Anything — cited answers from Audrey Tang’s 30-year archive',
     description:
       'Ask a question and AI answers from Audrey Tang’s public transcript archive — every answer cited back to its original source.',
     ogDescription:
       'Ask a question and AI answers from Audrey Tang’s public transcript archive — every answer cited back to its original source.',
-    ogSiteName: '鳳問 Ask Audrey',
+    ogSiteName: 'Ask Audrey Anything',
     ogLocale: 'en_US',
     canonicalPath: '/en',
     privacyHref: '/en/privacy',
@@ -114,6 +114,10 @@ export function renderHomePage(lang: PageLang = 'zh-Hant'): string {
       font-size: clamp(2.5rem, 11vw, 5.5rem);
       line-height: 1;
       letter-spacing: 0;
+    }
+    :lang(en) h1 {
+      font-size: clamp(1.9rem, 6.5vw, 3.4rem);
+      letter-spacing: 0.01em;
     }
     .tagline {
       margin: 16px 0 0;

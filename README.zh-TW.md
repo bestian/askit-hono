@@ -1,4 +1,4 @@
-# 鳳問 Ask Audrey
+# 鳳問 · Ask Audrey Anything
 
 [![CI](https://github.com/bestian/askit-hono/actions/workflows/ci.yml/badge.svg)](https://github.com/bestian/askit-hono/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -12,7 +12,7 @@
 
 | English (`/en`) | 華語 (`/`) |
 | --- | --- |
-| ![Ask Audrey English UI](docs/img/home-en.png) | ![鳳問華語介面](docs/img/home-zh.png) |
+| ![Ask Audrey Anything English UI](docs/img/home-en.png) | ![鳳問華語介面](docs/img/home-zh.png) |
 
 ## 運作方式
 
@@ -45,7 +45,7 @@
 | 路由 | 用途 |
 | --- | --- |
 | `GET /` | 鳳問網頁版（華語）；曾選擇 English 的訪客再次造訪時，會由前端自動導向 `/en` |
-| `GET /en` | Ask Audrey 網頁版（英文）；曾選擇華語的訪客會由前端自動導回 `/` |
+| `GET /en` | Ask Audrey Anything 網頁版（英文）；曾選擇華語的訪客會由前端自動導回 `/` |
 | `GET /privacy` · `GET /terms` | 法律頁面，華語優先（英文優先版為 `/en/privacy` · `/en/terms`） |
 | `GET /cag/status` | 顯示目前的 retriever、archive base URL、模型與 top-k 上限 |
 | `GET /cag/:question` | 串流 Markdown 回答，附 footnote 引註 |

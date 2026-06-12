@@ -3,12 +3,18 @@ import test from 'node:test'
 
 import app from '../src/index'
 
+// Both home pages share one template, so the EN brand sizing rule must be in each.
+const EN_H1_RULE =
+  /:lang\(en\) h1 \{\s*font-size: clamp\(1\.9rem, 6\.5vw, 3\.4rem\);\s*letter-spacing: 0\.01em;\s*\}/
+
 test('GET /en serves the English home page', async () => {
   const response = await app.request('/en')
   assert.equal(response.status, 200)
   const html = await response.text()
   assert.match(html, /<html lang="en">/)
-  assert.match(html, /Ask Audrey/)
+  assert.match(html, /Ask Audrey Anything/)
+  assert.match(html, /property="og:site_name" content="Ask Audrey Anything"/)
+  assert.match(html, EN_H1_RULE)
   assert.match(html, /property="og:locale" content="en_US"/)
   assert.match(html, /rel="canonical" href="https:\/\/ask\.archive\.tw\/en"/)
   assert.match(html, /hreflang="zh-Hant" href="https:\/\/ask\.archive\.tw\/"/)
@@ -32,6 +38,7 @@ test('GET / stays zh-Hant and gains only the toggle and hreflang links', async (
     /property="og:description" content="提出問題，AI 會檢索唐鳳的逐字稿並附上出處作答，帶你認識唐鳳的思想。"/,
   )
   assert.match(html, /hreflang="en" href="https:\/\/ask\.archive\.tw\/en"/)
+  assert.match(html, EN_H1_RULE)
   assert.match(html, /href="\/en">English<\/a>/)
   assert.match(html, /href="\/privacy">隱私權政策<\/a>/)
   assert.match(html, /<script src="\/app\.js" defer><\/script>/)

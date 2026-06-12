@@ -35,8 +35,8 @@
       ],
     },
     en: {
-      logoAlt: 'Ask Audrey logo',
-      heading: '鳳問',
+      logoAlt: 'Ask Audrey Anything logo',
+      heading: 'Ask Audrey Anything',
       tagline: 'Get to know Audrey Tang’s thinking, one question at a time',
       consentPrefix: 'I have read and agree to the ',
       consentJoin: ' and the ',
@@ -214,7 +214,7 @@
         raw.value = ''
 
         try {
-          const res = await fetch('/cag/' + encodeURIComponent(query))
+          const res = await fetch('/cag/' + encodeURIComponent(query) + (LANG === 'en' ? '?lang=en' : ''))
           if (!res.ok) {
             error.value = (await res.text()) || T.fetchError
             return

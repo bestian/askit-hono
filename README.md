@@ -23,8 +23,10 @@ Also available as a LINE bot.
 - **Retrieval** — questions are embedded with `@cf/google/embeddinggemma-300m`
   (768-dim) and matched against the Vectorize index `askit-audrey-tang`
   (cosine); hits are hydrated through the archive.tw section API for
-  surrounding context. If Vectorize is unavailable or empty, retrieval falls
-  back to archive.tw full-text search.
+  surrounding context. If the Vectorize binding is missing, retrieval falls
+  back to archive.tw full-text search; an empty Vectorize result falls back
+  only for Latin-script questions (the index covers the 華語 transcripts),
+  while 華語 questions get an honest "outside the archive" reply.
 - **Generation** — Cloudflare Workers AI runs `@cf/google/gemma-4-26b-a4b-it`
   (pinned in `src/utils/cagEval.ts`); `[1]`-style markers are rewritten to
   `[^1]` footnotes linking to `archive.tw/<speech>#s<section_id>`.

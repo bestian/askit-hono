@@ -20,8 +20,9 @@
 
 - **檢索** — 問題先以 `@cf/google/embeddinggemma-300m`（768 維）轉成向量，到
   Vectorize 索引 `askit-audrey-tang`（cosine）找最相近的段落，再透過
-  archive.tw 的 section API 取回前後文。Vectorize 無法使用或查無結果時，
-  自動回退 archive.tw 全文搜尋。
+  archive.tw 的 section API 取回前後文。Vectorize 未綁定時自動回退
+  archive.tw 全文搜尋；已綁定但查無結果時，僅拉丁文字（如英文）問題會回退
+  全文搜尋——華語問題則誠實回覆「超出資料庫範圍」。
 - **生成** — 由 Cloudflare Workers AI 執行 `@cf/google/gemma-4-26b-a4b-it`
   （寫死在 `src/utils/cagEval.ts`，沒有環境變數可切換）；模型輸出的 `[1]`
   之類標記會改寫成 `[^1]` footnote，連到對應的

@@ -146,3 +146,61 @@ test('GET /cag/:question localises the rate-limit message via ?lang=en', async (
   assert.equal(zh.status, 429)
   assert.equal(await zh.text(), WEB_MESSAGES['zh-Hant'].rateLimited)
 })
+
+test('GET /cag falls back to archive retrieval for Han-free questions when Vectorize is empty', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input: RequestInfo | URL) => {
+    const url = String(input instanceof Request ? input.url : input)
+    if (url.includes('/api/search.json')) {
+      return Response.json({
+        results: [{
+          title: '2024-01-01 Plurality talk',
+          url: '/2024-01-01-plurality-talk#s123',
+          date: '2024-01-01',
+          speaker: 'Audrey Tang',
+          snippet: 'Plurality is collaborative diversity',
+        }],
+      })
+    }
+    if (url.includes('/api/section/123')) {
+      return Response.json({
+        section_id: 123,
+        section_content: 'Plurality means collaborative diversity across social differences.',
+        display_name: '2024-01-01 Plurality talk',
+        name: 'Audrey Tang',
+      })
+    }
+    return new Response('not found', { status: 404 })
+  }
+  const waitUntilPromises: Promise<unknown>[] = []
+  try {
+    const response = await app.request(
+      '/cag/What%20is%20Plurality%3F?lang=en',
+      undefined,
+      {
+        AI: {
+          run: async (_model: string, input: Record<string, unknown>) => {
+            if ('text' in input) return { data: [[0.1, 0.2, 0.3]] }
+            return 'Plurality is collaborative diversity. [1]'
+          },
+        },
+        VECTORIZE: { query: async () => ({ matches: [] }) },
+        CAG_RETRIEVER: 'vectorize',
+      },
+      {
+        waitUntil: (promise: Promise<unknown>) => {
+          waitUntilPromises.push(promise)
+        },
+        passThroughOnException: () => {},
+        props: {},
+      },
+    )
+    assert.equal(response.status, 200)
+    const text = await response.text()
+    assert.match(text, /Plurality is collaborative diversity/)
+    assert.match(text, /\[\^1\]/)
+    await Promise.all(waitUntilPromises)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})

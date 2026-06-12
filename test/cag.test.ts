@@ -1,7 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
 import test from 'node:test'
-import { runInNewContext } from 'node:vm'
 
 import Fuse from 'fuse.js'
 import app, { ipRateLimitKeyFromIp } from '../src/index'
@@ -24,45 +22,9 @@ import {
 } from '../src/utils/cag'
 import { findClosestMatchingSection } from '../src/utils/search'
 import type { VectorizeBinding } from '../src/utils/vectorize'
+import { loadAppTestHooks } from './helpers/loadApp'
 
 type AskIndexBucket = Parameters<typeof findClosestMatchingSection>[0]
-
-type AppTestHooks = {
-  parseAnswer: (raw: string) => {
-    html: string
-    sources: { index: number; label: string; href: string }[]
-  }
-  isSafeHttpUrl: (value: string) => boolean
-}
-
-async function loadAppTestHooks(): Promise<AppTestHooks> {
-  const appJs = await readFile(new URL('../public/app.js', import.meta.url), 'utf8')
-  const context = {
-    URL,
-    NodeFilter: { SHOW_ELEMENT: 1 },
-    DOMParser: class {
-      parseFromString(html: string) {
-        return {
-          body: {
-            innerHTML: html,
-            querySelectorAll: () => [],
-          },
-          createTreeWalker: () => ({ nextNode: () => null }),
-        }
-      }
-    },
-    Vue: {
-      createApp: () => ({ mount: () => {} }),
-      ref: (value: unknown) => ({ value }),
-      computed: (fn: () => unknown) => ({ get value() { return fn() } }),
-      h: () => ({}),
-    },
-    __ASKIT_ENABLE_TEST_HOOKS__: true,
-  }
-
-  runInNewContext(appJs, context)
-  return (context as typeof context & { __ASKIT_TESTS__: AppTestHooks }).__ASKIT_TESTS__
-}
 
 function sameRealmJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T

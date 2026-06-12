@@ -46,8 +46,8 @@ Also available as a LINE bot.
 
 | Route | Purpose |
 | --- | --- |
-| `GET /` | 鳳問 web app (華語) |
-| `GET /en` | Ask Audrey web app (English) |
+| `GET /` | 鳳問 web app (華語); returning visitors who saved an English preference are redirected client-side to `/en` |
+| `GET /en` | Ask Audrey web app (English); a saved 華語 preference redirects back to `/` (client-side) |
 | `GET /privacy` · `GET /terms` | Legal pages, 華語-first (`/en/privacy` · `/en/terms` are English-first twins) |
 | `GET /cag/status` | Current retriever, archive base URL, model and top-k caps |
 | `GET /cag/:question` | Streaming Markdown answer with footnote citations |

@@ -23,7 +23,9 @@
     "abuse:db:init": "wrangler d1 execute askit-abuse-log --remote --file db/abuse-log-schema.sql --yes",
     "abuse:db:init:local": "wrangler d1 execute askit-abuse-log --local --file db/abuse-log-schema.sql --yes",
     "abuse:report": "tsx --tsconfig scripts/tsconfig.json scripts/abuse-report.ts",
-    "abuse:unban": "tsx --tsconfig scripts/tsconfig.json scripts/abuse-unban.ts"
+    "abuse:unban": "tsx --tsconfig scripts/tsconfig.json scripts/abuse-unban.ts",
+    "eval:cag": "tsx --tsconfig scripts/tsconfig.json scripts/eval-cag-models.ts",
+    "eval:cag:depth": "tsx --tsconfig scripts/tsconfig.json scripts/eval-cag-depth.ts"
   },
   "dependencies": {
     "fuse.js": "^7.3.0",

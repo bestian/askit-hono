@@ -1,6 +1,17 @@
 import {
+  CAG_MODEL_GEMMA,
+  CAG_TYPICAL_INPUT_TOKENS,
+  CAG_TYPICAL_OUTPUT_TOKENS,
+  estimateCagRequestCostUsd,
+} from './cagEval'
+import {
   htmlToPlainText,
 } from './search'
+import {
+  buildCagSourceCacheKey,
+  getCachedCagSources,
+  putCachedCagSources,
+} from './cagCache'
 import {
   DEFAULT_VECTORIZE_MIN_COSINE_SCORE,
   retrieveCagSourcesFromVectorize,
@@ -20,7 +31,6 @@ type ChatMessage = {
 export type CagRetriever = 'archive' | 'vectorize'
 
 export type CagOptions = {
-  model?: string
   topK?: number
   /**
    * 可被引用／顯示的來源數（預設等於 topK）。
@@ -37,15 +47,21 @@ export type CagOptions = {
   vectorize?: VectorizeBinding
   /** Vectorize cosine score 最低納入門檻，預設 0.8。 */
   vectorizeMinScore?: number
+  /** KV 來源快取；未綁時優雅降級。 */
+  cagCache?: KVNamespace
+  /** 略過 KV 來源快取（例如 `?refresh=1`）。 */
+  skipSourceCache?: boolean
 }
 
-export const DEFAULT_CAG_MODEL = '@cf/moonshotai/kimi-k2.6'
+export { CAG_MODEL_GEMMA } from './cagEval'
+export const DEFAULT_CAG_MODEL = CAG_MODEL_GEMMA
 export const DEFAULT_ARCHIVE_BASE_URL = 'https://archive.tw'
-const DEFAULT_TOP_K = 6
+export const DEFAULT_TOP_K = 4
 const MAX_TOP_K = 8
-const DEFAULT_MAX_COMPLETION_TOKENS = 900
-const MAX_CONTEXT_SECTION_CHARS = 2_200
+export const DEFAULT_MAX_COMPLETION_TOKENS = 500
+export const MAX_CONTEXT_SECTION_CHARS = 1_200
 const MAX_SEARCH_VARIANTS = 6
+export const MIN_ARCHIVE_HITS_BEFORE_FALLBACK = 3
 
 type ArchiveSearchResult = {
   title?: string
@@ -91,10 +107,16 @@ export type CagStatus = {
   vectorizeMinScore: number
   maxTopK: number
   maxContextSectionChars: number
+  /** runtime 是否綁了 CAG_CACHE KV（來源快取）。 */
+  sourceCacheBound: boolean
+  estimatedCostPerRequestUsd: number | null
+  typicalTokenProfile: {
+    inputTokens: number
+    outputTokens: number
+  }
 }
 
 export type NormalizedCagOptions = {
-  model: string
   topK: number
   citableTopK: number
   maxCompletionTokens: number
@@ -116,7 +138,6 @@ export function normalizeCagOptions(options?: CagOptions): NormalizedCagOptions 
     ? topK
     : clampInteger(options.citableTopK, 1, topK)
   return {
-    model: options?.model || DEFAULT_CAG_MODEL,
     topK,
     citableTopK,
     maxCompletionTokens: clampInteger(
@@ -157,7 +178,7 @@ function sourceBlock(
   ].join('\n')
 }
 
-function buildCagMessages(
+export function buildCagMessages(
   question: string,
   sources: CagSource[],
   background: CagSource[] = [],
@@ -271,6 +292,33 @@ export function buildCagQueryVariants(question: string): string[] {
   return variants.slice(0, MAX_SEARCH_VARIANTS)
 }
 
+/** Primary + one fallback query for archive.tw search (replaces 6-way fan-out). */
+export function buildCagRetrievalQueries(question: string): {
+  primary: string
+  fallback: string
+} {
+  const variants = buildCagQueryVariants(question)
+  const primary = variants[0] || stripQuestionDirectives(question)
+  const fallback = variants[1] || primary
+  return { primary, fallback }
+}
+
+function mergeArchiveHits(
+  baseUrl: string,
+  existing: ArchiveSearchResult[],
+  seen: Set<string>,
+  incoming: ArchiveSearchResult[],
+): ArchiveSearchResult[] {
+  const hits = [...existing]
+  for (const result of incoming) {
+    const href = absoluteArchiveHref(baseUrl, result.url)
+    if (!href || seen.has(href)) continue
+    seen.add(href)
+    hits.push(result)
+  }
+  return hits
+}
+
 export function parseArchiveSectionId(href: string): number | null {
   const match = href.match(/#s(\d+)\b/)
   if (!match) return null
@@ -316,6 +364,51 @@ async function searchArchive(
   return Array.isArray(payload?.results) ? payload.results : []
 }
 
+function buildHydratedSectionContent(
+  section: ArchiveSectionResponse | null,
+  fallbackContent: string,
+): string {
+  const parts = [
+    section?.previous_content,
+    section?.section_content,
+    section?.next_content,
+  ]
+    .map((value) => htmlToPlainText(value ?? ''))
+    .filter(Boolean)
+  return parts.length > 0 ? parts.join('\n\n') : fallbackContent
+}
+
+/** Hydrate a ranked Vectorize hit with archive.tw prev/current/next section text. */
+export async function hydrateCagSourceFromArchive(
+  baseUrl: string,
+  source: CagSource,
+): Promise<CagSource | null> {
+  if (source.sectionId === null) return source
+
+  const normalizedBase = normalizeArchiveBaseUrl(baseUrl)
+  const url = new URL(`/api/section/${source.sectionId}`, normalizedBase)
+  const section = await fetchArchiveJson<ArchiveSectionResponse>(url)
+  const fallbackContent = htmlToPlainText(source.content)
+  const content = buildHydratedSectionContent(section, fallbackContent)
+  if (content.trim() === '') return null
+
+  const [labelTitle, labelSpeaker] = source.label.split(' — ')
+  const displayName = section?.display_name?.trim() || labelTitle?.trim() || source.href
+  const speaker = section?.name?.trim() || labelSpeaker?.trim()
+  const label = speaker ? `${displayName} — ${speaker}` : source.label
+  return { content, href: source.href, label, sectionId: source.sectionId }
+}
+
+export async function hydrateCagSourcesFromArchive(
+  baseUrl: string,
+  sources: CagSource[],
+): Promise<CagSource[]> {
+  const hydrated = await Promise.all(
+    sources.map((source) => hydrateCagSourceFromArchive(baseUrl, source)),
+  )
+  return hydrated.filter((source): source is CagSource => source !== null)
+}
+
 async function hydrateArchiveSection(
   baseUrl: string,
   hit: ArchiveSearchResult,
@@ -333,14 +426,7 @@ async function hydrateArchiveSection(
 
   const url = new URL(`/api/section/${sectionId}`, baseUrl)
   const section = await fetchArchiveJson<ArchiveSectionResponse>(url)
-  const parts = [
-    section?.previous_content,
-    section?.section_content,
-    section?.next_content,
-  ]
-    .map((value) => htmlToPlainText(value ?? ''))
-    .filter(Boolean)
-  const content = parts.length > 0 ? parts.join('\n\n') : (hit.snippet ?? '')
+  const content = buildHydratedSectionContent(section, hit.snippet ?? '')
   if (content.trim() === '') return null
 
   const displayName = section?.display_name?.trim() || hit.title?.trim() || href
@@ -355,23 +441,31 @@ export async function retrieveCagSources(
 ): Promise<CagSource[]> {
   const topK = clampInteger(options?.topK ?? DEFAULT_TOP_K, 1, MAX_TOP_K)
   const baseUrl = normalizeArchiveBaseUrl(options?.archiveBaseUrl)
-  const variants = buildCagQueryVariants(question)
+  const { primary, fallback } = buildCagRetrievalQueries(question)
   const perQueryLimit = Math.max(topK * 2, 8)
-
-  const searchResults = await Promise.all(
-    variants.map((variant) => searchArchive(baseUrl, variant, perQueryLimit)),
-  )
   const seen = new Set<string>()
-  const hits: ArchiveSearchResult[] = []
-  for (const result of searchResults.flat()) {
-    const href = absoluteArchiveHref(baseUrl, result.url)
-    if (!href || seen.has(href)) continue
-    seen.add(href)
-    hits.push(result)
+
+  let hits = mergeArchiveHits(
+    baseUrl,
+    [],
+    seen,
+    await searchArchive(baseUrl, primary, perQueryLimit),
+  )
+  if (
+    hits.length < MIN_ARCHIVE_HITS_BEFORE_FALLBACK
+    && fallback
+    && fallback !== primary
+  ) {
+    hits = mergeArchiveHits(
+      baseUrl,
+      hits,
+      seen,
+      await searchArchive(baseUrl, fallback, perQueryLimit),
+    )
   }
 
   const hydrated = await Promise.all(
-    hits.slice(0, Math.max(topK * 3, 12)).map((hit) => hydrateArchiveSection(baseUrl, hit)),
+    hits.slice(0, topK * 2).map((hit) => hydrateArchiveSection(baseUrl, hit)),
   )
   return hydrated.filter((source): source is CagSource => source !== null).slice(0, topK)
 }
@@ -390,37 +484,74 @@ async function resolveCagSources(
     retriever?: CagRetriever
     vectorize?: VectorizeBinding
     vectorizeMinScore?: number
+    cagCache?: KVNamespace
+    skipSourceCache?: boolean
   },
 ): Promise<CagSource[]> {
-  if (options.retriever === 'vectorize' && options.vectorize) {
-    return retrieveCagSourcesFromVectorize(
+  const retriever = options.retriever ?? 'archive'
+  const hydrateVectorize = retriever === 'vectorize' && Boolean(options.vectorize)
+  const cacheKey = options.skipSourceCache
+    ? null
+    : await buildCagSourceCacheKey({
+      question,
+      topK: options.topK,
+      retriever,
+      archiveBaseUrl: options.archiveBaseUrl,
+      vectorizeMinScore: options.vectorizeMinScore,
+      sourceHydrate: hydrateVectorize ? true : undefined,
+    })
+
+  if (cacheKey) {
+    const cached = await getCachedCagSources(options.cagCache, cacheKey)
+    if (cached) return cached
+  }
+
+  let sources: CagSource[]
+  if (retriever === 'vectorize' && options.vectorize) {
+    const baseUrl = normalizeArchiveBaseUrl(options.archiveBaseUrl)
+    const thin = await retrieveCagSourcesFromVectorize(
       ai,
       options.vectorize,
       question,
       { topK: options.topK, minScore: options.vectorizeMinScore },
     )
+    sources = thin.length > 0
+      ? await hydrateCagSourcesFromArchive(baseUrl, thin)
+      : []
+  } else {
+    sources = await retrieveCagSources(question, {
+      topK: options.topK,
+      archiveBaseUrl: options.archiveBaseUrl,
+    })
   }
-  return retrieveCagSources(question, {
-    topK: options.topK,
-    archiveBaseUrl: options.archiveBaseUrl,
-  })
+
+  if (cacheKey && sources.length > 0) {
+    await putCachedCagSources(options.cagCache, cacheKey, sources)
+  }
+  return sources
 }
 
 export function getCagStatus(options?: {
   archiveBaseUrl?: string
-  model?: string
   retriever?: CagRetriever
   vectorizeBound?: boolean
+  sourceCacheBound?: boolean
   vectorizeMinScore?: number
 }): CagStatus {
   return {
     retriever: options?.retriever ?? 'archive',
     vectorizeBound: options?.vectorizeBound ?? false,
+    sourceCacheBound: options?.sourceCacheBound ?? false,
     archiveBaseUrl: normalizeArchiveBaseUrl(options?.archiveBaseUrl),
-    model: options?.model || DEFAULT_CAG_MODEL,
+    model: DEFAULT_CAG_MODEL,
     vectorizeMinScore: options?.vectorizeMinScore ?? DEFAULT_VECTORIZE_MIN_COSINE_SCORE,
     maxTopK: MAX_TOP_K,
     maxContextSectionChars: MAX_CONTEXT_SECTION_CHARS,
+    estimatedCostPerRequestUsd: estimateCagRequestCostUsd(DEFAULT_CAG_MODEL),
+    typicalTokenProfile: {
+      inputTokens: CAG_TYPICAL_INPUT_TOKENS,
+      outputTokens: CAG_TYPICAL_OUTPUT_TOKENS,
+    },
   }
 }
 
@@ -497,10 +628,21 @@ function extractAiText(result: unknown): string | null {
     const delta = choice.delta as Record<string, unknown> | undefined
     if (delta && typeof delta.content === 'string') return delta.content
     const message = choice.message as Record<string, unknown> | undefined
-    if (message && typeof message.content === 'string') return message.content
+    if (message) {
+      if (typeof message.content === 'string') return message.content
+      if (typeof message.reasoning === 'string') return message.reasoning
+    }
   }
 
   return null
+}
+
+export function extractAiResponseText(result: unknown): string {
+  const extracted = extractAiText(result)
+  if (extracted !== null) return extracted
+  if (typeof result === 'string') return result
+  if (!result || typeof result !== 'object') return String(result ?? '')
+  return JSON.stringify(result)
 }
 
 async function aiResultToText(result: unknown): Promise<string> {
@@ -593,8 +735,17 @@ export function markdownCitationFootnotes(footnotes: string[]): TransformStream<
           continue
         }
 
+        if (/\s/.test(char) && digits === '') {
+          continue
+        }
         if (/\d/.test(char) && digits.length < 9) {
           digits += char
+          continue
+        }
+        if (char === ',' && digits !== '') {
+          emitCitation(controller, digits)
+          controller.enqueue(', ')
+          digits = ''
           continue
         }
         if (char === ']' && digits !== '') {
@@ -623,14 +774,12 @@ export function markdownCitationFootnotes(footnotes: string[]): TransformStream<
   })
 }
 
-async function runCagCompletion(
-  ai: WorkersAiBinding,
-  model: string,
+function buildCagAiRunInput(
   messages: ChatMessage[],
   maxCompletionTokens: number | undefined,
   stream: boolean,
-): Promise<unknown> {
-  return ai.run(model, {
+): Record<string, unknown> {
+  return {
     messages,
     stream,
     max_completion_tokens: clampInteger(
@@ -639,8 +788,37 @@ async function runCagCompletion(
       4_096,
     ),
     temperature: 0.2,
-    chat_template_kwargs: { thinking: false },
-  })
+    reasoning_effort: 'none',
+    chat_template_kwargs: { thinking: false, enable_thinking: false },
+  }
+}
+
+async function runCagCompletion(
+  ai: WorkersAiBinding,
+  messages: ChatMessage[],
+  maxCompletionTokens: number | undefined,
+  stream: boolean,
+): Promise<unknown> {
+  return ai.run(
+    DEFAULT_CAG_MODEL,
+    buildCagAiRunInput(messages, maxCompletionTokens, stream),
+  )
+}
+
+export async function completeCagAnswer(
+  ai: WorkersAiBinding,
+  messages: ChatMessage[],
+  options?: {
+    maxCompletionTokens?: number
+  },
+): Promise<string> {
+  const result = await runCagCompletion(
+    ai,
+    messages,
+    options?.maxCompletionTokens,
+    false,
+  )
+  return extractAiResponseText(result).trim()
 }
 
 /**
@@ -668,6 +846,8 @@ export async function generateCagAnswer(
     retriever: normalized.retriever,
     vectorize: normalized.vectorize,
     vectorizeMinScore: normalized.vectorizeMinScore,
+    cagCache: options?.cagCache,
+    skipSourceCache: options?.skipSourceCache,
   })
   if (sources.length === 0) return null
 
@@ -680,7 +860,6 @@ export async function generateCagAnswer(
   )
   const result = await runCagCompletion(
     ai,
-    normalized.model,
     messages,
     normalized.maxCompletionTokens,
     false,
@@ -702,6 +881,8 @@ export async function streamCagAnswer(
     retriever: normalized.retriever,
     vectorize: normalized.vectorize,
     vectorizeMinScore: normalized.vectorizeMinScore,
+    cagCache: options?.cagCache,
+    skipSourceCache: options?.skipSourceCache,
   })
   if (sources.length === 0) {
     return new Response('您的問題超出了資料庫的範圍，逐字稿網站連結如下：https://archive.tw', {
@@ -719,7 +900,6 @@ export async function streamCagAnswer(
   )
   const stream = await runCagCompletion(
     ai,
-    normalized.model,
     messages,
     normalized.maxCompletionTokens,
     true,

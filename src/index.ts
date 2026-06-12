@@ -18,6 +18,8 @@ import {
   type CagRetriever,
   type CagSource,
   DEFAULT_CAG_MODEL,
+  DEFAULT_MAX_COMPLETION_TOKENS,
+  DEFAULT_TOP_K,
   generateCagAnswer,
   getCagStatus,
   normalizeCagOptions,
@@ -53,7 +55,6 @@ type RateLimiter = {
 type Bindings = {
   LINE_CHANNEL_ACCESS_TOKEN: string
   LINE_CHANNEL_SECRET: string
-  ASK_MODEL?: string
   ASK_ARCHIVE_BASE_URL?: string
   // CAG 檢索器預設值：'vectorize'（語意）或 'archive'（archive.tw 即時搜尋）。
   // 未設定時預設 'vectorize'；無 VECTORIZE binding 時自動回退 archive。
@@ -64,6 +65,8 @@ type Bindings = {
   ASK_INDEX: R2Bucket
   // 答案快取 bucket（issue #25）：相同問題 7 天內直接取用，未綁時優雅降級。
   ASK_CACHE?: R2Bucket
+  // CAG 檢索來源 KV 快取（1h TTL）；未綁時優雅降級。
+  CAG_CACHE?: KVNamespace
   AI: {
     run: (model: string, input: Record<string, unknown>) => Promise<unknown>
   }
@@ -119,7 +122,7 @@ const LINE_REPLY_ENDPOINT = 'https://api.line.me/v2/bot/message/reply'
 const LINE_LOADING_ENDPOINT = 'https://api.line.me/v2/bot/chat/loading/start'
 const REPLY_TOKEN_TTL_MS = 50_000
 // CAG 在 webhook 走非同步回覆（ctx.waitUntil），慢工作須在回 200 之後約 30 秒內完成。
-// 檢索 top-k=6 餵給模型當「背景脈絡」以提升答案品質，但只引用／顯示前 6 筆最相符來源
+// 檢索 top-k=4 餵給模型；只引用／顯示前 4 筆最相符來源
 // （對齊 formatCagAnswerFlex 的 4 格出處、引註 [1][2][3][4][5][6] 一一對應）。
 // 預設檢索器為 Vectorize，來源是 ≤100 字短段落，6 筆 prompt 仍小、延遲可控。
 // max_tokens=240 控制回答長度、避免被截斷。
@@ -134,17 +137,19 @@ const WEBHOOK_CAG_ANSWER_INSTRUCTION =
   '於陳述具體事實時標註 [1]、[2] 等來源編號。'
 const NOT_FOUND_REPLY = '您的問題超出了資料庫的範圍，\n逐字稿網站連結如下：https://archive.tw'
 const ERROR_REPLY = '查詢發生錯誤，請稍後再試'
-// 限流冷卻視窗：同一使用者於此毫秒數內最多 1 次（對齊首頁送出鈕的 10 秒冷卻）。
-const RATE_LIMIT_WINDOW_MS = 10_000
+// 限流冷卻視窗：同一使用者於此毫秒數內最多 1 次（對齊首頁送出鈕冷卻）。
+const RATE_LIMIT_WINDOW_MS = 3_000
 const NOT_FOUND_REPLY_MIN_DELAY_MS = RATE_LIMIT_WINDOW_MS
-const GLOBAL_GENERATION_LIMIT_PER_MINUTE = 15
-const GLOBAL_GENERATION_LIMIT_PER_DAY = 300
+const RATE_LIMIT_RETRY_AFTER_SECONDS = Math.ceil(RATE_LIMIT_WINDOW_MS / 1000)
+const GLOBAL_GENERATION_LIMIT_PER_MINUTE = 30
+const GLOBAL_GENERATION_LIMIT_PER_DAY = 1_000
 const MAX_QUESTION_CHARS = 100
 const MAX_API_BODY_BYTES = 32 * 1024
 const MIN_CACHEABLE_CAG_ANSWER_CHARS = 12
-// 限流（同一使用者 10 秒內最多 1 次）觸發時的回覆訊息。
-const RATE_LIMIT_HTTP_MESSAGE = '您的發問過於頻繁，請稍候約 10 秒再試，謝謝 🙏'
-const RATE_LIMIT_LINE_REPLY = '您的發問過於頻繁，請稍候約 10 秒再試，謝謝 🙏'
+// 限流（同一使用者冷卻視窗內第 2 次請求）觸發時的回覆訊息。
+const RATE_LIMIT_HTTP_MESSAGE =
+  `您的發問過於頻繁，請稍候約 ${RATE_LIMIT_RETRY_AFTER_SECONDS} 秒再試，謝謝 🙏`
+const RATE_LIMIT_LINE_REPLY = RATE_LIMIT_HTTP_MESSAGE
 const GLOBAL_BUDGET_HTTP_MESSAGE = '目前服務量已達上限，請稍後再試，謝謝'
 const GLOBAL_BUDGET_LINE_REPLY = '目前服務量已達上限，請稍後再試，謝謝'
 const QUESTION_TOO_LONG_MESSAGE = '您的問題字數過長，請縮短問題的長度，謝謝!'
@@ -320,29 +325,28 @@ function respondFromCache(body: string, contentType: string): Response {
 
 // CAG 成功文字才快取；查無結果或模型答不出時，補足限流冷卻時間再回覆，
 // 避免使用者在看到失敗訊息後立刻重試而誤觸同一個 10 秒限流視窗。
-async function cacheCagResponse(
+function cacheCagResponse(
   c: Context<{ Bindings: Bindings }>,
-  cacheKey: string,
+  cacheKey: string | null,
   response: Response,
-  startedAt: number,
-): Promise<Response> {
-  if (response.status !== 200 || !response.body) {
-    if (response.status === 404) await delayUntilMinimumElapsed(startedAt)
-    return response
-  }
-
-  const contentType =
-    response.headers.get('Content-Type') || 'text/markdown; charset=UTF-8'
-  const text = await readStreamToString(response.body)
-  if (isCacheableCagAnswerText(text)) {
+): Response {
+  if (response.status !== 200 || !response.body) return response
+  const [toClient, toCache] = response.body.tee()
+  if (cacheKey) {
+    const contentType =
+      response.headers.get('Content-Type') || 'text/markdown; charset=UTF-8'
     c.executionCtx.waitUntil(
-      putCachedResponse(c.env.ASK_CACHE, cacheKey, text, contentType)
-        .catch((e) => console.error('快取 CAG 回應失敗:', e)),
+      readStreamToString(toCache)
+        .then((text) => {
+          if (!isCacheableCagAnswerText(text)) return
+          return putCachedResponse(c.env.ASK_CACHE, cacheKey, text, contentType)
+        })
+        .catch((e) => console.error('快取串流寫入失敗:', e)),
     )
   } else {
-    await delayUntilMinimumElapsed(startedAt)
+    toCache.cancel().catch(() => {})
   }
-  return new Response(text, {
+  return new Response(toClient, {
     status: response.status,
     headers: response.headers,
   })
@@ -551,6 +555,10 @@ function retryAfterForBudget(decision: BudgetLimitDecision): string {
   return String(Math.max(1, decision.retryAfterSeconds ?? 60))
 }
 
+function shouldBypassCaches(refresh: string | undefined): boolean {
+  return refresh === '1' || refresh === 'true'
+}
+
 function parsePositiveInteger(value: string | undefined, fallback: number): number {
   if (!value) return fallback
   const parsed = Number(value)
@@ -704,9 +712,11 @@ async function replyWithCag(
   startedAt: number,
 ): Promise<void> {
   const retriever = resolveCagRetriever(env.CAG_RETRIEVER)
-  const model = env.ASK_MODEL || DEFAULT_CAG_MODEL
   // 快取：相同問題（retriever／model 相同）7 天內直接用快取的答案與來源回覆，不跑檢索與 AI。
-  const cacheKey = await buildCacheKey('webhook', question, { retriever, model })
+  const cacheKey = await buildCacheKey('webhook', question, {
+    retriever,
+    model: DEFAULT_CAG_MODEL,
+  })
   const cached = await getCachedResponse(env.ASK_CACHE, cacheKey)
   if (cached) {
     try {
@@ -736,7 +746,6 @@ async function replyWithCag(
   try {
     cag = await generateCagAnswer(env.AI, question, {
       archiveBaseUrl: env.ASK_ARCHIVE_BASE_URL,
-      model,
       topK: WEBHOOK_CAG_TOP_K,
       citableTopK: WEBHOOK_CAG_CITE_TOP_K,
       maxCompletionTokens: WEBHOOK_CAG_MAX_COMPLETION_TOKENS,
@@ -744,6 +753,7 @@ async function replyWithCag(
       retriever,
       vectorize: env.VECTORIZE,
       vectorizeMinScore: resolveVectorizeMinScore(env.CAG_VECTORIZE_MIN_SCORE),
+      cagCache: env.CAG_CACHE,
     })
   } catch (e) {
     cagFailed = true
@@ -806,7 +816,9 @@ app.get('/ask/:question', async (c) => {
   }
   if (await isIpRateLimited(c)) {
     reportAbuse(c, { key: abuse.key, kind: 'rate_limit', path: 'ask', question, ip: abuse.ip })
-    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, { 'Retry-After': '10' })
+    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
+      'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
+    })
   }
   if (isQuestionTooLong(question)) {
     reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'ask', question, ip: abuse.ip })
@@ -860,9 +872,9 @@ app.get('/ask/:question', async (c) => {
 app.get('/cag/status', (c) => {
   return c.json(getCagStatus({
     archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
-    model: c.env.ASK_MODEL || DEFAULT_CAG_MODEL,
     retriever: resolveCagRetriever(c.req.query('retriever'), c.env.CAG_RETRIEVER),
     vectorizeBound: Boolean(c.env.VECTORIZE),
+    sourceCacheBound: Boolean(c.env.CAG_CACHE),
     vectorizeMinScore: resolveVectorizeMinScore(
       c.req.query('min_score') ?? c.req.query('minScore'),
       c.env.CAG_VECTORIZE_MIN_SCORE,
@@ -880,20 +892,22 @@ app.get('/cag/:question', async (c) => {
   }
   if (await isIpRateLimited(c)) {
     reportAbuse(c, { key: abuse.key, kind: 'rate_limit', path: 'cag', question, ip: abuse.ip })
-    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, { 'Retry-After': '10' })
+    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
+      'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
+    })
   }
   if (isQuestionTooLong(question)) {
     reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'cag', question, ip: abuse.ip })
     return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
   }
-  const model = c.env.ASK_MODEL || DEFAULT_CAG_MODEL
-  const topK = parsePositiveInteger(c.req.query('top_k') ?? c.req.query('topK'), 6)
+  const bypassCache = shouldBypassCaches(c.req.query('refresh'))
+  const topK = parsePositiveInteger(c.req.query('top_k') ?? c.req.query('topK'), DEFAULT_TOP_K)
   const citableTopK = parseOptionalPositiveInteger(
     c.req.query('cite_top_k') ?? c.req.query('citeTopK'),
   )
   const maxCompletionTokens = parsePositiveInteger(
     c.req.query('max_tokens') ?? c.req.query('maxTokens'),
-    900,
+    DEFAULT_MAX_COMPLETION_TOKENS,
   )
   const retriever = resolveCagRetriever(c.req.query('retriever'), c.env.CAG_RETRIEVER)
   const vectorizeMinScore = resolveVectorizeMinScore(
@@ -902,29 +916,32 @@ app.get('/cag/:question', async (c) => {
   )
   const cagOptions = normalizeCagOptions({
     archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
-    model,
     topK,
     citableTopK,
     maxCompletionTokens,
     retriever,
     vectorize: c.env.VECTORIZE,
     vectorizeMinScore,
+    cagCache: c.env.CAG_CACHE,
+    skipSourceCache: bypassCache,
   })
 
   // 快取 key 納入實際生效的參數（含 clamp/default 後的值），避免用超大參數繞過快取。
   const cacheKey = await buildCacheKey('cag', question, {
     archiveBaseUrl: cagOptions.archiveBaseUrl,
-    model: cagOptions.model,
+    model: DEFAULT_CAG_MODEL,
     topK: cagOptions.topK,
     citableTopK: cagOptions.citableTopK,
     maxCompletionTokens: cagOptions.maxCompletionTokens,
     retriever: cagOptions.retriever,
     vectorizeMinScore: cagOptions.vectorizeMinScore,
   })
-  const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
-  if (cached) {
-    c.executionCtx.waitUntil(refreshCachedResponse(c.env.ASK_CACHE, cacheKey, cached))
-    return respondFromCache(cached.body, cached.contentType)
+  if (!bypassCache) {
+    const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
+    if (cached) {
+      c.executionCtx.waitUntil(refreshCachedResponse(c.env.ASK_CACHE, cacheKey, cached))
+      return respondFromCache(cached.body, cached.contentType)
+    }
   }
 
   const budget = await checkGlobalGenerationBudget(c.env)
@@ -935,7 +952,7 @@ app.get('/cag/:question', async (c) => {
   }
 
   const response = await streamCagAnswer(c.env.AI, question, cagOptions)
-  return cacheCagResponse(c, cacheKey, response, startedAt)
+  return cacheCagResponse(c, bypassCache ? null : cacheKey, response)
 })
 
 app.post('/cag', async (c) => {
@@ -961,9 +978,11 @@ app.post('/cag', async (c) => {
       question: loggedQuestion,
       ip: abuse.ip,
     })
-    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, { 'Retry-After': '10' })
+    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
+      'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
+    })
   }
-  let payload: { question?: unknown; topK?: unknown; top_k?: unknown; citableTopK?: unknown; cite_top_k?: unknown; maxTokens?: unknown; max_tokens?: unknown; retriever?: unknown; minScore?: unknown; min_score?: unknown }
+  let payload: { question?: unknown; topK?: unknown; top_k?: unknown; citableTopK?: unknown; cite_top_k?: unknown; maxTokens?: unknown; max_tokens?: unknown; retriever?: unknown; minScore?: unknown; min_score?: unknown; refresh?: unknown }
   try {
     payload = await c.req.json()
   } catch {
@@ -979,17 +998,21 @@ app.post('/cag', async (c) => {
     return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
   }
 
+  const bypassCache = typeof payload.refresh === 'boolean'
+    ? payload.refresh
+    : typeof payload.refresh === 'string'
+      ? shouldBypassCaches(payload.refresh)
+      : false
   const topK = typeof payload.topK === 'number'
     ? payload.topK
     : typeof payload.top_k === 'number'
       ? payload.top_k
-      : 6
+      : DEFAULT_TOP_K
   const maxCompletionTokens = typeof payload.maxTokens === 'number'
     ? payload.maxTokens
     : typeof payload.max_tokens === 'number'
       ? payload.max_tokens
-      : 900
-  const model = c.env.ASK_MODEL || DEFAULT_CAG_MODEL
+      : DEFAULT_MAX_COMPLETION_TOKENS
   const citableTopK = typeof payload.citableTopK === 'number'
     ? payload.citableTopK
     : typeof payload.cite_top_k === 'number'
@@ -1007,29 +1030,32 @@ app.post('/cag', async (c) => {
   )
   const cagOptions = normalizeCagOptions({
     archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
-    model,
     topK,
     citableTopK,
     maxCompletionTokens,
     retriever,
     vectorize: c.env.VECTORIZE,
     vectorizeMinScore,
+    cagCache: c.env.CAG_CACHE,
+    skipSourceCache: bypassCache,
   })
 
   // 快取 key 納入實際生效的參數（含 clamp/default 後的值），避免用超大參數繞過快取。
   const cacheKey = await buildCacheKey('cag', question, {
     archiveBaseUrl: cagOptions.archiveBaseUrl,
-    model: cagOptions.model,
+    model: DEFAULT_CAG_MODEL,
     topK: cagOptions.topK,
     citableTopK: cagOptions.citableTopK,
     maxCompletionTokens: cagOptions.maxCompletionTokens,
     retriever: cagOptions.retriever,
     vectorizeMinScore: cagOptions.vectorizeMinScore,
   })
-  const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
-  if (cached) {
-    c.executionCtx.waitUntil(refreshCachedResponse(c.env.ASK_CACHE, cacheKey, cached))
-    return respondFromCache(cached.body, cached.contentType)
+  if (!bypassCache) {
+    const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
+    if (cached) {
+      c.executionCtx.waitUntil(refreshCachedResponse(c.env.ASK_CACHE, cacheKey, cached))
+      return respondFromCache(cached.body, cached.contentType)
+    }
   }
 
   const budget = await checkGlobalGenerationBudget(c.env)
@@ -1040,7 +1066,7 @@ app.post('/cag', async (c) => {
   }
 
   const response = await streamCagAnswer(c.env.AI, question, cagOptions)
-  return cacheCagResponse(c, cacheKey, response, startedAt)
+  return cacheCagResponse(c, bypassCache ? null : cacheKey, response)
 })
 
 app.post('/webhook', async (c) => {
@@ -1094,7 +1120,7 @@ app.post('/webhook', async (c) => {
     return c.text('OK', 200)
   }
 
-  // 防連續濫用：同一 LINE 來源 10 秒內第 2 則訊息，只回個提示，不再做昂貴的 CAG 生成。
+  // 防連續濫用：同一 LINE 來源冷卻視窗內第 2 則訊息，只回個提示，不再做 CAG 生成。
   // userId 缺席時改以 groupId / roomId / anonymous 做較粗的限流，避免群組事件繞過。
   // （仍須回 200 ack，並用一次性 reply token 送出提示。）
   if (await isRateLimited(c.env, lineRateLimitKey(event.source))) {

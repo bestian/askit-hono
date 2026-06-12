@@ -18,7 +18,7 @@ export const VECTORIZE_METRIC = 'cosine'
 /** 預設 Vectorize 索引名稱（≤64 bytes）。可由腳本／binding 覆寫。 */
 export const VECTORIZE_INDEX_NAME = 'askit-audrey-tang'
 
-const DEFAULT_TOP_K = 6
+const DEFAULT_TOP_K = 4
 const MAX_TOP_K = 12
 export const DEFAULT_VECTORIZE_MIN_COSINE_SCORE = 0.45
 

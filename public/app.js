@@ -1,7 +1,7 @@
 (function () {
   const { createApp, ref, computed, h } = Vue
 
-  const COOLDOWN_SECONDS = 10
+  const COOLDOWN_SECONDS = 3
   const BLOCKED_ELEMENT_SELECTOR = 'script, iframe, object, embed, base, meta, link'
   const ALLOWED_LINK_PROTOCOLS = new Set(['http:', 'https:'])
   const URL_ATTRIBUTE_NAMES = new Set(['href', 'src', 'xlink:href', 'action', 'formaction', 'poster'])

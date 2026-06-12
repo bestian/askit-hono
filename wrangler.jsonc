@@ -16,18 +16,15 @@
   "vars": {
     // 可在此放置非機敏的環境變數
     // Place non-sensitive environment variables here
-    "ASK_MODEL": "@cf/moonshotai/kimi-k2.6",
     "ASK_ARCHIVE_BASE_URL": "https://archive.tw",
     // CAG 預設檢索器：'vectorize'（語意，issue #15）或 'archive'（archive.tw 即時搜尋）。
     // 索引尚未建好 / 無 VECTORIZE binding / 查無結果時，程式會自動回退 archive。
     // 亦可用 /cag?retriever=archive 之類的查詢參數逐次覆寫，方便 A/B 比較。
     "CAG_RETRIEVER": "vectorize",
     // 全域生成預算：快取未命中的 /ask、/cag 與 LINE CAG 生成共享同一組 DO 計數器。
-    // 以 Kimi K2.6 最壞可請求輸出 4096 tokens 估算，每次約 <= $0.033；
-    // https://console.cloud.google.com/ai/models/kimi-k2.6/cost-estimation
-    // 15 次/分鐘約 <= $0.5，300 次/日約 <= $10。
-    "GLOBAL_GENERATION_LIMIT_PER_MINUTE": "15",
-    "GLOBAL_GENERATION_LIMIT_PER_DAY": "300",
+    // 以 Gemma 4 26B A4B 典型請求（約 6700 input + 300 output tokens）估算，每次約 <= $0.001。
+    "GLOBAL_GENERATION_LIMIT_PER_MINUTE": "30",
+    "GLOBAL_GENERATION_LIMIT_PER_DAY": "1000",
     // 異常請求黑名單（issue #27）：同一 IP/Id 在視窗內累積達門檻次數的
     // 超量／過長請求，自動寫入黑名單，之後在任何限流記帳之前直接擋下。
     // 視窗設 "0" = 不限視窗、全期間累計。
@@ -64,9 +61,9 @@
     }
   ],
 
-  // Workers AI：/cag/:question 使用此 binding 呼叫 Kimi K2.6，
+  // Workers AI：/cag/:question 使用此 binding 呼叫 Gemma 4 26B A4B，
   // 並（啟用 Vectorize 後）用 @cf/google/embeddinggemma-300m 將問句嵌入成查詢向量。
-  // Workers AI: /cag/:question uses this binding to call Kimi K2.6.
+  // Workers AI: /cag/:question uses this binding to call Gemma 4 26B A4B.
   "ai": {
     "binding": "AI",
     "remote": true
@@ -94,11 +91,21 @@
       "database_id": "d87861ce-46d5-4053-afdf-abf5c4a9f61c"
     }
   ],
+  // KV：CAG 檢索來源快取（1h TTL）。R2 ASK_CACHE 仍負責完整答案快取（7 天）。
+  // 建立：npx wrangler kv namespace create CAG_CACHE
+  //       npx wrangler kv namespace create CAG_CACHE --preview
+  "kv_namespaces": [
+    {
+      "binding": "CAG_CACHE",
+      "id": "a388af13d43f4748837134b8aea36c2a",
+      "preview_id": "75c2f64040ef421296f2dc29cb5c8a34"
+    }
+  ],
 
   // 防連續濫用：兩層限流（兩層共用同一個 key：line:<userId>、ip:<IPv4> 或 ip6:<IPv6 /64>）。
   //
   // 第一層 RATE_LIMITER —— 內建限流，便宜（非 subrequest、in-memory、零有感延遲）、
-  //   per-PoP、eventually consistent、permissive。門檻設很寬（5 次/10 秒），只負責擋
+  //   per-PoP、eventually consistent、permissive。門檻設很寬（15 次/10 秒），只負責擋
   //   「明顯洪水」：太頻繁就在邊緣直接擋下，根本不碰下游 DO，順手保護單一 DO 實例不被打爆。
   //   period 僅能 10 或 60；門檻刻意遠高於正常用量，避免誤擋守規矩的人。
   //
@@ -112,7 +119,7 @@
     {
       "name": "RATE_LIMITER",
       "namespace_id": "1001",
-      "simple": { "limit": 5, "period": 10 }
+      "simple": { "limit": 15, "period": 10 }
     }
   ],
   "durable_objects": {
@@ -122,6 +129,13 @@
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["RateLimiterDO"] }
+  ],
+
+  "routes": [
+    {
+      "pattern": "ask.archive.tw",
+      "custom_domain": true
+    }
   ],
 
   "assets": {

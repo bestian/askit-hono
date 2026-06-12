@@ -15,6 +15,9 @@ import {
 } from '../src/utils/askIndexFormat'
 import {
   buildCagQueryVariants,
+  buildCagRetrievalQueries,
+  DEFAULT_CAG_MODEL,
+  DEFAULT_TOP_K,
   markdownCitationFootnotes,
   normalizeCagOptions,
   parseArchiveSectionId,
@@ -463,6 +466,17 @@ test('buildCagQueryVariants keeps useful Chinese retrieval terms', () => {
   assert.ok(variants.includes('香火'))
 })
 
+test('buildCagRetrievalQueries returns primary and fallback search terms', () => {
+  const queries = buildCagRetrievalQueries('用 #zh-tw 回答：地神香火如何')
+  assert.equal(queries.primary, '地神香火如何')
+  assert.equal(queries.fallback, '地神香火')
+})
+
+test('normalizeCagOptions defaults topK to tightened profile', () => {
+  const options = normalizeCagOptions()
+  assert.equal(options.topK, DEFAULT_TOP_K)
+})
+
 test('parseArchiveSectionId extracts archive anchors', () => {
   assert.equal(parseArchiveSectionId('https://archive.tw/a/b#s619731'), 619731)
   assert.equal(parseArchiveSectionId('/demo#s42'), 42)
@@ -495,7 +509,7 @@ test('normalizeCagOptions returns effective parameters used by CAG', () => {
   assert.equal(minimums.maxCompletionTokens, 1)
 })
 
-test('public CAG endpoints ignore client-supplied model', async () => {
+test('public CAG endpoints always use fixed Gemma model', async () => {
   const aiCalls: { model: string; input: Record<string, unknown> }[] = []
   const ai = {
     run: async (model: string, input: Record<string, unknown>) => {
@@ -521,7 +535,6 @@ test('public CAG endpoints ignore client-supplied model', async () => {
     }),
   }
   const env = {
-    ASK_MODEL: '@cf/account/allowed-model',
     AI: ai,
     VECTORIZE: vectorize,
     CAG_RETRIEVER: 'vectorize',
@@ -561,8 +574,8 @@ test('public CAG endpoints ignore client-supplied model', async () => {
     .filter(({ input }) => Array.isArray(input.messages))
     .map(({ model }) => model)
   assert.deepEqual(chatModels, [
-    '@cf/account/allowed-model',
-    '@cf/account/allowed-model',
+    DEFAULT_CAG_MODEL,
+    DEFAULT_CAG_MODEL,
   ])
 })
 
@@ -900,11 +913,32 @@ test('webhook rate limits group messages without userId by groupId', async () =>
     assert.equal(fetchCalls.length, 1)
     assert.deepEqual(JSON.parse(String(fetchCalls[0].init?.body)), {
       replyToken: 'reply-token',
-      messages: [{ type: 'text', text: '您的發問過於頻繁，請稍候約 10 秒再試，謝謝 🙏' }],
+      messages: [{ type: 'text', text: '您的發問過於頻繁，請稍候約 3 秒再試，謝謝 🙏' }],
     })
   } finally {
     globalThis.fetch = originalFetch
   }
+})
+
+test('markdownCitationFootnotes rewrites comma-separated citations', async () => {
+  const input = new ReadableStream<string>({
+    start(controller) {
+      controller.enqueue('see [2, 3, 4]')
+      controller.close()
+    },
+  })
+  const output = await streamToString(
+    input.pipeThrough(markdownCitationFootnotes([
+      '[One](https://archive.tw/one#s1)',
+      '[Two](https://archive.tw/two#s2)',
+      '[Three](https://archive.tw/three#s3)',
+      '[Four](https://archive.tw/four#s4)',
+    ])),
+  )
+  assert.equal(
+    output,
+    'see [^2], [^3], [^4]\n\n[^2]: [Two](https://archive.tw/two#s2)\n[^3]: [Three](https://archive.tw/three#s3)\n[^4]: [Four](https://archive.tw/four#s4)\n',
+  )
 })
 
 test('markdownCitationFootnotes rewrites numbered citations and appends used notes', async () => {

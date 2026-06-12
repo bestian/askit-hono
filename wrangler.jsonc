@@ -24,7 +24,12 @@
     // 全域生成預算：快取未命中的 /ask、/cag 與 LINE CAG 生成共享同一組 DO 計數器。
     // 以 Gemma 4 26B A4B 典型請求（約 6700 input + 300 output tokens）估算，每次約 <= $0.001。
     "GLOBAL_GENERATION_LIMIT_PER_MINUTE": "30",
-    "GLOBAL_GENERATION_LIMIT_PER_DAY": "1000"
+    "GLOBAL_GENERATION_LIMIT_PER_DAY": "1000",
+    // 異常請求黑名單（issue #27）：同一 IP/Id 在視窗內累積達門檻次數的
+    // 超量／過長請求，自動寫入黑名單，之後在任何限流記帳之前直接擋下。
+    // 視窗設 "0" = 不限視窗、全期間累計。
+    "ABUSE_BLACKLIST_THRESHOLD": "3",
+    "ABUSE_COUNT_WINDOW_HOURS": "24"
   },
 
   // CPU 上限：避免單次請求異常消耗 Worker CPU；AI/網路等待不計入 CPU time。
@@ -71,6 +76,21 @@
     { "binding": "VECTORIZE", "index_name": "askit-audrey-tang" }
   ],
 
+  // D1（issue #27）：超量／異常請求追蹤 log（abuse_log）與黑名單（blacklist）。
+  // 資料庫已建立（npm run abuse:db:create）；建表／重建 schema：
+  //   npm run abuse:db:init          # 遠端
+  //   npm run abuse:db:init:local    # 本機 wrangler dev 用
+  // 分析報告：npm run abuse:report；解除封鎖：npm run abuse:unban -- <key>
+  // 未綁定時程式優雅降級：不寫 log、黑名單視為空。
+  // 注意：刻意「不」設 remote: true —— 本機 dev 寫本機 D1（與本機限流 DO 一致），
+  // 避免開發測試把雜訊寫進正式環境的 log／黑名單。
+  "d1_databases": [
+    {
+      "binding": "ABUSE_DB",
+      "database_name": "askit-abuse-log",
+      "database_id": "d87861ce-46d5-4053-afdf-abf5c4a9f61c"
+    }
+  ],
   // KV：CAG 檢索來源快取（1h TTL）。R2 ASK_CACHE 仍負責完整答案快取（7 天）。
   // 建立：npx wrangler kv namespace create CAG_CACHE
   //       npx wrangler kv namespace create CAG_CACHE --preview

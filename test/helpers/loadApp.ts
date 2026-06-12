@@ -10,6 +10,7 @@ export type AppTestHooks = {
   }
   isSafeHttpUrl: (value: string) => boolean
   sanitizeHtml: (html: string) => string
+  formatErrorHtml: (message: string) => string
   STRINGS: PageStrings
 }
 

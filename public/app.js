@@ -112,7 +112,7 @@
 
       if (element.tagName.toLowerCase() === 'a') {
         element.setAttribute('target', '_blank')
-        element.setAttribute('rel', 'noopener noreferrer')
+        element.setAttribute('rel', 'nofollow noopener noreferrer')
       }
 
       element = walker.nextNode()
@@ -164,8 +164,12 @@
     return { html: sanitizeHtml(html), sources }
   }
 
+  function formatErrorHtml(message) {
+    return message ? sanitizeHtml(message) : ''
+  }
+
   if (globalThis.__ASKIT_ENABLE_TEST_HOOKS__) {
-    globalThis.__ASKIT_TESTS__ = { parseAnswer, isSafeHttpUrl, sanitizeHtml, STRINGS }
+    globalThis.__ASKIT_TESTS__ = { parseAnswer, isSafeHttpUrl, sanitizeHtml, formatErrorHtml, STRINGS }
   }
 
   createApp({
@@ -196,6 +200,7 @@
 
       const parsed = computed(() => parseAnswer(raw.value))
       const bodyHtml = computed(() => parsed.value.html)
+      const errorHtml = computed(() => formatErrorHtml(error.value))
       const sources = computed(() => parsed.value.sources)
       const canSubmit = computed(() =>
         consentAccepted.value && !loading.value && cooldown.value <= 0 && Boolean(question.value.trim()),
@@ -298,7 +303,7 @@
               !bodyHtml.value && !error.value && loading.value
                 ? h('p', { class: 'placeholder' }, T.searching)
                 : null,
-              error.value ? h('p', { class: 'error' }, error.value) : null,
+              error.value ? h('p', { class: 'error', innerHTML: errorHtml.value }) : null,
               h('div', { class: 'body', innerHTML: bodyHtml.value }),
               loading.value ? h('span', { class: 'cursor' }, '▌') : null,
               sources.value.length

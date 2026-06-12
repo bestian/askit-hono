@@ -19,6 +19,11 @@
     "r2:lifecycle": "npm run r2:lifecycle:cache && npm run r2:lifecycle:cache:preview",
     "vectorize:create": "wrangler vectorize create askit-audrey-tang --dimensions=768 --metric=cosine",
     "vectorize:sync": "tsx --tsconfig scripts/tsconfig.json scripts/vectorize-sync.ts",
+    "abuse:db:create": "wrangler d1 create askit-abuse-log",
+    "abuse:db:init": "wrangler d1 execute askit-abuse-log --remote --file db/abuse-log-schema.sql --yes",
+    "abuse:db:init:local": "wrangler d1 execute askit-abuse-log --local --file db/abuse-log-schema.sql --yes",
+    "abuse:report": "tsx --tsconfig scripts/tsconfig.json scripts/abuse-report.ts",
+    "abuse:unban": "tsx --tsconfig scripts/tsconfig.json scripts/abuse-unban.ts",
     "eval:cag": "tsx --tsconfig scripts/tsconfig.json scripts/eval-cag-models.ts",
     "eval:cag:depth": "tsx --tsconfig scripts/tsconfig.json scripts/eval-cag-depth.ts"
   },

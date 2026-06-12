@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import type { TestContext } from 'node:test'
 
 import Fuse from 'fuse.js'
 import app, { ipRateLimitKeyFromIp } from '../src/index'
@@ -21,6 +22,7 @@ import {
   parseArchiveSectionId,
   retrieveCagSources,
 } from '../src/utils/cag'
+import { NOT_FOUND_REPLY_HTML } from '../src/utils/notFoundReply'
 import { findClosestMatchingSection } from '../src/utils/search'
 import type { VectorizeBinding } from '../src/utils/vectorize'
 import { loadAppTestHooks } from './helpers/loadApp'
@@ -382,6 +384,35 @@ test('homepage parser rejects non-http citation URLs and relative URLs', async (
   assert.doesNotMatch(parsed.html, /href="\/relative\/path"/i)
 })
 
+test('homepage renders out-of-scope errors as sanitized html with archive.tw link', async () => {
+  const { formatErrorHtml } = await loadAppTestHooks()
+  const html = formatErrorHtml(NOT_FOUND_REPLY_HTML)
+
+  assert.match(html, /<a href="https:\/\/archive\.tw"/)
+  assert.doesNotMatch(html, /<script\b/i)
+})
+
+test('public CAG returns html not-found body with archive.tw link when retrieval is empty', async () => {
+  const env = {
+    AI: {
+      run: async () => ({ data: [[0.1, 0.2, 0.3]] }),
+    },
+    VECTORIZE: {
+      query: async () => ({ matches: [] }),
+    },
+    CAG_RETRIEVER: 'vectorize',
+  }
+
+  const response = await app.request('/cag/zzzzzz', undefined, env)
+
+  assert.equal(response.status, 404)
+  assert.equal(response.headers.get('Content-Type'), 'text/html; charset=UTF-8')
+  const body = await response.text()
+  assert.equal(body, NOT_FOUND_REPLY_HTML)
+  assert.match(body, /<a href="https:\/\/archive\.tw"/)
+  assert.doesNotMatch(body, /<script\b/i)
+})
+
 test('homepage parser escapes html and markdown link attribute breakout payloads', async () => {
   const { parseAnswer } = await loadAppTestHooks()
   const parsed = parseAnswer([
@@ -673,6 +704,28 @@ test('question endpoints reject questions over 100 characters before retrieval o
   assert.equal(aiCalls.length, 0)
 })
 
+test('ask not-found replies wait until the rate-limit cooldown has elapsed', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
+  let settled = false
+  const responsePromise = app
+    .request(
+      `/ask/${encodeURIComponent('zzzzzz')}`,
+      undefined,
+      { ASK_INDEX: createAskIndexBucket() },
+    )
+    .then((response) => {
+      settled = true
+      return response
+    })
+
+  for (let i = 0; i < 8; i += 1) await Promise.resolve()
+  assert.equal(settled, false)
+
+  const response = await resolveAfterCooldown(responsePromise, t)
+  assert.equal(response.status, 404)
+  assert.equal(Date.now(), 10_000)
+})
+
 test('POST APIs reject oversized request bodies', async () => {
   const oversizedQuestion = '長'.repeat(33 * 1024)
 
@@ -739,7 +792,14 @@ test('global generation budget blocks uncached CAG before AI', async () => {
   assert.equal(new URL(quotaUrls[0]).pathname, '/quota')
 })
 
-test('public CAG does not cache blank, short, or known-bad streamed answers', async () => {
+async function resolveAfterCooldown<T>(promise: Promise<T>, t: TestContext): Promise<T> {
+  for (let i = 0; i < 8; i += 1) await Promise.resolve()
+  t.mock.timers.tick(10_000)
+  return promise
+}
+
+test('public CAG does not cache blank, short, or known-bad streamed answers', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
   const badAnswers = [
     '   ',
     '太短',
@@ -783,7 +843,7 @@ test('public CAG does not cache blank, short, or known-bad streamed answers', as
       CAG_RETRIEVER: 'vectorize',
     }
 
-    const response = await app.request(
+    const responsePromise = app.request(
       '/cag/%E6%B8%AC%E8%A9%A6',
       undefined,
       env,
@@ -795,6 +855,7 @@ test('public CAG does not cache blank, short, or known-bad streamed answers', as
         props: {},
       },
     )
+    const response = await resolveAfterCooldown(responsePromise, t)
 
     assert.equal(response.status, 200)
     await response.text()

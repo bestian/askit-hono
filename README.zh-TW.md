@@ -36,7 +36,9 @@
   `X-Cache: HIT`）；檢索來源另以 KV 快取 **1 小時**。
 - **防濫用** — 雙層限流（edge limiter 每把 key 10 秒 15 次，之後還有
   per-key Durable Object 冷卻）、全域生成預算（每分鐘 30 次、每日 1000
-  次）、30 秒 CPU 上限、嚴格 CSP 與安全標頭。
+  次）、30 秒 CPU 上限、嚴格 CSP 與安全標頭。觸發限流或問題過長會寫入
+  D1 異常請求 log，累犯自動進黑名單（預設 24 小時內 3 次 → `403`）；
+  未綁 `ABUSE_DB` 時優雅降級（不寫 log、黑名單視為空）。
 - **品質** — 離線 eval harness（`npm run eval:cag`、
   `npm run eval:cag:depth`）在模型或檢索改動上線前，先評估回答深度與
   引據是否退步。
@@ -272,6 +274,9 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 | `npm run vectorize:create` / `vectorize:sync` | 建立／回填 Vectorize 索引 |
 | `npm run eval:cag` / `eval:cag:depth` | 模型／檢索深度 eval harness |
 | `npm run r2:lifecycle` | 對答案快取 bucket 套用 7 天 lifecycle |
+| `npm run abuse:db:create` / `abuse:db:init` | 建立／初始化 `askit-abuse-log` D1 資料庫（`:local` 為本機） |
+| `npm run abuse:report` | 分析異常請求 log → `build/abuse-report.html`（`LOCAL=1` 讀本機 D1） |
+| `npm run abuse:unban -- <key>` | 解除封鎖（同時清掉該 key 的舊 log 紀錄） |
 | `npm run tail` | 即時看 Worker log |
 
 ## 專案結構
@@ -287,10 +292,13 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 │       ├── cagCache.ts            # KV 來源快取（1 小時）
 │       ├── cache.ts               # R2 答案快取（7 天）
 │       ├── cagEval.ts             # Eval 評分（含寫死的模型 id）
+│       ├── abuse.ts               # D1 異常請求 log + 自動黑名單（issue #27）
+│       ├── notFoundReply.ts       # 超範圍回覆（純文字 + HTML，繁中 + 英文）
 │       ├── search.ts              # R2 Fuse 索引載入 + 模糊搜尋
 │       └── askIndexFormat.ts      # 共用的索引型別與設定
 ├── public/                        # 靜態資源 + Vue 前端（app.js）
-├── scripts/                       # build-ask-index / vectorize-sync / evals
+├── db/                            # 異常請求 log + 黑名單的 D1 schema
+├── scripts/                       # build-ask-index / vectorize-sync / evals / abuse 維運
 ├── test/                          # node --test 測試
 ├── design/                        # 架構筆記 + 系統圖
 ├── config/                        # R2 lifecycle 規則

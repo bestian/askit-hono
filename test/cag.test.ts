@@ -14,7 +14,9 @@ import {
 } from '../src/utils/askIndexFormat'
 import {
   buildCagQueryVariants,
+  buildCagRetrievalQueries,
   DEFAULT_CAG_MODEL,
+  DEFAULT_TOP_K,
   markdownCitationFootnotes,
   normalizeCagOptions,
   parseArchiveSectionId,
@@ -461,6 +463,17 @@ test('buildCagQueryVariants keeps useful Chinese retrieval terms', () => {
   assert.equal(variants[0], '地神香火如何')
   assert.ok(variants.includes('地神'))
   assert.ok(variants.includes('香火'))
+})
+
+test('buildCagRetrievalQueries returns primary and fallback search terms', () => {
+  const queries = buildCagRetrievalQueries('用 #zh-tw 回答：地神香火如何')
+  assert.equal(queries.primary, '地神香火如何')
+  assert.equal(queries.fallback, '地神香火')
+})
+
+test('normalizeCagOptions defaults topK to tightened profile', () => {
+  const options = normalizeCagOptions()
+  assert.equal(options.topK, DEFAULT_TOP_K)
 })
 
 test('parseArchiveSectionId extracts archive anchors', () => {

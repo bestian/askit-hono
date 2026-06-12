@@ -9,6 +9,8 @@ import {
   type CagRetriever,
   type CagSource,
   DEFAULT_CAG_MODEL,
+  DEFAULT_MAX_COMPLETION_TOKENS,
+  DEFAULT_TOP_K,
   generateCagAnswer,
   getCagStatus,
   normalizeCagOptions,
@@ -54,6 +56,8 @@ type Bindings = {
   ASK_INDEX: R2Bucket
   // 答案快取 bucket（issue #25）：相同問題 7 天內直接取用，未綁時優雅降級。
   ASK_CACHE?: R2Bucket
+  // CAG 檢索來源 KV 快取（1h TTL）；未綁時優雅降級。
+  CAG_CACHE?: KVNamespace
   AI: {
     run: (model: string, input: Record<string, unknown>) => Promise<unknown>
   }
@@ -104,7 +108,7 @@ const LINE_REPLY_ENDPOINT = 'https://api.line.me/v2/bot/message/reply'
 const LINE_LOADING_ENDPOINT = 'https://api.line.me/v2/bot/chat/loading/start'
 const REPLY_TOKEN_TTL_MS = 50_000
 // CAG 在 webhook 走非同步回覆（ctx.waitUntil），慢工作須在回 200 之後約 30 秒內完成。
-// 檢索 top-k=6 餵給模型當「背景脈絡」以提升答案品質，但只引用／顯示前 6 筆最相符來源
+// 檢索 top-k=4 餵給模型；只引用／顯示前 4 筆最相符來源
 // （對齊 formatCagAnswerFlex 的 4 格出處、引註 [1][2][3][4][5][6] 一一對應）。
 // 預設檢索器為 Vectorize，來源是 ≤100 字短段落，6 筆 prompt 仍小、延遲可控。
 // max_tokens=240 控制回答長度、避免被截斷。
@@ -294,21 +298,25 @@ function respondFromCache(body: string, contentType: string): Response {
 // 只快取 200 成功回應；非 200（如 404 查無範圍）或無 body 時原樣回傳、不快取。
 function cacheStreamingResponse(
   c: Context<{ Bindings: Bindings }>,
-  cacheKey: string,
+  cacheKey: string | null,
   response: Response,
 ): Response {
   if (response.status !== 200 || !response.body) return response
   const [toClient, toCache] = response.body.tee()
-  const contentType =
-    response.headers.get('Content-Type') || 'text/markdown; charset=UTF-8'
-  c.executionCtx.waitUntil(
-    readStreamToString(toCache)
-      .then((text) => {
-        if (!isCacheableCagAnswerText(text)) return
-        return putCachedResponse(c.env.ASK_CACHE, cacheKey, text, contentType)
-      })
-      .catch((e) => console.error('快取串流寫入失敗:', e)),
-  )
+  if (cacheKey) {
+    const contentType =
+      response.headers.get('Content-Type') || 'text/markdown; charset=UTF-8'
+    c.executionCtx.waitUntil(
+      readStreamToString(toCache)
+        .then((text) => {
+          if (!isCacheableCagAnswerText(text)) return
+          return putCachedResponse(c.env.ASK_CACHE, cacheKey, text, contentType)
+        })
+        .catch((e) => console.error('快取串流寫入失敗:', e)),
+    )
+  } else {
+    toCache.cancel().catch(() => {})
+  }
   return new Response(toClient, {
     status: response.status,
     headers: response.headers,
@@ -443,6 +451,10 @@ async function checkGlobalGenerationBudget(
 
 function retryAfterForBudget(decision: BudgetLimitDecision): string {
   return String(Math.max(1, decision.retryAfterSeconds ?? 60))
+}
+
+function shouldBypassCaches(refresh: string | undefined): boolean {
+  return refresh === '1' || refresh === 'true'
 }
 
 function parsePositiveInteger(value: string | undefined, fallback: number): number {
@@ -636,6 +648,7 @@ async function replyWithCag(
       retriever,
       vectorize: env.VECTORIZE,
       vectorizeMinScore: resolveVectorizeMinScore(env.CAG_VECTORIZE_MIN_SCORE),
+      cagCache: env.CAG_CACHE,
     })
   } catch (e) {
     cagFailed = true
@@ -740,6 +753,7 @@ app.get('/cag/status', (c) => {
     archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
     retriever: resolveCagRetriever(c.req.query('retriever'), c.env.CAG_RETRIEVER),
     vectorizeBound: Boolean(c.env.VECTORIZE),
+    sourceCacheBound: Boolean(c.env.CAG_CACHE),
     vectorizeMinScore: resolveVectorizeMinScore(
       c.req.query('min_score') ?? c.req.query('minScore'),
       c.env.CAG_VECTORIZE_MIN_SCORE,
@@ -757,13 +771,14 @@ app.get('/cag/:question', async (c) => {
   if (isQuestionTooLong(question)) {
     return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
   }
-  const topK = parsePositiveInteger(c.req.query('top_k') ?? c.req.query('topK'), 6)
+  const bypassCache = shouldBypassCaches(c.req.query('refresh'))
+  const topK = parsePositiveInteger(c.req.query('top_k') ?? c.req.query('topK'), DEFAULT_TOP_K)
   const citableTopK = parseOptionalPositiveInteger(
     c.req.query('cite_top_k') ?? c.req.query('citeTopK'),
   )
   const maxCompletionTokens = parsePositiveInteger(
     c.req.query('max_tokens') ?? c.req.query('maxTokens'),
-    900,
+    DEFAULT_MAX_COMPLETION_TOKENS,
   )
   const retriever = resolveCagRetriever(c.req.query('retriever'), c.env.CAG_RETRIEVER)
   const vectorizeMinScore = resolveVectorizeMinScore(
@@ -778,6 +793,8 @@ app.get('/cag/:question', async (c) => {
     retriever,
     vectorize: c.env.VECTORIZE,
     vectorizeMinScore,
+    cagCache: c.env.CAG_CACHE,
+    skipSourceCache: bypassCache,
   })
 
   // 快取 key 納入實際生效的參數（含 clamp/default 後的值），避免用超大參數繞過快取。
@@ -790,10 +807,12 @@ app.get('/cag/:question', async (c) => {
     retriever: cagOptions.retriever,
     vectorizeMinScore: cagOptions.vectorizeMinScore,
   })
-  const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
-  if (cached) {
-    c.executionCtx.waitUntil(refreshCachedResponse(c.env.ASK_CACHE, cacheKey, cached))
-    return respondFromCache(cached.body, cached.contentType)
+  if (!bypassCache) {
+    const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
+    if (cached) {
+      c.executionCtx.waitUntil(refreshCachedResponse(c.env.ASK_CACHE, cacheKey, cached))
+      return respondFromCache(cached.body, cached.contentType)
+    }
   }
 
   const budget = await checkGlobalGenerationBudget(c.env)
@@ -804,7 +823,7 @@ app.get('/cag/:question', async (c) => {
   }
 
   const response = await streamCagAnswer(c.env.AI, question, cagOptions)
-  return cacheStreamingResponse(c, cacheKey, response)
+  return cacheStreamingResponse(c, bypassCache ? null : cacheKey, response)
 })
 
 app.post('/cag', async (c) => {
@@ -813,7 +832,7 @@ app.post('/cag', async (c) => {
       'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
     })
   }
-  let payload: { question?: unknown; topK?: unknown; top_k?: unknown; citableTopK?: unknown; cite_top_k?: unknown; maxTokens?: unknown; max_tokens?: unknown; retriever?: unknown; minScore?: unknown; min_score?: unknown }
+  let payload: { question?: unknown; topK?: unknown; top_k?: unknown; citableTopK?: unknown; cite_top_k?: unknown; maxTokens?: unknown; max_tokens?: unknown; retriever?: unknown; minScore?: unknown; min_score?: unknown; refresh?: unknown }
   try {
     payload = await c.req.json()
   } catch {
@@ -828,16 +847,21 @@ app.post('/cag', async (c) => {
     return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
   }
 
+  const bypassCache = typeof payload.refresh === 'boolean'
+    ? payload.refresh
+    : typeof payload.refresh === 'string'
+      ? shouldBypassCaches(payload.refresh)
+      : false
   const topK = typeof payload.topK === 'number'
     ? payload.topK
     : typeof payload.top_k === 'number'
       ? payload.top_k
-      : 6
+      : DEFAULT_TOP_K
   const maxCompletionTokens = typeof payload.maxTokens === 'number'
     ? payload.maxTokens
     : typeof payload.max_tokens === 'number'
       ? payload.max_tokens
-      : 900
+      : DEFAULT_MAX_COMPLETION_TOKENS
   const citableTopK = typeof payload.citableTopK === 'number'
     ? payload.citableTopK
     : typeof payload.cite_top_k === 'number'
@@ -861,6 +885,8 @@ app.post('/cag', async (c) => {
     retriever,
     vectorize: c.env.VECTORIZE,
     vectorizeMinScore,
+    cagCache: c.env.CAG_CACHE,
+    skipSourceCache: bypassCache,
   })
 
   // 快取 key 納入實際生效的參數（含 clamp/default 後的值），避免用超大參數繞過快取。
@@ -873,10 +899,12 @@ app.post('/cag', async (c) => {
     retriever: cagOptions.retriever,
     vectorizeMinScore: cagOptions.vectorizeMinScore,
   })
-  const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
-  if (cached) {
-    c.executionCtx.waitUntil(refreshCachedResponse(c.env.ASK_CACHE, cacheKey, cached))
-    return respondFromCache(cached.body, cached.contentType)
+  if (!bypassCache) {
+    const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
+    if (cached) {
+      c.executionCtx.waitUntil(refreshCachedResponse(c.env.ASK_CACHE, cacheKey, cached))
+      return respondFromCache(cached.body, cached.contentType)
+    }
   }
 
   const budget = await checkGlobalGenerationBudget(c.env)
@@ -887,7 +915,7 @@ app.post('/cag', async (c) => {
   }
 
   const response = await streamCagAnswer(c.env.AI, question, cagOptions)
-  return cacheStreamingResponse(c, cacheKey, response)
+  return cacheStreamingResponse(c, bypassCache ? null : cacheKey, response)
 })
 
 app.post('/webhook', async (c) => {

@@ -5,6 +5,20 @@ import { renderHomePage } from './pages/home'
 import { renderPrivacyPolicyPage } from './pages/privacy'
 import { renderTermsOfUsePage } from './pages/terms'
 import {
+  NOT_FOUND_REPLY_HTML_EN,
+  NOT_FOUND_REPLY_PLAIN,
+  NOT_FOUND_REPLY_PLAIN_EN,
+} from './utils/notFoundReply'
+import {
+  type AbuseKind,
+  type AbusePath,
+  type AbuseThresholdOptions,
+  DEFAULT_ABUSE_BLACKLIST_THRESHOLD,
+  DEFAULT_ABUSE_COUNT_WINDOW_HOURS,
+  isBlacklisted,
+  recordAbuse,
+} from './utils/abuse'
+import {
   type CagAnswer,
   type CagRetriever,
   type CagSource,
@@ -69,6 +83,11 @@ type Bindings = {
   // 任一未綁時，該層自動跳過（dev/測試仍可運作）。
   RATE_LIMITER?: RateLimiter
   RATE_LIMIT_DO?: DurableObjectNamespace
+  // 超量／異常請求追蹤 log 與黑名單（issue #27）。未綁時優雅降級：
+  // 不寫 log、黑名單視為空，請求照常處理。
+  ABUSE_DB?: D1Database
+  ABUSE_BLACKLIST_THRESHOLD?: string
+  ABUSE_COUNT_WINDOW_HOURS?: string
 }
 
 const DEFAULT_CAG_RETRIEVER: CagRetriever = 'vectorize'
@@ -123,26 +142,28 @@ const WEBHOOK_CAG_ANSWER_INSTRUCTION =
   '於陳述具體事實時標註 [1]、[2] 等來源編號。'
 // 限流冷卻視窗：同一使用者於此毫秒數內最多 1 次（對齊首頁送出鈕冷卻）。
 const RATE_LIMIT_WINDOW_MS = 3_000
+const NOT_FOUND_REPLY_MIN_DELAY_MS = RATE_LIMIT_WINDOW_MS
 const RATE_LIMIT_RETRY_AFTER_SECONDS = Math.ceil(RATE_LIMIT_WINDOW_MS / 1000)
 
 // 網頁串流路由（GET /cag/:question）使用者可見訊息的雙語表：?lang=en 取英文、其餘繁中。
 // zh-Hant 字串須與既有字面值逐字相同；LINE webhook 與其他路由沿用 zh-Hant 這一份。
 export const WEB_MESSAGES = {
   'zh-Hant': {
-    notFound: '您的問題超出了資料庫的範圍，\n逐字稿網站連結如下：https://archive.tw',
+    notFound: NOT_FOUND_REPLY_PLAIN,
     rateLimited:
       `您的發問過於頻繁，請稍候約 ${RATE_LIMIT_RETRY_AFTER_SECONDS} 秒再試，謝謝 🙏`,
     tooLong: '您的問題字數過長，請縮短問題的長度，謝謝!',
     budget: '目前服務量已達上限，請稍後再試，謝謝',
+    blacklisted: '由於多次異常請求，您的存取已被暫停',
   },
   en: {
-    notFound:
-      'Your question is outside the scope of this archive.\nBrowse the transcripts at https://archive.tw',
+    notFound: NOT_FOUND_REPLY_PLAIN_EN,
     rateLimited:
       `You are asking a bit too quickly — please wait about ${RATE_LIMIT_RETRY_AFTER_SECONDS} seconds and try again 🙏`,
     tooLong: 'Your question is too long — please shorten it and try again. Thank you!',
     budget:
       'The service has reached its generation budget for now — please try again later 🙏',
+    blacklisted: 'Your access has been suspended due to repeated abnormal requests.',
   },
 } as const
 
@@ -171,6 +192,8 @@ const RATE_LIMIT_LINE_REPLY = RATE_LIMIT_HTTP_MESSAGE
 const GLOBAL_BUDGET_HTTP_MESSAGE = WEB_MESSAGES['zh-Hant'].budget
 const GLOBAL_BUDGET_LINE_REPLY = WEB_MESSAGES['zh-Hant'].budget
 const QUESTION_TOO_LONG_MESSAGE = WEB_MESSAGES['zh-Hant'].tooLong
+// 黑名單成員的回覆（issue #27）。LINE 來源被封鎖時不回覆、僅 ack。
+const BLACKLISTED_HTTP_MESSAGE = WEB_MESSAGES['zh-Hant'].blacklisted
 const ROBOTS_TXT = `User-agent: *
 Disallow: /ask/
 Disallow: /cag/
@@ -320,6 +343,21 @@ function isCacheableCagAnswerText(text: string): boolean {
   return !knownBadAnswerPhrases.some((phrase) => normalized.includes(phrase))
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+// UX 拖延 helper：只在「準備回覆超範圍／模型答不出等失敗訊息」的路徑使用，
+// 讓正常使用者看見失敗訊息後不會立刻重送而撞到同一個冷卻視窗。
+// 成功串流與一般快取處理不應等待，避免拖慢正常首包。
+async function delayUntilMinimumElapsed(
+  startedAt: number,
+  minElapsedMs = NOT_FOUND_REPLY_MIN_DELAY_MS,
+): Promise<void> {
+  const remainingMs = minElapsedMs - (Date.now() - startedAt)
+  if (remainingMs > 0) await sleep(remainingMs)
+}
+
 // 用快取內容組出回應（命中時走這條，不跑檢索與 AI）。
 function respondFromCache(body: string, contentType: string): Response {
   return new Response(body, {
@@ -328,9 +366,11 @@ function respondFromCache(body: string, contentType: string): Response {
   })
 }
 
-// 把串流回應「分流」：一份照常串給使用者，一份在背景累積成完整文字後寫入快取。
-// 只快取 200 成功回應；非 200（如 404 查無範圍）或無 body 時原樣回傳、不快取。
-function cacheStreamingResponse(
+// 把串流回應分流：一份照常串給使用者，一份在背景累積成完整文字後寫入快取。
+// 只快取可快取的 200 成功文字；非 200 或無 body 時原樣回傳、不快取。
+// 注意：這個函式不做 UX 拖延；需要拖延的 handler 必須在回傳失敗訊息前自行呼叫
+// delayUntilMinimumElapsed(startedAt)。
+function cacheCagResponse(
   c: Context<{ Bindings: Bindings }>,
   cacheKey: string | null,
   response: Response,
@@ -453,6 +493,79 @@ async function isIpRateLimited(c: Context<{ Bindings: Bindings }>): Promise<bool
   const ip = c.req.header('cf-connecting-ip')
   if (!ip) return false
   return isRateLimited(c.env, ipRateLimitKeyFromIp(ip))
+}
+
+// ── 異常請求追蹤與黑名單（issue #27）────────────────────────────────────────
+// 「單一 IP/Id 超量」或「問題字串過長」時寫入 abuse_log；同一 key 在視窗內
+// 累積達門檻次數即自動進黑名單。黑名單比對放在「任何 DO/KV 限流記帳之前」，
+// 被封鎖的請求完全不消耗全域生成額度，以保障善意使用者。
+
+function resolveAbuseOptions(env: Bindings): AbuseThresholdOptions {
+  const threshold = parsePositiveInteger(
+    env.ABUSE_BLACKLIST_THRESHOLD,
+    DEFAULT_ABUSE_BLACKLIST_THRESHOLD,
+  )
+  const windowHours = parseOptionalNumber(env.ABUSE_COUNT_WINDOW_HOURS)
+  const hours =
+    windowHours !== undefined && windowHours >= 0
+      ? windowHours
+      : DEFAULT_ABUSE_COUNT_WINDOW_HOURS
+  return { threshold, windowMs: Math.round(hours * 3_600_000) }
+}
+
+// 在背景寫入異常紀錄（waitUntil），不增加回應延遲；key 取不到時略過。
+function reportAbuse(
+  c: Context<{ Bindings: Bindings }>,
+  entry: {
+    key: string | null
+    kind: AbuseKind
+    path: AbusePath
+    question: string
+    ip?: string
+    lineId?: string
+  },
+): void {
+  const { key, ...rest } = entry
+  if (!key) return
+  c.executionCtx.waitUntil(
+    recordAbuse(c.env.ABUSE_DB, { key, ...rest }, resolveAbuseOptions(c.env)),
+  )
+}
+
+type HttpAbuseIdentity = {
+  ip?: string
+  key: string | null
+  blocked: boolean
+}
+
+// 網頁/API 路徑以 IP 為身分做黑名單比對（與限流 key 同一套；IPv6 收斂到 /64）。
+// 取不到 IP（本機 wrangler dev）時不比對、不記錄。
+async function checkHttpBlacklist(
+  c: Context<{ Bindings: Bindings }>,
+): Promise<HttpAbuseIdentity> {
+  const ip = c.req.header('cf-connecting-ip')
+  const key = ip ? ipRateLimitKeyFromIp(ip) : null
+  if (!key) return { ip, key, blocked: false }
+  return { ip, key, blocked: await isBlacklisted(c.env.ABUSE_DB, key) }
+}
+
+// LINE 來源的異常記錄。anonymous 桶可能混雜多個無法識別的使用者，
+// 不自動記錄（否則 3 個不同人的異常會讓所有匿名事件一起被封鎖）。
+function reportLineAbuse(
+  c: Context<{ Bindings: Bindings }>,
+  source: LineMessageEvent['source'],
+  kind: AbuseKind,
+  question: string,
+): void {
+  const key = lineRateLimitKey(source)
+  if (key === 'line:anonymous') return
+  reportAbuse(c, {
+    key,
+    kind,
+    path: 'webhook',
+    question,
+    lineId: source.userId ?? source.groupId ?? source.roomId,
+  })
 }
 
 async function checkGlobalGenerationBudget(
@@ -591,11 +704,13 @@ async function replyWithFuseFallback(
   env: Bindings,
   replyToken: string,
   question: string,
+  startedAt: number,
 ): Promise<void> {
   try {
     const hits = await findClosestMatchingSections(env.ASK_INDEX, question, {
       limit: 2,
     })
+    if (hits.length === 0) await delayUntilMinimumElapsed(startedAt)
     await replyToLine(
       env,
       replyToken,
@@ -639,6 +754,7 @@ async function replyWithCag(
   replyToken: string,
   userId: string | undefined,
   question: string,
+  startedAt: number,
 ): Promise<void> {
   const retriever = resolveCagRetriever(env.CAG_RETRIEVER)
   // 快取：相同問題（retriever／model 相同）7 天內直接用快取的答案與來源回覆，不跑檢索與 AI。
@@ -691,21 +807,28 @@ async function replyWithCag(
 
   if (!cag || cag.answer.trim() === '') {
     if (!cagFailed && retriever === 'vectorize' && env.VECTORIZE) {
+      await delayUntilMinimumElapsed(startedAt)
       await replyToLine(env, replyToken, { type: 'text', text: NOT_FOUND_REPLY })
       return
     }
-    await replyWithFuseFallback(env, replyToken, question)
+    await replyWithFuseFallback(env, replyToken, question, startedAt)
     return
   }
   const answer = splitSentencesToLines(trimToCompleteSentence(cag.answer))
+  const cacheable = isCacheableCagAnswerText(answer)
+  if (!cacheable) {
+    await delayUntilMinimumElapsed(startedAt)
+  }
   await replyToLine(env, replyToken, formatCagAnswerFlex(answer, cag.sources))
   // 成功生成才寫入快取（answer + sources），供下次相同問題直接取用。
-  await putCachedResponse(
-    env.ASK_CACHE,
-    cacheKey,
-    JSON.stringify({ answer, sources: cag.sources }),
-    'application/json; charset=UTF-8',
-  )
+  if (cacheable) {
+    await putCachedResponse(
+      env.ASK_CACHE,
+      cacheKey,
+      JSON.stringify({ answer, sources: cag.sources }),
+      'application/json; charset=UTF-8',
+    )
+  }
 }
 
 app.get('/', (c) => {
@@ -741,13 +864,21 @@ app.get('/robots.txt', (c) => {
 })
 
 app.get('/ask/:question', async (c) => {
+  const startedAt = Date.now()
+  const question = decodeRouteParam(c.req.param('question'))
+  // 黑名單比對在任何 DO/KV 限流記帳之前（issue #27）。
+  const abuse = await checkHttpBlacklist(c)
+  if (abuse.blocked) {
+    return c.text(BLACKLISTED_HTTP_MESSAGE, 403)
+  }
   if (await isIpRateLimited(c)) {
+    reportAbuse(c, { key: abuse.key, kind: 'rate_limit', path: 'ask', question, ip: abuse.ip })
     return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
       'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
     })
   }
-  const question = decodeRouteParam(c.req.param('question'))
   if (isQuestionTooLong(question)) {
+    reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'ask', question, ip: abuse.ip })
     return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
   }
   // 隨機問題每次都要不同結果，不快取；其餘相同問題 7 天內直接取用。
@@ -774,7 +905,8 @@ app.get('/ask/:question', async (c) => {
       ? await findRandomSection(c.env.ASK_INDEX)
       : await findClosestMatchingSection(c.env.ASK_INDEX, question)
     if (!hit) {
-      return c.text('您的問題超出了資料庫的範圍，\n逐字稿網站連結如下：https://archive.tw', 404)
+      await delayUntilMinimumElapsed(startedAt)
+      return c.text(NOT_FOUND_REPLY, 404)
     }
     const body = formatAskAnswerHtml(hit)
     const html = `<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8"/><title>Ask</title></head><body><p>${body}</p></body></html>`
@@ -808,16 +940,24 @@ app.get('/cag/status', (c) => {
 })
 
 app.get('/cag/:question', async (c) => {
+  const startedAt = Date.now()
   // 網頁 UI 從這條路由串流，使用者可見訊息依 ?lang=en 在地化；一次解析、整路沿用。
   const lang = resolveWebLang(c.req.query('lang'))
   const messages = WEB_MESSAGES[lang]
+  const question = decodeRouteParam(c.req.param('question'))
+  // 黑名單比對在任何 DO/KV 限流記帳之前（issue #27）。
+  const abuse = await checkHttpBlacklist(c)
+  if (abuse.blocked) {
+    return c.text(messages.blacklisted, 403)
+  }
   if (await isIpRateLimited(c)) {
+    reportAbuse(c, { key: abuse.key, kind: 'rate_limit', path: 'cag', question, ip: abuse.ip })
     return c.text(messages.rateLimited, 429, {
       'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
     })
   }
-  const question = decodeRouteParam(c.req.param('question'))
   if (isQuestionTooLong(question)) {
+    reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'cag', question, ip: abuse.ip })
     return c.text(messages.tooLong, 400)
   }
   const bypassCache = shouldBypassCaches(c.req.query('refresh'))
@@ -875,19 +1015,41 @@ app.get('/cag/:question', async (c) => {
   }
 
   const response = await streamCagAnswer(c.env.AI, question, cagOptions)
-  // streamCagAnswer 查無來源時回 404（內文為繁中）；英文介面換成對應的英文訊息。
+  // streamCagAnswer 查無來源時回 404（內文為繁中 HTML，issue #29）；
+  // 英文介面（?lang=en）換成對應的英文 HTML 版本。
   if (response.status === 404 && lang === 'en') {
     await response.body?.cancel()
-    return new Response(messages.notFound, {
+    return new Response(NOT_FOUND_REPLY_HTML_EN, {
       status: 404,
       headers: response.headers,
     })
   }
-  return cacheStreamingResponse(c, bypassCache ? null : cacheKey, response)
+  return cacheCagResponse(c, bypassCache ? null : cacheKey, response)
 })
 
 app.post('/cag', async (c) => {
+  const startedAt = Date.now()
+  // 黑名單比對在任何 DO/KV 限流記帳之前（issue #27）。
+  const abuse = await checkHttpBlacklist(c)
+  if (abuse.blocked) {
+    return c.text(BLACKLISTED_HTTP_MESSAGE, 403)
+  }
   if (await isIpRateLimited(c)) {
+    // body 已被 maxApiBodySize 中介層緩衝在記憶體，best-effort 解析問題供記錄。
+    let loggedQuestion = ''
+    try {
+      const body = (await c.req.json()) as { question?: unknown }
+      if (typeof body.question === 'string') loggedQuestion = body.question
+    } catch {
+      // 解析失敗就記空問題。
+    }
+    reportAbuse(c, {
+      key: abuse.key,
+      kind: 'rate_limit',
+      path: 'cag',
+      question: loggedQuestion,
+      ip: abuse.ip,
+    })
     return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
       'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
     })
@@ -904,6 +1066,7 @@ app.post('/cag', async (c) => {
     return c.text('question is required', 400)
   }
   if (isQuestionTooLong(question)) {
+    reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'cag', question, ip: abuse.ip })
     return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
   }
 
@@ -975,10 +1138,11 @@ app.post('/cag', async (c) => {
   }
 
   const response = await streamCagAnswer(c.env.AI, question, cagOptions)
-  return cacheStreamingResponse(c, bypassCache ? null : cacheKey, response)
+  return cacheCagResponse(c, bypassCache ? null : cacheKey, response)
 })
 
 app.post('/webhook', async (c) => {
+  const startedAt = Date.now()
   const rawBody = await c.req.text()
   const signature = c.req.header('x-line-signature')
 
@@ -1014,7 +1178,14 @@ app.post('/webhook', async (c) => {
   const userId = event.source.userId
   const userText = event.message.text ?? ''
 
+  // 黑名單成員直接 ack 後丟棄（issue #27）：不回覆、不做任何 DO/KV 限流記帳，
+  // 完全不消耗全域生成額度。回 200 是為了避免 LINE 平台重送同一事件。
+  if (await isBlacklisted(c.env.ABUSE_DB, lineRateLimitKey(event.source))) {
+    return c.text('OK', 200)
+  }
+
   if (isQuestionTooLong(userText)) {
+    reportLineAbuse(c, event.source, 'question_too_long', userText)
     c.executionCtx.waitUntil(
       replyToLine(c.env, replyToken, { type: 'text', text: QUESTION_TOO_LONG_MESSAGE }),
     )
@@ -1025,6 +1196,7 @@ app.post('/webhook', async (c) => {
   // userId 缺席時改以 groupId / roomId / anonymous 做較粗的限流，避免群組事件繞過。
   // （仍須回 200 ack，並用一次性 reply token 送出提示。）
   if (await isRateLimited(c.env, lineRateLimitKey(event.source))) {
+    reportLineAbuse(c, event.source, 'rate_limit', userText)
     c.executionCtx.waitUntil(
       replyToLine(c.env, replyToken, { type: 'text', text: RATE_LIMIT_LINE_REPLY }),
     )
@@ -1034,7 +1206,7 @@ app.post('/webhook', async (c) => {
   // 關鍵：CAG 生成需數秒到十幾秒，超過 LINE 對 webhook 的「2 秒內回 2xx」限制，
   // 因此把慢工作交給 ctx.waitUntil 背景執行（回應後最多 30 秒預算），handler 立刻 ack。
   // reply token 約 1 分鐘有效，留待背景用 Reply API 送出「唯一一次」回覆。
-  c.executionCtx.waitUntil(replyWithCag(c.env, replyToken, userId, userText))
+  c.executionCtx.waitUntil(replyWithCag(c.env, replyToken, userId, userText, startedAt))
 
   return c.text('OK', 200)
 })

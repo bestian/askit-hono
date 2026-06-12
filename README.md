@@ -40,6 +40,9 @@ Also available as a LINE bot.
 - **Abuse protection** — two-layer rate limiting (edge limiter 15 req/10 s
   per key, then a per-key Durable Object cooldown), a global generation
   budget (30/min, 1000/day), 30 s CPU cap, strict CSP and security headers.
+  Rate-limit hits and over-long questions are logged to a D1 abuse log, and
+  repeat offenders are auto-blacklisted (default: 3 events in 24 h → `403`);
+  unbind `ABUSE_DB` and it degrades gracefully (no log, empty blacklist).
 - **Quality** — an offline eval harness (`npm run eval:cag`,
   `npm run eval:cag:depth`) scores answer depth and grounding before model
   or retrieval changes ship.
@@ -283,6 +286,9 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 | `npm run vectorize:create` / `vectorize:sync` | Create / backfill the Vectorize index |
 | `npm run eval:cag` / `eval:cag:depth` | Model / retrieval-depth eval harnesses |
 | `npm run r2:lifecycle` | Apply the 7-day lifecycle to the answer-cache buckets |
+| `npm run abuse:db:create` / `abuse:db:init` | Create / initialise the `askit-abuse-log` D1 database (`:local` for dev) |
+| `npm run abuse:report` | Analyse the abuse log into `build/abuse-report.html` (`LOCAL=1` for local D1) |
+| `npm run abuse:unban -- <key>` | Remove a key from the blacklist (also clears its old log entries) |
 | `npm run tail` | Live-tail Worker logs |
 
 ## Project structure
@@ -298,10 +304,13 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 │       ├── cagCache.ts            # KV source cache (1 h)
 │       ├── cache.ts               # R2 answer cache (7 days)
 │       ├── cagEval.ts             # Eval scoring (incl. pinned model id)
+│       ├── abuse.ts               # D1 abuse log + auto-blacklist (issue #27)
+│       ├── notFoundReply.ts       # Out-of-scope replies (plain + HTML, zh + en)
 │       ├── search.ts              # R2 Fuse index loader + fuzzy search
 │       └── askIndexFormat.ts      # Shared index types/options
 ├── public/                        # Static assets + Vue front-end (app.js)
-├── scripts/                       # build-ask-index / vectorize-sync / evals
+├── db/                            # D1 schema for the abuse log + blacklist
+├── scripts/                       # build-ask-index / vectorize-sync / evals / abuse ops
 ├── test/                          # node --test suites
 ├── design/                        # Architecture notes + system diagram
 ├── config/                        # R2 lifecycle rules

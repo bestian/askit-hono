@@ -2,6 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import app, { WEB_MESSAGES, webMessage } from '../src/index'
+import {
+  NOT_FOUND_REPLY_HTML,
+  NOT_FOUND_REPLY_HTML_EN,
+} from '../src/utils/notFoundReply'
 
 test('zh-Hant web messages stay byte-identical to the historical literals', () => {
   const zh = WEB_MESSAGES['zh-Hant']
@@ -114,15 +118,12 @@ test('GET /cag/:question localises the not-found 404 via ?lang=en', async () => 
     makeEnv(),
   )
   assert.equal(en.status, 404)
-  assert.equal(await en.text(), WEB_MESSAGES.en.notFound)
+  assert.equal(await en.text(), NOT_FOUND_REPLY_HTML_EN)
 
-  // zh 行為不變：沿用 streamCagAnswer 既有的 404 內文。
+  // zh 行為不變：沿用 streamCagAnswer 既有的 404 HTML 內文（issue #29）。
   const zh = await app.request('/cag/%E6%B8%AC%E8%A9%A6', undefined, makeEnv())
   assert.equal(zh.status, 404)
-  assert.equal(
-    await zh.text(),
-    '您的問題超出了資料庫的範圍，逐字稿網站連結如下：https://archive.tw',
-  )
+  assert.equal(await zh.text(), NOT_FOUND_REPLY_HTML)
 })
 
 test('GET /cag/:question localises the rate-limit message via ?lang=en', async () => {
@@ -132,19 +133,30 @@ test('GET /cag/:question localises the rate-limit message via ?lang=en', async (
     },
   })
   const headers = { 'cf-connecting-ip': '203.0.113.10' }
+  // 限流路徑會呼叫 reportAbuse → c.executionCtx.waitUntil，測試需提供 ctx。
+  const waitUntilPromises: Promise<unknown>[] = []
+  const makeCtx = () => ({
+    waitUntil: (promise: Promise<unknown>) => {
+      waitUntilPromises.push(promise)
+    },
+    passThroughOnException: () => {},
+    props: {},
+  })
 
   const en = await app.request(
     '/cag/%E6%B8%AC%E8%A9%A6?lang=en',
     { headers },
     makeEnv(),
+    makeCtx(),
   )
   assert.equal(en.status, 429)
   assert.equal(en.headers.get('Retry-After'), '3')
   assert.equal(await en.text(), WEB_MESSAGES.en.rateLimited)
 
-  const zh = await app.request('/cag/%E6%B8%AC%E8%A9%A6', { headers }, makeEnv())
+  const zh = await app.request('/cag/%E6%B8%AC%E8%A9%A6', { headers }, makeEnv(), makeCtx())
   assert.equal(zh.status, 429)
   assert.equal(await zh.text(), WEB_MESSAGES['zh-Hant'].rateLimited)
+  await Promise.all(waitUntilPromises)
 })
 
 test('GET /cag falls back to archive retrieval for Han-free questions when Vectorize is empty', async () => {

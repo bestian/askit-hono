@@ -292,6 +292,17 @@ const EN_STOPWORD_PATTERN = new RegExp(
 )
 
 const HAN_PATTERN = /\p{Script=Han}/u
+const LATIN_LETTER_PATTERN = /[A-Za-z]/
+
+/**
+ * 快速字元判別（issue #37）：LINE 提問若「只有英文與符號」——含至少一個拉丁字母、
+ * 且不含任何漢字——回傳 'en'（可直接當作 generateCagAnswer 的 answerLanguage）；
+ * 其餘（含中文，或無拉丁字母的純符號／數字）回傳 undefined，沿用預設繁中作答。
+ */
+export function detectCagAnswerLanguage(question: string): 'en' | undefined {
+  if (HAN_PATTERN.test(question)) return undefined
+  return LATIN_LETTER_PATTERN.test(question) ? 'en' : undefined
+}
 
 export function buildCagQueryVariants(question: string): string[] {
   const cleaned = stripQuestionDirectives(question)

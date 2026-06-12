@@ -5,6 +5,15 @@ import { renderHomePage } from './pages/home'
 import { renderPrivacyPolicyPage } from './pages/privacy'
 import { renderTermsOfUsePage } from './pages/terms'
 import {
+  type AbuseKind,
+  type AbusePath,
+  type AbuseThresholdOptions,
+  DEFAULT_ABUSE_BLACKLIST_THRESHOLD,
+  DEFAULT_ABUSE_COUNT_WINDOW_HOURS,
+  isBlacklisted,
+  recordAbuse,
+} from './utils/abuse'
+import {
   type CagAnswer,
   type CagRetriever,
   type CagSource,
@@ -66,6 +75,11 @@ type Bindings = {
   // 任一未綁時，該層自動跳過（dev/測試仍可運作）。
   RATE_LIMITER?: RateLimiter
   RATE_LIMIT_DO?: DurableObjectNamespace
+  // 超量／異常請求追蹤 log 與黑名單（issue #27）。未綁時優雅降級：
+  // 不寫 log、黑名單視為空，請求照常處理。
+  ABUSE_DB?: D1Database
+  ABUSE_BLACKLIST_THRESHOLD?: string
+  ABUSE_COUNT_WINDOW_HOURS?: string
 }
 
 const DEFAULT_CAG_RETRIEVER: CagRetriever = 'vectorize'
@@ -133,6 +147,8 @@ const RATE_LIMIT_LINE_REPLY = '您的發問過於頻繁，請稍候約 10 秒再
 const GLOBAL_BUDGET_HTTP_MESSAGE = '目前服務量已達上限，請稍後再試，謝謝'
 const GLOBAL_BUDGET_LINE_REPLY = '目前服務量已達上限，請稍後再試，謝謝'
 const QUESTION_TOO_LONG_MESSAGE = '您的問題字數過長，請縮短問題的長度，謝謝!'
+// 黑名單成員的回覆（issue #27）。LINE 來源被封鎖時不回覆、僅 ack。
+const BLACKLISTED_HTTP_MESSAGE = '由於多次異常請求，您的存取已被暫停'
 const ROBOTS_TXT = `User-agent: *
 Disallow: /ask/
 Disallow: /cag/
@@ -412,6 +428,79 @@ async function isIpRateLimited(c: Context<{ Bindings: Bindings }>): Promise<bool
   return isRateLimited(c.env, ipRateLimitKeyFromIp(ip))
 }
 
+// ── 異常請求追蹤與黑名單（issue #27）────────────────────────────────────────
+// 「單一 IP/Id 超量」或「問題字串過長」時寫入 abuse_log；同一 key 在視窗內
+// 累積達門檻次數即自動進黑名單。黑名單比對放在「任何 DO/KV 限流記帳之前」，
+// 被封鎖的請求完全不消耗全域生成額度，以保障善意使用者。
+
+function resolveAbuseOptions(env: Bindings): AbuseThresholdOptions {
+  const threshold = parsePositiveInteger(
+    env.ABUSE_BLACKLIST_THRESHOLD,
+    DEFAULT_ABUSE_BLACKLIST_THRESHOLD,
+  )
+  const windowHours = parseOptionalNumber(env.ABUSE_COUNT_WINDOW_HOURS)
+  const hours =
+    windowHours !== undefined && windowHours >= 0
+      ? windowHours
+      : DEFAULT_ABUSE_COUNT_WINDOW_HOURS
+  return { threshold, windowMs: Math.round(hours * 3_600_000) }
+}
+
+// 在背景寫入異常紀錄（waitUntil），不增加回應延遲；key 取不到時略過。
+function reportAbuse(
+  c: Context<{ Bindings: Bindings }>,
+  entry: {
+    key: string | null
+    kind: AbuseKind
+    path: AbusePath
+    question: string
+    ip?: string
+    lineId?: string
+  },
+): void {
+  const { key, ...rest } = entry
+  if (!key) return
+  c.executionCtx.waitUntil(
+    recordAbuse(c.env.ABUSE_DB, { key, ...rest }, resolveAbuseOptions(c.env)),
+  )
+}
+
+type HttpAbuseIdentity = {
+  ip?: string
+  key: string | null
+  blocked: boolean
+}
+
+// 網頁/API 路徑以 IP 為身分做黑名單比對（與限流 key 同一套；IPv6 收斂到 /64）。
+// 取不到 IP（本機 wrangler dev）時不比對、不記錄。
+async function checkHttpBlacklist(
+  c: Context<{ Bindings: Bindings }>,
+): Promise<HttpAbuseIdentity> {
+  const ip = c.req.header('cf-connecting-ip')
+  const key = ip ? ipRateLimitKeyFromIp(ip) : null
+  if (!key) return { ip, key, blocked: false }
+  return { ip, key, blocked: await isBlacklisted(c.env.ABUSE_DB, key) }
+}
+
+// LINE 來源的異常記錄。anonymous 桶可能混雜多個無法識別的使用者，
+// 不自動記錄（否則 3 個不同人的異常會讓所有匿名事件一起被封鎖）。
+function reportLineAbuse(
+  c: Context<{ Bindings: Bindings }>,
+  source: LineMessageEvent['source'],
+  kind: AbuseKind,
+  question: string,
+): void {
+  const key = lineRateLimitKey(source)
+  if (key === 'line:anonymous') return
+  reportAbuse(c, {
+    key,
+    kind,
+    path: 'webhook',
+    question,
+    lineId: source.userId ?? source.groupId ?? source.roomId,
+  })
+}
+
 async function checkGlobalGenerationBudget(
   env: Bindings,
 ): Promise<BudgetLimitDecision> {
@@ -680,11 +769,18 @@ app.get('/robots.txt', (c) => {
 })
 
 app.get('/ask/:question', async (c) => {
+  const question = decodeRouteParam(c.req.param('question'))
+  // 黑名單比對在任何 DO/KV 限流記帳之前（issue #27）。
+  const abuse = await checkHttpBlacklist(c)
+  if (abuse.blocked) {
+    return c.text(BLACKLISTED_HTTP_MESSAGE, 403)
+  }
   if (await isIpRateLimited(c)) {
+    reportAbuse(c, { key: abuse.key, kind: 'rate_limit', path: 'ask', question, ip: abuse.ip })
     return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, { 'Retry-After': '10' })
   }
-  const question = decodeRouteParam(c.req.param('question'))
   if (isQuestionTooLong(question)) {
+    reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'ask', question, ip: abuse.ip })
     return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
   }
   // 隨機問題每次都要不同結果，不快取；其餘相同問題 7 天內直接取用。
@@ -745,11 +841,18 @@ app.get('/cag/status', (c) => {
 })
 
 app.get('/cag/:question', async (c) => {
+  const question = decodeRouteParam(c.req.param('question'))
+  // 黑名單比對在任何 DO/KV 限流記帳之前（issue #27）。
+  const abuse = await checkHttpBlacklist(c)
+  if (abuse.blocked) {
+    return c.text(BLACKLISTED_HTTP_MESSAGE, 403)
+  }
   if (await isIpRateLimited(c)) {
+    reportAbuse(c, { key: abuse.key, kind: 'rate_limit', path: 'cag', question, ip: abuse.ip })
     return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, { 'Retry-After': '10' })
   }
-  const question = decodeRouteParam(c.req.param('question'))
   if (isQuestionTooLong(question)) {
+    reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'cag', question, ip: abuse.ip })
     return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
   }
   const model = c.env.ASK_MODEL || DEFAULT_CAG_MODEL
@@ -805,7 +908,27 @@ app.get('/cag/:question', async (c) => {
 })
 
 app.post('/cag', async (c) => {
+  // 黑名單比對在任何 DO/KV 限流記帳之前（issue #27）。
+  const abuse = await checkHttpBlacklist(c)
+  if (abuse.blocked) {
+    return c.text(BLACKLISTED_HTTP_MESSAGE, 403)
+  }
   if (await isIpRateLimited(c)) {
+    // body 已被 maxApiBodySize 中介層緩衝在記憶體，best-effort 解析問題供記錄。
+    let loggedQuestion = ''
+    try {
+      const body = (await c.req.json()) as { question?: unknown }
+      if (typeof body.question === 'string') loggedQuestion = body.question
+    } catch {
+      // 解析失敗就記空問題。
+    }
+    reportAbuse(c, {
+      key: abuse.key,
+      kind: 'rate_limit',
+      path: 'cag',
+      question: loggedQuestion,
+      ip: abuse.ip,
+    })
     return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, { 'Retry-After': '10' })
   }
   let payload: { question?: unknown; topK?: unknown; top_k?: unknown; citableTopK?: unknown; cite_top_k?: unknown; maxTokens?: unknown; max_tokens?: unknown; retriever?: unknown; minScore?: unknown; min_score?: unknown }
@@ -820,6 +943,7 @@ app.post('/cag', async (c) => {
     return c.text('question is required', 400)
   }
   if (isQuestionTooLong(question)) {
+    reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'cag', question, ip: abuse.ip })
     return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
   }
 
@@ -923,7 +1047,14 @@ app.post('/webhook', async (c) => {
   const userId = event.source.userId
   const userText = event.message.text ?? ''
 
+  // 黑名單成員直接 ack 後丟棄（issue #27）：不回覆、不做任何 DO/KV 限流記帳，
+  // 完全不消耗全域生成額度。回 200 是為了避免 LINE 平台重送同一事件。
+  if (await isBlacklisted(c.env.ABUSE_DB, lineRateLimitKey(event.source))) {
+    return c.text('OK', 200)
+  }
+
   if (isQuestionTooLong(userText)) {
+    reportLineAbuse(c, event.source, 'question_too_long', userText)
     c.executionCtx.waitUntil(
       replyToLine(c.env, replyToken, { type: 'text', text: QUESTION_TOO_LONG_MESSAGE }),
     )
@@ -934,6 +1065,7 @@ app.post('/webhook', async (c) => {
   // userId 缺席時改以 groupId / roomId / anonymous 做較粗的限流，避免群組事件繞過。
   // （仍須回 200 ack，並用一次性 reply token 送出提示。）
   if (await isRateLimited(c.env, lineRateLimitKey(event.source))) {
+    reportLineAbuse(c, event.source, 'rate_limit', userText)
     c.executionCtx.waitUntil(
       replyToLine(c.env, replyToken, { type: 'text', text: RATE_LIMIT_LINE_REPLY }),
     )

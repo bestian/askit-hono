@@ -25,6 +25,7 @@ import {
   DEFAULT_CAG_MODEL,
   DEFAULT_MAX_COMPLETION_TOKENS,
   DEFAULT_TOP_K,
+  detectCagAnswerLanguage,
   generateCagAnswer,
   getCagStatus,
   normalizeCagOptions,
@@ -43,11 +44,9 @@ import {
 import {
   findClosestMatchingSection,
   findClosestMatchingSections,
-  findRandomSection,
   formatAskAnswerHtml,
   formatCagAnswerFlex,
   formatFuseAnswerFlex,
-  isRandomAskQuestion,
   type LineReplyMessage,
 } from './utils/search'
 
@@ -140,6 +139,10 @@ const WEBHOOK_LOADING_SECONDS = 30
 const WEBHOOK_CAG_ANSWER_INSTRUCTION =
   '請以繁體中文用 3～5 句話簡潔作答，全文控制在約 200 字內並完整收尾，' +
   '於陳述具體事實時標註 [1]、[2] 等來源編號。'
+// 偵測到全英文提問（issue #37）時改用此英文指示，與 answerLanguage:'en' 一致，避免中英衝突。
+const WEBHOOK_CAG_ANSWER_INSTRUCTION_EN =
+  'Answer in English in 3–5 concise sentences, keep the whole reply within about 100 words ' +
+  'and finish cleanly, and cite source numbers like [1], [2] when stating concrete facts.'
 // 限流冷卻視窗：同一使用者於此毫秒數內最多 1 次（對齊首頁送出鈕冷卻）。
 const RATE_LIMIT_WINDOW_MS = 3_000
 const NOT_FOUND_REPLY_MIN_DELAY_MS = RATE_LIMIT_WINDOW_MS
@@ -181,6 +184,8 @@ function resolveWebLang(lang: string | undefined): WebMessageLang {
 
 const NOT_FOUND_REPLY = WEB_MESSAGES['zh-Hant'].notFound
 const ERROR_REPLY = '查詢發生錯誤，請稍後再試'
+// 全英文提問（issue #37）走錯誤路徑時的英文版回覆。
+const ERROR_REPLY_EN = 'Something went wrong while answering — please try again later.'
 const GLOBAL_GENERATION_LIMIT_PER_MINUTE = 30
 const GLOBAL_GENERATION_LIMIT_PER_DAY = 1_000
 const MAX_QUESTION_CHARS = 100
@@ -188,9 +193,7 @@ const MAX_API_BODY_BYTES = 32 * 1024
 const MIN_CACHEABLE_CAG_ANSWER_CHARS = 12
 // 限流（同一使用者冷卻視窗內第 2 次請求）觸發時的回覆訊息。
 const RATE_LIMIT_HTTP_MESSAGE = WEB_MESSAGES['zh-Hant'].rateLimited
-const RATE_LIMIT_LINE_REPLY = RATE_LIMIT_HTTP_MESSAGE
 const GLOBAL_BUDGET_HTTP_MESSAGE = WEB_MESSAGES['zh-Hant'].budget
-const GLOBAL_BUDGET_LINE_REPLY = WEB_MESSAGES['zh-Hant'].budget
 const QUESTION_TOO_LONG_MESSAGE = WEB_MESSAGES['zh-Hant'].tooLong
 // 黑名單成員的回覆（issue #27）。LINE 來源被封鎖時不回覆、僅 ack。
 const BLACKLISTED_HTTP_MESSAGE = WEB_MESSAGES['zh-Hant'].blacklisted
@@ -705,6 +708,7 @@ async function replyWithFuseFallback(
   replyToken: string,
   question: string,
   startedAt: number,
+  lang: WebMessageLang,
 ): Promise<void> {
   try {
     const hits = await findClosestMatchingSections(env.ASK_INDEX, question, {
@@ -715,12 +719,15 @@ async function replyWithFuseFallback(
       env,
       replyToken,
       hits.length > 0
-        ? formatFuseAnswerFlex(hits)
-        : { type: 'text', text: NOT_FOUND_REPLY },
+        ? formatFuseAnswerFlex(hits, lang)
+        : { type: 'text', text: webMessage('notFound', lang) },
     )
   } catch (e) {
     console.error('Fuse fallback 失敗:', e)
-    await replyToLine(env, replyToken, { type: 'text', text: ERROR_REPLY })
+    await replyToLine(env, replyToken, {
+      type: 'text',
+      text: lang === 'en' ? ERROR_REPLY_EN : ERROR_REPLY,
+    })
   }
 }
 
@@ -757,10 +764,15 @@ async function replyWithCag(
   startedAt: number,
 ): Promise<void> {
   const retriever = resolveCagRetriever(env.CAG_RETRIEVER)
-  // 快取：相同問題（retriever／model 相同）7 天內直接用快取的答案與來源回覆，不跑檢索與 AI。
+  // 全英文提問（issue #37）：以英文生成並回覆固定訊息；含中文則沿用預設繁中。
+  const answerLanguage = detectCagAnswerLanguage(question)
+  const lang: WebMessageLang = answerLanguage === 'en' ? 'en' : 'zh-Hant'
+  // 快取：相同問題（retriever／model／語言相同）7 天內直接用快取的答案與來源回覆，不跑檢索與 AI。
+  // answerLanguage 由問題字元決定，故同一問題語言固定；en 入 key 避免沿用舊的繁中快取項。
   const cacheKey = await buildCacheKey('webhook', question, {
     retriever,
     model: DEFAULT_CAG_MODEL,
+    answerLanguage,
   })
   const cached = await getCachedResponse(env.ASK_CACHE, cacheKey)
   if (cached) {
@@ -770,7 +782,7 @@ async function replyWithCag(
         sources: CagSource[]
       }
       const refresh = refreshCachedResponse(env.ASK_CACHE, cacheKey, cached)
-      await replyToLine(env, replyToken, formatCagAnswerFlex(answer, sources))
+      await replyToLine(env, replyToken, formatCagAnswerFlex(answer, sources, lang))
       await refresh
       return
     } catch (e) {
@@ -780,7 +792,7 @@ async function replyWithCag(
 
   const budget = await checkGlobalGenerationBudget(env)
   if (!budget.allowed) {
-    await replyToLine(env, replyToken, { type: 'text', text: GLOBAL_BUDGET_LINE_REPLY })
+    await replyToLine(env, replyToken, { type: 'text', text: webMessage('budget', lang) })
     return
   }
 
@@ -794,7 +806,11 @@ async function replyWithCag(
       topK: WEBHOOK_CAG_TOP_K,
       citableTopK: WEBHOOK_CAG_CITE_TOP_K,
       maxCompletionTokens: WEBHOOK_CAG_MAX_COMPLETION_TOKENS,
-      answerInstruction: WEBHOOK_CAG_ANSWER_INSTRUCTION,
+      answerInstruction:
+        answerLanguage === 'en'
+          ? WEBHOOK_CAG_ANSWER_INSTRUCTION_EN
+          : WEBHOOK_CAG_ANSWER_INSTRUCTION,
+      answerLanguage,
       retriever,
       vectorize: env.VECTORIZE,
       vectorizeMinScore: resolveVectorizeMinScore(env.CAG_VECTORIZE_MIN_SCORE),
@@ -808,10 +824,10 @@ async function replyWithCag(
   if (!cag || cag.answer.trim() === '') {
     if (!cagFailed && retriever === 'vectorize' && env.VECTORIZE) {
       await delayUntilMinimumElapsed(startedAt)
-      await replyToLine(env, replyToken, { type: 'text', text: NOT_FOUND_REPLY })
+      await replyToLine(env, replyToken, { type: 'text', text: webMessage('notFound', lang) })
       return
     }
-    await replyWithFuseFallback(env, replyToken, question, startedAt)
+    await replyWithFuseFallback(env, replyToken, question, startedAt, lang)
     return
   }
   const answer = splitSentencesToLines(trimToCompleteSentence(cag.answer))
@@ -819,7 +835,7 @@ async function replyWithCag(
   if (!cacheable) {
     await delayUntilMinimumElapsed(startedAt)
   }
-  await replyToLine(env, replyToken, formatCagAnswerFlex(answer, cag.sources))
+  await replyToLine(env, replyToken, formatCagAnswerFlex(answer, cag.sources, lang))
   // 成功生成才寫入快取（answer + sources），供下次相同問題直接取用。
   if (cacheable) {
     await putCachedResponse(
@@ -881,9 +897,8 @@ app.get('/ask/:question', async (c) => {
     reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'ask', question, ip: abuse.ip })
     return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
   }
-  // 隨機問題每次都要不同結果，不快取；其餘相同問題 7 天內直接取用。
-  const random = isRandomAskQuestion(question)
-  const cacheKey = random ? null : await buildCacheKey('ask', question)
+  // 相同問題 7 天內直接取用快取。
+  const cacheKey = await buildCacheKey('ask', question)
 
   if (cacheKey) {
     const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
@@ -901,9 +916,7 @@ app.get('/ask/:question', async (c) => {
   }
 
   try {
-    const hit = random
-      ? await findRandomSection(c.env.ASK_INDEX)
-      : await findClosestMatchingSection(c.env.ASK_INDEX, question)
+    const hit = await findClosestMatchingSection(c.env.ASK_INDEX, question)
     if (!hit) {
       await delayUntilMinimumElapsed(startedAt)
       return c.text(NOT_FOUND_REPLY, 404)
@@ -1177,6 +1190,8 @@ app.post('/webhook', async (c) => {
   const replyToken = event.replyToken
   const userId = event.source.userId
   const userText = event.message.text ?? ''
+  // 全英文提問（issue #37）連同固定提示一併以英文回覆；含中文則沿用預設繁中。
+  const lang: WebMessageLang = detectCagAnswerLanguage(userText) === 'en' ? 'en' : 'zh-Hant'
 
   // 黑名單成員直接 ack 後丟棄（issue #27）：不回覆、不做任何 DO/KV 限流記帳，
   // 完全不消耗全域生成額度。回 200 是為了避免 LINE 平台重送同一事件。
@@ -1187,7 +1202,7 @@ app.post('/webhook', async (c) => {
   if (isQuestionTooLong(userText)) {
     reportLineAbuse(c, event.source, 'question_too_long', userText)
     c.executionCtx.waitUntil(
-      replyToLine(c.env, replyToken, { type: 'text', text: QUESTION_TOO_LONG_MESSAGE }),
+      replyToLine(c.env, replyToken, { type: 'text', text: webMessage('tooLong', lang) }),
     )
     return c.text('OK', 200)
   }
@@ -1198,7 +1213,7 @@ app.post('/webhook', async (c) => {
   if (await isRateLimited(c.env, lineRateLimitKey(event.source))) {
     reportLineAbuse(c, event.source, 'rate_limit', userText)
     c.executionCtx.waitUntil(
-      replyToLine(c.env, replyToken, { type: 'text', text: RATE_LIMIT_LINE_REPLY }),
+      replyToLine(c.env, replyToken, { type: 'text', text: webMessage('rateLimited', lang) }),
     )
     return c.text('OK', 200)
   }

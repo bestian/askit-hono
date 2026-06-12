@@ -34,6 +34,14 @@ type LineFlexMessage = {
 
 export type LineReplyMessage = LineTextMessage | LineFlexMessage
 
+// LINE Flex 出處標籤語言（issue #38）：全英文提問時換成短英文字，避免切版。
+export type FlexLang = 'zh-Hant' | 'en'
+
+const FLEX_SOURCE_LABELS = {
+  'zh-Hant': { source: (n: number) => `出處 ${n}`, visit: '前往來源' },
+  en: { source: (n: number) => `Source ${n}`, visit: 'Visit' },
+} as const
+
 type LoadedIndex = {
   fuse: Fuse<SectionRow>
   rows: SectionRow[]
@@ -290,11 +298,6 @@ export function normalizeAskSearchQuestion(question: string): string {
     .trim()
 }
 
-export function isRandomAskQuestion(question: string): boolean {
-  const q = question.trim().toLowerCase()
-  return q === '隨機' || q === '隨機一篇' || q === 'random' || q === 'Random'
-}
-
 /**
  * 從 R2 預先建好的 Fuse index 找最相近的段落。
  * 索引由 `npm run build:index` 從 D1 sections view 預先產出並上傳。
@@ -347,20 +350,6 @@ export async function findClosestMatchingSections(
     if (results.length >= limit) break
   }
   return results
-}
-
-export async function findRandomSection(
-  bucket: R2Bucket,
-  options?: {
-    r2Key?: string
-  },
-): Promise<AskSearchResult | null> {
-  const key = options?.r2Key ?? ASK_INDEX_R2_KEY
-  const { rows } = await getIndex(bucket, key)
-  if (rows.length === 0) return null
-
-  const randomIndex = Math.floor(Math.random() * rows.length)
-  return rowToResult(rows[randomIndex])
 }
 
 export function buildArchiveTwSectionHref(
@@ -656,7 +645,9 @@ export function formatAskAnswerFlex(result: AskSearchResult): LineReplyMessage {
 export function formatCagAnswerFlex(
   answer: string,
   sources: CagSource[],
+  lang: FlexLang = 'zh-Hant',
 ): LineReplyMessage {
+  const labels = FLEX_SOURCE_LABELS[lang]
   const displaySources = sources.slice(0, 6)
   const content = truncatePlainText(
     markdownToLinePlainText(answer),
@@ -674,7 +665,7 @@ export function formatCagAnswerFlex(
     const details = [
       {
         type: 'text',
-        text: `出處 ${index + 1}`,
+        text: labels.source(index + 1),
         color: '#aaaaaa',
         size: 'xs',
       },
@@ -716,7 +707,7 @@ export function formatCagAnswerFlex(
           height: 'sm',
           action: {
             type: 'uri',
-            label: '前往來源',
+            label: labels.visit,
             uri: source.href,
           },
         },
@@ -777,9 +768,13 @@ export function formatCagAnswerFlex(
   }
 }
 
-export function formatFuseAnswerFlex(results: AskSearchResult[]): LineReplyMessage {
+export function formatFuseAnswerFlex(
+  results: AskSearchResult[],
+  lang: FlexLang = 'zh-Hant',
+): LineReplyMessage {
   return formatCagAnswerFlex(
     buildFuseAnswerText(results.slice(0, 2)),
     results.slice(0, 2).map(askResultToCagSource),
+    lang,
   )
 }

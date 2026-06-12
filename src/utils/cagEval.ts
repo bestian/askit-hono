@@ -15,11 +15,31 @@ export const CAG_MODEL_PRICING: Record<string, CagModelPricing> = {
 export const CAG_TYPICAL_INPUT_TOKENS = 4_500
 export const CAG_TYPICAL_OUTPUT_TOKENS = 300
 
+export const DEFAULT_MIN_ANSWER_CHARS = 80
+export const DEFAULT_MIN_GROUNDING_SCORE = 0.08
+
 export type CagEvalCase = {
   id: string
   question: string
   requireTraditionalChinese?: boolean
   minCitations?: number
+  minAnswerChars?: number
+  minGroundingScore?: number
+}
+
+export type CagDepthScore = {
+  answerChars: number
+  sentenceCount: number
+  totalSourceChars: number
+  avgSourceChars: number
+  citedSourceChars: number
+  groundingScore: number
+  shallow: boolean
+}
+
+export type CagDepthThresholds = {
+  minAnswerChars?: number
+  minGroundingScore?: number
 }
 
 export const DEFAULT_CAG_EVAL_CASES: CagEvalCase[] = [
@@ -159,4 +179,102 @@ export function evalPassRatio(passed: number, total: number): number {
 
 export function evalMeetsThreshold(passed: number, total: number): boolean {
   return evalPassRatio(passed, total) >= CAG_EVAL_PASS_RATIO
+}
+
+function stripCitationMarkers(answer: string): string {
+  return answer.replace(/\[\^?\d{1,2}(?:\s*,\s*\d{1,2})*\]/g, '')
+}
+
+function characterBigrams(text: string): string[] {
+  const normalized = text.replace(/\s+/g, '')
+  if (normalized.length < 2) return []
+  const bigrams: string[] = []
+  for (let i = 0; i < normalized.length - 1; i += 1) {
+    bigrams.push(normalized.slice(i, i + 2))
+  }
+  return bigrams
+}
+
+export function countSentences(text: string): number {
+  const matches = text.match(/[。！？.!?…]+/gu)
+  return matches?.length ?? (text.trim() === '' ? 0 : 1)
+}
+
+export function groundingScoreForAnswer(
+  answer: string,
+  sources: string[],
+): number {
+  const bigrams = characterBigrams(stripCitationMarkers(answer))
+  if (bigrams.length === 0) return 0
+  const haystack = sources
+    .map((source) => source.replace(/\s+/g, ''))
+    .join('')
+  if (haystack === '') return 0
+
+  let hits = 0
+  for (const bigram of bigrams) {
+    if (haystack.includes(bigram)) hits += 1
+  }
+  return hits / bigrams.length
+}
+
+export function sourceCharStats(
+  sources: Array<{ content: string }>,
+  citedIndexes: number[] = sources.map((_, index) => index + 1),
+): { totalSourceChars: number; avgSourceChars: number; citedSourceChars: number } {
+  const totalSourceChars = sources.reduce((sum, source) => sum + source.content.length, 0)
+  const citedSources = citedIndexes
+    .map((index) => sources[index - 1])
+    .filter((source): source is { content: string } => Boolean(source))
+  const citedSourceChars = citedSources.reduce((sum, source) => sum + source.content.length, 0)
+  const avgSourceChars = sources.length > 0
+    ? Math.round(totalSourceChars / sources.length)
+    : 0
+  return { totalSourceChars, avgSourceChars, citedSourceChars }
+}
+
+export function isShallowAnswer(
+  binaryPassed: boolean,
+  depth: Pick<CagDepthScore, 'answerChars' | 'groundingScore'>,
+  thresholds?: CagDepthThresholds,
+): boolean {
+  if (!binaryPassed) return false
+  const minAnswerChars = thresholds?.minAnswerChars ?? DEFAULT_MIN_ANSWER_CHARS
+  const minGroundingScore = thresholds?.minGroundingScore ?? DEFAULT_MIN_GROUNDING_SCORE
+  return depth.answerChars < minAnswerChars || depth.groundingScore < minGroundingScore
+}
+
+export function scoreCagDepth(
+  answer: string,
+  sources: Array<{ content: string }>,
+  citedIndexes: number[],
+  options?: {
+    binaryPassed?: boolean
+    minAnswerChars?: number
+    minGroundingScore?: number
+  },
+): CagDepthScore {
+  const trimmed = answer.trim()
+  const citedTexts = citedIndexes
+    .map((index) => sources[index - 1]?.content)
+    .filter((content): content is string => typeof content === 'string')
+  const stats = sourceCharStats(sources, citedIndexes)
+  const depth = {
+    answerChars: trimmed.length,
+    sentenceCount: countSentences(trimmed),
+    totalSourceChars: stats.totalSourceChars,
+    avgSourceChars: stats.avgSourceChars,
+    citedSourceChars: stats.citedSourceChars,
+    groundingScore: groundingScoreForAnswer(trimmed, citedTexts),
+    shallow: false,
+  }
+  depth.shallow = isShallowAnswer(
+    options?.binaryPassed ?? true,
+    depth,
+    {
+      minAnswerChars: options?.minAnswerChars,
+      minGroundingScore: options?.minGroundingScore,
+    },
+  )
+  return depth
 }

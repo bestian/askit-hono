@@ -17,6 +17,7 @@ import {
   buildCagRetrievalQueries,
   DEFAULT_CAG_MODEL,
   DEFAULT_TOP_K,
+  detectCagAnswerLanguage,
   markdownCitationFootnotes,
   normalizeCagOptions,
   parseArchiveSectionId,
@@ -559,6 +560,29 @@ test('buildCagMessages steers the answer language only when answerLanguage=en', 
   assert.equal(normalizeCagOptions({ answerLanguage: 'en' }).answerLanguage, 'en')
 })
 
+test('detectCagAnswerLanguage flags English-only questions (issue #37)', () => {
+  // 只有英文與符號 → en
+  assert.equal(detectCagAnswerLanguage('What is Plurality?'), 'en')
+  assert.equal(detectCagAnswerLanguage('Who is Audrey Tang?'), 'en')
+  assert.equal(detectCagAnswerLanguage('  AI & web3: what now?!  '), 'en')
+  assert.equal(detectCagAnswerLanguage('G7 2024 summit'), 'en')
+})
+
+test('detectCagAnswerLanguage leaves anything with Han characters as default zh', () => {
+  assert.equal(detectCagAnswerLanguage('什麼是多元宇宙'), undefined)
+  // 中英混雜只要含漢字就走預設繁中
+  assert.equal(detectCagAnswerLanguage('Plurality 是什麼'), undefined)
+  assert.equal(detectCagAnswerLanguage('唐鳳 Audrey Tang'), undefined)
+})
+
+test('detectCagAnswerLanguage treats letter-free input as default zh', () => {
+  // 無拉丁字母（純符號／數字／空白）不算「英文」，沿用預設繁中
+  assert.equal(detectCagAnswerLanguage(''), undefined)
+  assert.equal(detectCagAnswerLanguage('   '), undefined)
+  assert.equal(detectCagAnswerLanguage('123 + 456 = ?'), undefined)
+  assert.equal(detectCagAnswerLanguage('🙏🙏🙏'), undefined)
+})
+
 test('parseArchiveSectionId extracts archive anchors', () => {
   assert.equal(parseArchiveSectionId('https://archive.tw/a/b#s619731'), 619731)
   assert.equal(parseArchiveSectionId('/demo#s42'), 42)
@@ -996,6 +1020,168 @@ test('webhook rate limits group messages without userId by groupId', async () =>
     assert.deepEqual(JSON.parse(String(fetchCalls[0].init?.body)), {
       replyToken: 'reply-token',
       messages: [{ type: 'text', text: '您的發問過於頻繁，請稍候約 3 秒再試，謝謝 🙏' }],
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('webhook answers all-English questions in English (issue #37)', async () => {
+  const secret = 'test-secret'
+  const body = JSON.stringify({
+    events: [
+      {
+        type: 'message',
+        replyToken: 'reply-token',
+        timestamp: Date.now(),
+        source: { userId: 'line-user' },
+        message: { type: 'text', text: 'What is Plurality?' },
+      },
+    ],
+  })
+  const signature = await signLineBody(secret, body)
+  const completionMessages: { role: string; content: string }[][] = []
+  const fetchCalls: { input: RequestInfo | URL; init?: RequestInit }[] = []
+  const waitUntilPromises: Promise<unknown>[] = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    fetchCalls.push({ input, init })
+    return new Response('{}', { status: 200 })
+  }
+
+  try {
+    const response = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-line-signature': signature,
+        },
+        body,
+      },
+      {
+        LINE_CHANNEL_SECRET: secret,
+        LINE_CHANNEL_ACCESS_TOKEN: 'line-token',
+        CAG_RETRIEVER: 'vectorize',
+        VECTORIZE: {
+          query: async () => ({
+            matches: [
+              {
+                score: 0.95,
+                metadata: {
+                  filename: '2024-01-01-plurality',
+                  content: 'Plurality means collaborative diversity.',
+                  section_id: 123,
+                  display_name: '2024-01-01 Plurality talk',
+                  speaker: 'Audrey Tang',
+                },
+              },
+            ],
+          }),
+        },
+        AI: {
+          run: async (_model: string, input: Record<string, unknown>) => {
+            if ('text' in input) return { data: [[0.1, 0.2, 0.3]] }
+            completionMessages.push(input.messages as { role: string; content: string }[])
+            return 'Plurality is collaborative diversity. [1]'
+          },
+        },
+      },
+      {
+        waitUntil: (promise: Promise<unknown>) => {
+          waitUntilPromises.push(promise)
+        },
+        passThroughOnException: () => {},
+        props: {},
+      },
+    )
+    assert.equal(response.status, 200)
+    assert.equal(await response.text(), 'OK')
+    await Promise.all(waitUntilPromises)
+
+    // 模型收到的指示確實切到英文：system 要求英文作答，user 帶英文版回答指示。
+    assert.equal(completionMessages.length, 1)
+    const [system, user] = completionMessages[0]
+    assert.match(system.content, /Answer in English/)
+    assert.doesNotMatch(system.content, /Use Traditional Chinese/)
+    assert.match(user.content, /Answer in English in 3–5 concise sentences/)
+
+    // 回覆確實送出英文答案。
+    const replyCall = fetchCalls.find(
+      (call) => String(call.input) === 'https://api.line.me/v2/bot/message/reply',
+    )
+    assert.ok(replyCall, 'expected a LINE reply call')
+    const replyBody = JSON.parse(String(replyCall.init?.body))
+    assert.equal(replyBody.replyToken, 'reply-token')
+    assert.match(JSON.stringify(replyBody.messages), /Plurality is collaborative diversity/)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('webhook localises the length warning for all-English questions (issue #37)', async () => {
+  const secret = 'test-secret'
+  const body = JSON.stringify({
+    events: [
+      {
+        type: 'message',
+        replyToken: 'reply-token',
+        timestamp: Date.now(),
+        source: { userId: 'line-user' },
+        message: { type: 'text', text: `${'a'.repeat(101)}?` },
+      },
+    ],
+  })
+  const signature = await signLineBody(secret, body)
+  const fetchCalls: { input: RequestInfo | URL; init?: RequestInit }[] = []
+  const waitUntilPromises: Promise<unknown>[] = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    fetchCalls.push({ input, init })
+    return new Response('{}', { status: 200 })
+  }
+
+  try {
+    const response = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-line-signature': signature,
+        },
+        body,
+      },
+      {
+        LINE_CHANNEL_SECRET: secret,
+        LINE_CHANNEL_ACCESS_TOKEN: 'line-token',
+        AI: {
+          run: async () => {
+            throw new Error('AI should not be called for overlong questions')
+          },
+        },
+      },
+      {
+        waitUntil: (promise: Promise<unknown>) => {
+          waitUntilPromises.push(promise)
+        },
+        passThroughOnException: () => {},
+        props: {},
+      },
+    )
+    assert.equal(response.status, 200)
+    await Promise.all(waitUntilPromises)
+
+    assert.equal(fetchCalls.length, 1)
+    assert.deepEqual(JSON.parse(String(fetchCalls[0].init?.body)), {
+      replyToken: 'reply-token',
+      messages: [
+        {
+          type: 'text',
+          text: 'Your question is too long — please shorten it and try again. Thank you!',
+        },
+      ],
     })
   } finally {
     globalThis.fetch = originalFetch

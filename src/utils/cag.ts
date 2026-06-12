@@ -1,4 +1,10 @@
 import {
+  CAG_MODEL_GEMMA,
+  CAG_TYPICAL_INPUT_TOKENS,
+  CAG_TYPICAL_OUTPUT_TOKENS,
+  estimateCagRequestCostUsd,
+} from './cagEval'
+import {
   htmlToPlainText,
 } from './search'
 import {
@@ -20,7 +26,6 @@ type ChatMessage = {
 export type CagRetriever = 'archive' | 'vectorize'
 
 export type CagOptions = {
-  model?: string
   topK?: number
   /**
    * 可被引用／顯示的來源數（預設等於 topK）。
@@ -39,7 +44,8 @@ export type CagOptions = {
   vectorizeMinScore?: number
 }
 
-export const DEFAULT_CAG_MODEL = '@cf/moonshotai/kimi-k2.6'
+export { CAG_MODEL_GEMMA } from './cagEval'
+export const DEFAULT_CAG_MODEL = CAG_MODEL_GEMMA
 export const DEFAULT_ARCHIVE_BASE_URL = 'https://archive.tw'
 const DEFAULT_TOP_K = 6
 const MAX_TOP_K = 8
@@ -91,10 +97,14 @@ export type CagStatus = {
   vectorizeMinScore: number
   maxTopK: number
   maxContextSectionChars: number
+  estimatedCostPerRequestUsd: number | null
+  typicalTokenProfile: {
+    inputTokens: number
+    outputTokens: number
+  }
 }
 
 export type NormalizedCagOptions = {
-  model: string
   topK: number
   citableTopK: number
   maxCompletionTokens: number
@@ -116,7 +126,6 @@ export function normalizeCagOptions(options?: CagOptions): NormalizedCagOptions 
     ? topK
     : clampInteger(options.citableTopK, 1, topK)
   return {
-    model: options?.model || DEFAULT_CAG_MODEL,
     topK,
     citableTopK,
     maxCompletionTokens: clampInteger(
@@ -157,7 +166,7 @@ function sourceBlock(
   ].join('\n')
 }
 
-function buildCagMessages(
+export function buildCagMessages(
   question: string,
   sources: CagSource[],
   background: CagSource[] = [],
@@ -408,7 +417,6 @@ async function resolveCagSources(
 
 export function getCagStatus(options?: {
   archiveBaseUrl?: string
-  model?: string
   retriever?: CagRetriever
   vectorizeBound?: boolean
   vectorizeMinScore?: number
@@ -417,10 +425,15 @@ export function getCagStatus(options?: {
     retriever: options?.retriever ?? 'archive',
     vectorizeBound: options?.vectorizeBound ?? false,
     archiveBaseUrl: normalizeArchiveBaseUrl(options?.archiveBaseUrl),
-    model: options?.model || DEFAULT_CAG_MODEL,
+    model: DEFAULT_CAG_MODEL,
     vectorizeMinScore: options?.vectorizeMinScore ?? DEFAULT_VECTORIZE_MIN_COSINE_SCORE,
     maxTopK: MAX_TOP_K,
     maxContextSectionChars: MAX_CONTEXT_SECTION_CHARS,
+    estimatedCostPerRequestUsd: estimateCagRequestCostUsd(DEFAULT_CAG_MODEL),
+    typicalTokenProfile: {
+      inputTokens: CAG_TYPICAL_INPUT_TOKENS,
+      outputTokens: CAG_TYPICAL_OUTPUT_TOKENS,
+    },
   }
 }
 
@@ -497,10 +510,21 @@ function extractAiText(result: unknown): string | null {
     const delta = choice.delta as Record<string, unknown> | undefined
     if (delta && typeof delta.content === 'string') return delta.content
     const message = choice.message as Record<string, unknown> | undefined
-    if (message && typeof message.content === 'string') return message.content
+    if (message) {
+      if (typeof message.content === 'string') return message.content
+      if (typeof message.reasoning === 'string') return message.reasoning
+    }
   }
 
   return null
+}
+
+export function extractAiResponseText(result: unknown): string {
+  const extracted = extractAiText(result)
+  if (extracted !== null) return extracted
+  if (typeof result === 'string') return result
+  if (!result || typeof result !== 'object') return String(result ?? '')
+  return JSON.stringify(result)
 }
 
 async function aiResultToText(result: unknown): Promise<string> {
@@ -593,8 +617,17 @@ export function markdownCitationFootnotes(footnotes: string[]): TransformStream<
           continue
         }
 
+        if (/\s/.test(char) && digits === '') {
+          continue
+        }
         if (/\d/.test(char) && digits.length < 9) {
           digits += char
+          continue
+        }
+        if (char === ',' && digits !== '') {
+          emitCitation(controller, digits)
+          controller.enqueue(', ')
+          digits = ''
           continue
         }
         if (char === ']' && digits !== '') {
@@ -623,14 +656,12 @@ export function markdownCitationFootnotes(footnotes: string[]): TransformStream<
   })
 }
 
-async function runCagCompletion(
-  ai: WorkersAiBinding,
-  model: string,
+function buildCagAiRunInput(
   messages: ChatMessage[],
   maxCompletionTokens: number | undefined,
   stream: boolean,
-): Promise<unknown> {
-  return ai.run(model, {
+): Record<string, unknown> {
+  return {
     messages,
     stream,
     max_completion_tokens: clampInteger(
@@ -639,8 +670,37 @@ async function runCagCompletion(
       4_096,
     ),
     temperature: 0.2,
-    chat_template_kwargs: { thinking: false },
-  })
+    reasoning_effort: 'none',
+    chat_template_kwargs: { thinking: false, enable_thinking: false },
+  }
+}
+
+async function runCagCompletion(
+  ai: WorkersAiBinding,
+  messages: ChatMessage[],
+  maxCompletionTokens: number | undefined,
+  stream: boolean,
+): Promise<unknown> {
+  return ai.run(
+    DEFAULT_CAG_MODEL,
+    buildCagAiRunInput(messages, maxCompletionTokens, stream),
+  )
+}
+
+export async function completeCagAnswer(
+  ai: WorkersAiBinding,
+  messages: ChatMessage[],
+  options?: {
+    maxCompletionTokens?: number
+  },
+): Promise<string> {
+  const result = await runCagCompletion(
+    ai,
+    messages,
+    options?.maxCompletionTokens,
+    false,
+  )
+  return extractAiResponseText(result).trim()
 }
 
 /**
@@ -680,7 +740,6 @@ export async function generateCagAnswer(
   )
   const result = await runCagCompletion(
     ai,
-    normalized.model,
     messages,
     normalized.maxCompletionTokens,
     false,
@@ -719,7 +778,6 @@ export async function streamCagAnswer(
   )
   const stream = await runCagCompletion(
     ai,
-    normalized.model,
     messages,
     normalized.maxCompletionTokens,
     true,

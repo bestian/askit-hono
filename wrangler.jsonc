@@ -16,16 +16,14 @@
   "vars": {
     // 可在此放置非機敏的環境變數
     // Place non-sensitive environment variables here
-    "ASK_MODEL": "@cf/moonshotai/kimi-k2.6",
     "ASK_ARCHIVE_BASE_URL": "https://archive.tw",
     // CAG 預設檢索器：'vectorize'（語意，issue #15）或 'archive'（archive.tw 即時搜尋）。
     // 索引尚未建好 / 無 VECTORIZE binding / 查無結果時，程式會自動回退 archive。
     // 亦可用 /cag?retriever=archive 之類的查詢參數逐次覆寫，方便 A/B 比較。
     "CAG_RETRIEVER": "vectorize",
     // 全域生成預算：快取未命中的 /ask、/cag 與 LINE CAG 生成共享同一組 DO 計數器。
-    // 以 Kimi K2.6 最壞可請求輸出 4096 tokens 估算，每次約 <= $0.033；
-    // https://console.cloud.google.com/ai/models/kimi-k2.6/cost-estimation
-    // 15 次/分鐘約 <= $0.5，300 次/日約 <= $10。
+    // 以 Gemma 4 26B A4B 典型請求（約 6700 input + 300 output tokens）估算，每次約 <= $0.001。
+    // 15 次/分鐘與 300 次/日遠低於舊 Kimi 預算上限，保留寬鬆門檻以防濫用。
     "GLOBAL_GENERATION_LIMIT_PER_MINUTE": "15",
     "GLOBAL_GENERATION_LIMIT_PER_DAY": "300"
   },
@@ -59,9 +57,9 @@
     }
   ],
 
-  // Workers AI：/cag/:question 使用此 binding 呼叫 Kimi K2.6，
+  // Workers AI：/cag/:question 使用此 binding 呼叫 Gemma 4 26B A4B，
   // 並（啟用 Vectorize 後）用 @cf/google/embeddinggemma-300m 將問句嵌入成查詢向量。
-  // Workers AI: /cag/:question uses this binding to call Kimi K2.6.
+  // Workers AI: /cag/:question uses this binding to call Gemma 4 26B A4B.
   "ai": {
     "binding": "AI",
     "remote": true
@@ -101,6 +99,13 @@
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["RateLimiterDO"] }
+  ],
+
+  "routes": [
+    {
+      "pattern": "ask.archive.tw",
+      "custom_domain": true
+    }
   ],
 
   "assets": {

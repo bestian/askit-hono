@@ -14,6 +14,7 @@ import {
 } from '../src/utils/askIndexFormat'
 import {
   buildCagQueryVariants,
+  DEFAULT_CAG_MODEL,
   markdownCitationFootnotes,
   normalizeCagOptions,
   parseArchiveSectionId,
@@ -494,7 +495,7 @@ test('normalizeCagOptions returns effective parameters used by CAG', () => {
   assert.equal(minimums.maxCompletionTokens, 1)
 })
 
-test('public CAG endpoints ignore client-supplied model', async () => {
+test('public CAG endpoints always use fixed Gemma model', async () => {
   const aiCalls: { model: string; input: Record<string, unknown> }[] = []
   const ai = {
     run: async (model: string, input: Record<string, unknown>) => {
@@ -520,7 +521,6 @@ test('public CAG endpoints ignore client-supplied model', async () => {
     }),
   }
   const env = {
-    ASK_MODEL: '@cf/account/allowed-model',
     AI: ai,
     VECTORIZE: vectorize,
     CAG_RETRIEVER: 'vectorize',
@@ -560,8 +560,8 @@ test('public CAG endpoints ignore client-supplied model', async () => {
     .filter(({ input }) => Array.isArray(input.messages))
     .map(({ model }) => model)
   assert.deepEqual(chatModels, [
-    '@cf/account/allowed-model',
-    '@cf/account/allowed-model',
+    DEFAULT_CAG_MODEL,
+    DEFAULT_CAG_MODEL,
   ])
 })
 
@@ -874,6 +874,27 @@ test('webhook rate limits group messages without userId by groupId', async () =>
   } finally {
     globalThis.fetch = originalFetch
   }
+})
+
+test('markdownCitationFootnotes rewrites comma-separated citations', async () => {
+  const input = new ReadableStream<string>({
+    start(controller) {
+      controller.enqueue('see [2, 3, 4]')
+      controller.close()
+    },
+  })
+  const output = await streamToString(
+    input.pipeThrough(markdownCitationFootnotes([
+      '[One](https://archive.tw/one#s1)',
+      '[Two](https://archive.tw/two#s2)',
+      '[Three](https://archive.tw/three#s3)',
+      '[Four](https://archive.tw/four#s4)',
+    ])),
+  )
+  assert.equal(
+    output,
+    'see [^2], [^3], [^4]\n\n[^2]: [Two](https://archive.tw/two#s2)\n[^3]: [Three](https://archive.tw/three#s3)\n[^4]: [Four](https://archive.tw/four#s4)\n',
+  )
 })
 
 test('markdownCitationFootnotes rewrites numbered citations and appends used notes', async () => {

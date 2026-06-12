@@ -13,5 +13,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["./**/*.ts", "../src/utils/askIndexFormat.ts"]
+  "include": ["./**/*.ts", "../src/utils/askIndexFormat.ts", "../src/utils/cag.ts", "../src/utils/cagEval.ts", "../src/utils/search.ts", "../src/utils/vectorize.ts"]
 }

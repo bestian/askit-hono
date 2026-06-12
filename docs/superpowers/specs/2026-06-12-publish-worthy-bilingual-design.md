@@ -156,3 +156,23 @@ existing behaviour.
 - An English-speaking visitor can complete an ask on `/en` end to end.
 - README contains no stale facts (model, routes, structure, scripts).
 - `npm run typecheck`, `npm test`, and CI all pass.
+
+## Addendum (2026-06-12, during implementation)
+
+- **No `ASK_MODEL` env var exists** — the generation model is pinned in code
+  (`CAG_MODEL_GEMMA = '@cf/google/gemma-4-26b-a4b-it'` in
+  `src/utils/cagEval.ts`). Docs say "pinned in code" rather than
+  "via ASK_MODEL".
+- **Returning-visitor language preference** (user request mid-implementation):
+  reuse audreyt.org/index.html's pattern — an explicit toggle persists
+  `localStorage('lang')` and a pre-paint script applies the stored choice; no
+  `navigator.language` sniffing. Adapted here as `public/lang-init.js`, an
+  external blocking head script (the CSP forbids inline scripts): on `/` and
+  `/en` only, a stored preference for the other language triggers
+  `location.replace` to the twin URL; the footer toggle (`#lang-switch`,
+  `data-lang` = target language) writes the preference before navigating,
+  which also rules out redirect loops. First-time visitors are never
+  redirected; the legal pages never redirect.
+- **Root `logo.png` kept** — it is the 1254×1254 source original, while
+  `public/logo.png` is the optimised 256×256 web asset; they are not
+  duplicates, so the dedupe step does not apply.

@@ -1,12 +1,52 @@
-export function renderHomePage(): string {
+import { hreflangLinks, PAGE_BASE_URL, type PageLang } from './lang'
+
+const HOME_STRINGS = {
+  'zh-Hant': {
+    title: '鳳問 | 認識唐鳳的思想',
+    description:
+      '鳳問是一個問答機器人：提出問題，AI 會檢索唐鳳的逐字稿並附上出處作答，帶你認識唐鳳的思想。',
+    ogDescription: '提出問題，AI 會檢索唐鳳的逐字稿並附上出處作答，帶你認識唐鳳的思想。',
+    ogSiteName: '鳳問',
+    ogLocale: 'zh_TW',
+    canonicalPath: '/',
+    privacyHref: '/privacy',
+    privacyLabel: '隱私權政策',
+    termsHref: '/terms',
+    termsLabel: '使用條款',
+    langSwitchHref: '/en',
+    langSwitchLabel: 'English',
+    langSwitchTarget: 'en',
+  },
+  en: {
+    title: 'Ask Audrey Anything — cited answers from Audrey Tang’s 30-year archive',
+    description:
+      'Ask a question and AI answers from Audrey Tang’s public transcript archive — every answer cited back to its original source.',
+    ogDescription:
+      'Ask a question and AI answers from Audrey Tang’s public transcript archive — every answer cited back to its original source.',
+    ogSiteName: 'Ask Audrey Anything',
+    ogLocale: 'en_US',
+    canonicalPath: '/en',
+    privacyHref: '/en/privacy',
+    privacyLabel: 'Privacy Policy',
+    termsHref: '/en/terms',
+    termsLabel: 'Terms of Use',
+    langSwitchHref: '/',
+    langSwitchLabel: '華語',
+    langSwitchTarget: 'zh-Hant',
+  },
+} as const
+
+export function renderHomePage(lang: PageLang = 'zh-Hant'): string {
+  const s = HOME_STRINGS[lang]
   return `<!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="${lang}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>鳳問 | 認識唐鳳的思想</title>
-  <meta name="description" content="鳳問是一個問答機器人：提出問題，AI 會檢索唐鳳的逐字稿並附上出處作答，帶你認識唐鳳的思想。">
-  <link rel="canonical" href="https://ask.archive.tw/">
+  <title>${s.title}</title>
+  <meta name="description" content="${s.description}">
+  <link rel="canonical" href="${PAGE_BASE_URL}${s.canonicalPath}">
+  ${hreflangLinks('/', '/en')}
 
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
@@ -16,18 +56,20 @@ export function renderHomePage(): string {
   <meta name="theme-color" content="#5AAD67">
 
   <meta property="og:type" content="website">
-  <meta property="og:site_name" content="鳳問">
-  <meta property="og:locale" content="zh_TW">
-  <meta property="og:title" content="鳳問 | 認識唐鳳的思想">
-  <meta property="og:description" content="提出問題，AI 會檢索唐鳳的逐字稿並附上出處作答，帶你認識唐鳳的思想。">
-  <meta property="og:url" content="https://ask.archive.tw/">
+  <meta property="og:site_name" content="${s.ogSiteName}">
+  <meta property="og:locale" content="${s.ogLocale}">
+  <meta property="og:title" content="${s.title}">
+  <meta property="og:description" content="${s.ogDescription}">
+  <meta property="og:url" content="${PAGE_BASE_URL}${s.canonicalPath}">
   <meta property="og:image" content="https://ask.archive.tw/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="鳳問 | 認識唐鳳的思想">
-  <meta name="twitter:description" content="提出問題，AI 會檢索唐鳳的逐字稿並附上出處作答，帶你認識唐鳳的思想。">
+  <meta name="twitter:title" content="${s.title}">
+  <meta name="twitter:description" content="${s.ogDescription}">
   <meta name="twitter:image" content="https://ask.archive.tw/og-image.png">
+
+  <script src="/lang-init.js"></script>
   <style>
     :root {
       color-scheme: light dark;
@@ -114,6 +156,10 @@ export function renderHomePage(): string {
       font-size: clamp(2.5rem, 11vw, 5.5rem);
       line-height: 1;
       letter-spacing: 0;
+    }
+    :lang(en) h1 {
+      font-size: clamp(1.9rem, 6.5vw, 3.4rem);
+      letter-spacing: 0.01em;
     }
     .tagline {
       margin: 16px 0 0;
@@ -260,8 +306,9 @@ export function renderHomePage(): string {
     <div id="app"></div>
   </main>
   <footer>
-    <a href="/privacy">隱私權政策</a>
-    <a href="/terms">使用條款</a>
+    <a href="${s.privacyHref}">${s.privacyLabel}</a>
+    <a href="${s.termsHref}">${s.termsLabel}</a>
+    <a id="lang-switch" lang="${s.langSwitchTarget}" hreflang="${s.langSwitchTarget}" data-lang="${s.langSwitchTarget}" href="${s.langSwitchHref}">${s.langSwitchLabel}</a>
   </footer>
 
   <script src="/vendor/vue.global.prod.js" defer></script>

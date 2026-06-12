@@ -2,6 +2,7 @@
   const { createApp, ref, computed, h } = Vue
 
   const COOLDOWN_SECONDS = 3
+  const LINE_FRIEND_URL = 'https://lin.ee/rCehs3j'
   const BLOCKED_ELEMENT_SELECTOR = 'script, iframe, object, embed, base, meta, link'
   const ALLOWED_LINK_PROTOCOLS = new Set(['http:', 'https:'])
   const URL_ATTRIBUTE_NAMES = new Set(['href', 'src', 'xlink:href', 'action', 'formaction', 'poster'])
@@ -120,7 +121,12 @@
       const error = ref('')
       const consentAccepted = ref(false)
       const cooldown = ref(0)
+      const showQr = ref(false)
       let cooldownTimer = null
+
+      function toggleQr() {
+        showQr.value = !showQr.value
+      }
 
       function startCooldown() {
         cooldown.value = COOLDOWN_SECONDS
@@ -186,7 +192,35 @@
 
       return () => h('div', [
         h('div', { class: 'hero' }, [
-          h('img', { class: 'logo', src: '/logo.png', alt: '鳳問 logo' }),
+          h('div', { class: 'logo-wrap' }, [
+            // 點擊 logo 會在「鳳問 logo」與「LINE 加好友 QR code」之間切換
+            h('img', {
+              class: ['logo', { qr: showQr.value }],
+              src: showQr.value ? '/Askit_M_gainfriends_2dbarcodes_GW.png' : '/logo.png',
+              alt: showQr.value ? '加入鳳問 LINE 好友的 QR code' : '鳳問 logo（點我顯示 LINE 加好友 QR code）',
+              role: 'button',
+              tabindex: '0',
+              'aria-pressed': String(showQr.value),
+              onClick: toggleQr,
+              onKeydown: (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  toggleQr()
+                }
+              },
+            }),
+            showQr.value
+              ? h('a', {
+                class: 'line-link',
+                href: LINE_FRIEND_URL,
+                target: '_blank',
+                rel: 'noopener noreferrer',
+              }, '加入 LINE 好友 →')
+              : h('div', { class: 'click-hint' }, [
+                h('div', { class: 'arrow' }, '↑'),
+                h('div', { class: 'click-me' }, 'Click Me'),
+              ]),
+          ]),
           h('h1', '鳳問'),
           h('p', { class: 'tagline' }, '透過問答機器人，認識唐鳳的思想'),
         ]),

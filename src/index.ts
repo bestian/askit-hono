@@ -43,11 +43,9 @@ import {
 import {
   findClosestMatchingSection,
   findClosestMatchingSections,
-  findRandomSection,
   formatAskAnswerHtml,
   formatCagAnswerFlex,
   formatFuseAnswerFlex,
-  isRandomAskQuestion,
   type LineReplyMessage,
 } from './utils/search'
 
@@ -881,9 +879,8 @@ app.get('/ask/:question', async (c) => {
     reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'ask', question, ip: abuse.ip })
     return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
   }
-  // 隨機問題每次都要不同結果，不快取；其餘相同問題 7 天內直接取用。
-  const random = isRandomAskQuestion(question)
-  const cacheKey = random ? null : await buildCacheKey('ask', question)
+  // 相同問題 7 天內直接取用快取。
+  const cacheKey = await buildCacheKey('ask', question)
 
   if (cacheKey) {
     const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
@@ -901,9 +898,7 @@ app.get('/ask/:question', async (c) => {
   }
 
   try {
-    const hit = random
-      ? await findRandomSection(c.env.ASK_INDEX)
-      : await findClosestMatchingSection(c.env.ASK_INDEX, question)
+    const hit = await findClosestMatchingSection(c.env.ASK_INDEX, question)
     if (!hit) {
       await delayUntilMinimumElapsed(startedAt)
       return c.text(NOT_FOUND_REPLY, 404)

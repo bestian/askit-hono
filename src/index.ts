@@ -44,7 +44,6 @@ type RateLimiter = {
 type Bindings = {
   LINE_CHANNEL_ACCESS_TOKEN: string
   LINE_CHANNEL_SECRET: string
-  ASK_MODEL?: string
   ASK_ARCHIVE_BASE_URL?: string
   // CAG 檢索器預設值：'vectorize'（語意）或 'archive'（archive.tw 即時搜尋）。
   // 未設定時預設 'vectorize'；無 VECTORIZE binding 時自動回退 archive。
@@ -594,9 +593,11 @@ async function replyWithCag(
   question: string,
 ): Promise<void> {
   const retriever = resolveCagRetriever(env.CAG_RETRIEVER)
-  const model = env.ASK_MODEL || DEFAULT_CAG_MODEL
   // 快取：相同問題（retriever／model 相同）7 天內直接用快取的答案與來源回覆，不跑檢索與 AI。
-  const cacheKey = await buildCacheKey('webhook', question, { retriever, model })
+  const cacheKey = await buildCacheKey('webhook', question, {
+    retriever,
+    model: DEFAULT_CAG_MODEL,
+  })
   const cached = await getCachedResponse(env.ASK_CACHE, cacheKey)
   if (cached) {
     try {
@@ -626,7 +627,6 @@ async function replyWithCag(
   try {
     cag = await generateCagAnswer(env.AI, question, {
       archiveBaseUrl: env.ASK_ARCHIVE_BASE_URL,
-      model,
       topK: WEBHOOK_CAG_TOP_K,
       citableTopK: WEBHOOK_CAG_CITE_TOP_K,
       maxCompletionTokens: WEBHOOK_CAG_MAX_COMPLETION_TOKENS,
@@ -734,7 +734,6 @@ app.get('/ask/:question', async (c) => {
 app.get('/cag/status', (c) => {
   return c.json(getCagStatus({
     archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
-    model: c.env.ASK_MODEL || DEFAULT_CAG_MODEL,
     retriever: resolveCagRetriever(c.req.query('retriever'), c.env.CAG_RETRIEVER),
     vectorizeBound: Boolean(c.env.VECTORIZE),
     vectorizeMinScore: resolveVectorizeMinScore(
@@ -752,7 +751,6 @@ app.get('/cag/:question', async (c) => {
   if (isQuestionTooLong(question)) {
     return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
   }
-  const model = c.env.ASK_MODEL || DEFAULT_CAG_MODEL
   const topK = parsePositiveInteger(c.req.query('top_k') ?? c.req.query('topK'), 6)
   const citableTopK = parseOptionalPositiveInteger(
     c.req.query('cite_top_k') ?? c.req.query('citeTopK'),
@@ -768,7 +766,6 @@ app.get('/cag/:question', async (c) => {
   )
   const cagOptions = normalizeCagOptions({
     archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
-    model,
     topK,
     citableTopK,
     maxCompletionTokens,
@@ -780,7 +777,7 @@ app.get('/cag/:question', async (c) => {
   // 快取 key 納入實際生效的參數（含 clamp/default 後的值），避免用超大參數繞過快取。
   const cacheKey = await buildCacheKey('cag', question, {
     archiveBaseUrl: cagOptions.archiveBaseUrl,
-    model: cagOptions.model,
+    model: DEFAULT_CAG_MODEL,
     topK: cagOptions.topK,
     citableTopK: cagOptions.citableTopK,
     maxCompletionTokens: cagOptions.maxCompletionTokens,
@@ -833,7 +830,6 @@ app.post('/cag', async (c) => {
     : typeof payload.max_tokens === 'number'
       ? payload.max_tokens
       : 900
-  const model = c.env.ASK_MODEL || DEFAULT_CAG_MODEL
   const citableTopK = typeof payload.citableTopK === 'number'
     ? payload.citableTopK
     : typeof payload.cite_top_k === 'number'
@@ -851,7 +847,6 @@ app.post('/cag', async (c) => {
   )
   const cagOptions = normalizeCagOptions({
     archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
-    model,
     topK,
     citableTopK,
     maxCompletionTokens,
@@ -863,7 +858,7 @@ app.post('/cag', async (c) => {
   // 快取 key 納入實際生效的參數（含 clamp/default 後的值），避免用超大參數繞過快取。
   const cacheKey = await buildCacheKey('cag', question, {
     archiveBaseUrl: cagOptions.archiveBaseUrl,
-    model: cagOptions.model,
+    model: DEFAULT_CAG_MODEL,
     topK: cagOptions.topK,
     citableTopK: cagOptions.citableTopK,
     maxCompletionTokens: cagOptions.maxCompletionTokens,

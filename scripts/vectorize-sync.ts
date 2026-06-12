@@ -15,8 +15,9 @@
  *
  * 必要環境變數（嵌入走 Workers AI REST）：
  *   CLOUDFLARE_ACCOUNT_ID   目標帳號 ID
- *   CLOUDFLARE_API_TOKEN    只需 Workers AI 權限（僅供 REST 嵌入；wrangler 子行程
- *                           一律改走 OAuth 登入，避免低權限 token 蓋過 OAuth）
+ *   CLOUDFLARE_API_TOKEN    REST 嵌入必備。wrangler 子行程：CI（GITHUB_ACTIONS）或
+ *                           WRANGLER_USE_API_TOKEN=1 時沿用此 token；本機預設改走
+ *                           OAuth，避免僅 Workers AI 權限的 token 蓋過 OAuth 登入。
  *
  * 選填環境變數：
  *   D1_DATABASE             逐字稿來源 D1（預設 sayit-database）
@@ -35,6 +36,7 @@
  *   LIMIT                   本次最多處理幾筆 pending（預設不限）
  *   LOCAL=1                 對 D1 下 --local（預設 --remote）
  *   DRY_RUN=1               不嵌入 / 不 upsert / 不寫 D1，只報告
+ *   WRANGLER_USE_API_TOKEN=1  wrangler 子行程強制使用 CLOUDFLARE_API_TOKEN（CI 自動啟用）
  */
 import { execSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -165,10 +167,22 @@ function truncateChars(s: string, max: number): string {
   return chars.length <= max ? s : chars.slice(0, max).join('')
 }
 
-// wrangler 子行程一律走 OAuth 登入：CLOUDFLARE_API_TOKEN 只供 REST 嵌入使用，
-// 若留在子行程環境會蓋過 OAuth，低權限 token 將令 d1 / vectorize 指令失敗。
-const WRANGLER_ENV: NodeJS.ProcessEnv = { ...process.env }
-delete WRANGLER_ENV.CLOUDFLARE_API_TOKEN
+// wrangler 子行程：本機預設走 OAuth（.dev.vars 常只有 Workers AI 權限的 token，
+// 若傳給 wrangler 會蓋過 OAuth 並令 d1 / vectorize 失敗）。CI 無 OAuth session，
+// 需保留 CLOUDFLARE_API_TOKEN；亦可設 WRANGLER_USE_API_TOKEN=1 強制走 token。
+function buildWranglerEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env }
+  const useApiToken =
+    process.env.WRANGLER_USE_API_TOKEN === '1' ||
+    process.env.GITHUB_ACTIONS === 'true' ||
+    process.env.CI === 'true'
+  if (!useApiToken) {
+    delete env.CLOUDFLARE_API_TOKEN
+  }
+  return env
+}
+
+const WRANGLER_ENV = buildWranglerEnv()
 
 // ── D1 CLI（沿用 build-ask-index 的 execSync + --json envelope 解析）────────────
 type D1Envelope = {

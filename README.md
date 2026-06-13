@@ -48,6 +48,9 @@ Also available as a LINE bot.
   Rate-limit hits and over-long questions are logged to a D1 abuse log, and
   repeat offenders are auto-blacklisted (default: 3 events in 24 h → `403`);
   unbind `ABUSE_DB` and it degrades gracefully (no log, empty blacklist).
+  LINE events with no per-source identity (a 1:1 user who didn't share a
+  `userId`, so they can't be rate-limited or blacklisted) are acked and
+  dropped; groups/rooms keep their `groupId`/`roomId` and respond normally.
 - **Quality** — an offline eval harness (`npm run eval:cag`,
   `npm run eval:cag:depth`) scores answer depth and grounding before model
   or retrieval changes ship.

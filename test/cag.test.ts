@@ -1094,6 +1094,69 @@ test('webhook rate limits group messages without userId by groupId', async () =>
   }
 })
 
+test('webhook drops individual user messages without a userId (issue #39)', async () => {
+  // 1:1 個人聊天未授權 profile → 無 userId、無 groupId/roomId，落入 'line:anonymous'：
+  // 無從個別限流、也無從加入黑名單，直接 ack 丟棄，不生成、不回覆。
+  const secret = 'test-secret'
+  const body = JSON.stringify({
+    events: [
+      {
+        type: 'message',
+        replyToken: 'reply-token',
+        timestamp: Date.now(),
+        source: { type: 'user' },
+        message: { type: 'text', text: 'What is Plurality?' },
+      },
+    ],
+  })
+  const signature = await signLineBody(secret, body)
+  const fetchCalls: { input: RequestInfo | URL; init?: RequestInit }[] = []
+  const waitUntilPromises: Promise<unknown>[] = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    fetchCalls.push({ input, init })
+    return new Response('{}', { status: 200 })
+  }
+
+  try {
+    const response = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-line-signature': signature,
+        },
+        body,
+      },
+      {
+        LINE_CHANNEL_SECRET: secret,
+        LINE_CHANNEL_ACCESS_TOKEN: 'line-token',
+        AI: {
+          run: async () => {
+            throw new Error('AI must not be called for identity-less users')
+          },
+        },
+      },
+      {
+        waitUntil: (promise: Promise<unknown>) => {
+          waitUntilPromises.push(promise)
+        },
+        passThroughOnException: () => {},
+        props: {},
+      },
+    )
+    assert.equal(response.status, 200)
+    assert.equal(await response.text(), 'OK')
+    await Promise.all(waitUntilPromises)
+
+    // 完全不外呼：沒有 reply、沒有載入動畫、沒有任何生成。
+    assert.equal(fetchCalls.length, 0)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test('webhook answers all-English questions in English (issue #37)', async () => {
   const secret = 'test-secret'
   const body = JSON.stringify({

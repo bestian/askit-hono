@@ -37,7 +37,9 @@ Also available as a LINE bot.
   sections if CAG fails. A quick character check answers questions that contain
   only English and symbols (no Han characters) in English — answer, the Flex
   source labels (`Source N` / `Visit`), and the fixed not-found / rate-limit /
-  too-long replies.
+  too-long replies. New followers get a bilingual welcome Flex message keyed on
+  their LINE profile language (non-Chinese → English, otherwise Traditional
+  Chinese); follows without a shared `userId` are acked silently.
 - **Caching** — identical questions are served from a 7-day R2 answer cache
   (`X-Cache: HIT`); retrieval sources are cached in KV for 1 hour.
 - **Abuse protection** — two-layer rate limiting (edge limiter 15 req/10 s

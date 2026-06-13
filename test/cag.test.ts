@@ -3,7 +3,8 @@ import test from 'node:test'
 import type { TestContext } from 'node:test'
 
 import Fuse from 'fuse.js'
-import app, { ipRateLimitKeyFromIp } from '../src/index'
+import app, { ipRateLimitKeyFromIp, resolveWelcomeLang } from '../src/index'
+import { en_welcome, zh_welcome } from '../src/line_welcome/follow'
 import {
   ASK_FUSE_OPTIONS,
   ASK_INDEX_R2_KEY,
@@ -585,6 +586,22 @@ test('detectCagAnswerLanguage treats letter-free input as default zh', () => {
   assert.equal(detectCagAnswerLanguage('   '), undefined)
   assert.equal(detectCagAnswerLanguage('123 + 456 = ?'), undefined)
   assert.equal(detectCagAnswerLanguage('🙏🙏🙏'), undefined)
+})
+
+test('resolveWelcomeLang maps profile.language to a welcome language (issue #31)', () => {
+  // 以 zh 開頭一律繁中
+  assert.equal(resolveWelcomeLang('zh-TW'), 'zh-Hant')
+  assert.equal(resolveWelcomeLang('zh-Hant'), 'zh-Hant')
+  assert.equal(resolveWelcomeLang('zh-Hans'), 'zh-Hant')
+  assert.equal(resolveWelcomeLang('zh-CN'), 'zh-Hant')
+  // 其餘語言用英文
+  assert.equal(resolveWelcomeLang('en'), 'en')
+  assert.equal(resolveWelcomeLang('en-US'), 'en')
+  assert.equal(resolveWelcomeLang('ja'), 'en')
+  assert.equal(resolveWelcomeLang('ko'), 'en')
+  // language 缺席（未授權／非認證帳號）預設繁中
+  assert.equal(resolveWelcomeLang(undefined), 'zh-Hant')
+  assert.equal(resolveWelcomeLang(''), 'zh-Hant')
 })
 
 test('formatCagAnswerFlex localises the source labels per language (issue #38)', () => {
@@ -1243,6 +1260,166 @@ test('webhook localises the length warning for all-English questions (issue #37)
   } finally {
     globalThis.fetch = originalFetch
   }
+})
+
+// 加好友 follow event 雙語歡迎（issue #31）的整合測試共用骨架：
+// 簽章、mock profile / reply fetch，回傳呼叫到的 fetch 與狀態碼。
+async function runFollowWebhook(options: {
+  source: Record<string, unknown>
+  profileLanguage?: string
+  profileStatus?: number
+}): Promise<{
+  status: number
+  fetchCalls: { url: string; init?: RequestInit }[]
+}> {
+  const secret = 'test-secret'
+  const body = JSON.stringify({
+    destination: 'Uxxxxxxxxxx',
+    events: [
+      {
+        type: 'follow',
+        replyToken: 'reply-token',
+        timestamp: Date.now(),
+        mode: 'active',
+        webhookEventId: '01FZ74A0TDDPYRVKNK77XKC3ZR',
+        deliveryContext: { isRedelivery: false },
+        source: options.source,
+      },
+    ],
+  })
+  const signature = await signLineBody(secret, body)
+  const fetchCalls: { url: string; init?: RequestInit }[] = []
+  const waitUntilPromises: Promise<unknown>[] = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input)
+    fetchCalls.push({ url, init })
+    if (url.includes('/v2/bot/profile/')) {
+      if (options.profileStatus && options.profileStatus !== 200) {
+        return new Response('{}', { status: options.profileStatus })
+      }
+      return Response.json({
+        userId: 'line-user',
+        displayName: 'Tester',
+        ...(options.profileLanguage ? { language: options.profileLanguage } : {}),
+      })
+    }
+    return new Response('{}', { status: 200 })
+  }
+
+  try {
+    const response = await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-line-signature': signature,
+        },
+        body,
+      },
+      {
+        LINE_CHANNEL_SECRET: secret,
+        LINE_CHANNEL_ACCESS_TOKEN: 'line-token',
+        AI: {
+          run: async () => {
+            throw new Error('AI must not be called for follow events')
+          },
+        },
+      },
+      {
+        waitUntil: (promise: Promise<unknown>) => {
+          waitUntilPromises.push(promise)
+        },
+        passThroughOnException: () => {},
+        props: {},
+      },
+    )
+    const status = response.status
+    assert.equal(await response.text(), 'OK')
+    await Promise.all(waitUntilPromises)
+    return { status, fetchCalls }
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+}
+
+test('webhook follow event sends the English welcome for en profiles (issue #31)', async () => {
+  const { status, fetchCalls } = await runFollowWebhook({
+    source: { type: 'user', userId: 'line-user' },
+    profileLanguage: 'en',
+  })
+  assert.equal(status, 200)
+
+  // 先以正確 endpoint + Bearer 取 profile。
+  const profileCall = fetchCalls.find((call) => call.url.includes('/v2/bot/profile/'))
+  assert.ok(profileCall, 'expected a Get profile call')
+  assert.equal(profileCall.url, 'https://api.line.me/v2/bot/profile/line-user')
+  assert.equal(
+    (profileCall.init?.headers as Record<string, string>).Authorization,
+    'Bearer line-token',
+  )
+
+  // 再回英文歡迎 Flex。
+  const replyCall = fetchCalls.find(
+    (call) => call.url === 'https://api.line.me/v2/bot/message/reply',
+  )
+  assert.ok(replyCall, 'expected a reply call')
+  const replyBody = JSON.parse(String(replyCall.init?.body))
+  assert.equal(replyBody.replyToken, 'reply-token')
+  assert.equal(replyBody.messages.length, 1)
+  assert.equal(replyBody.messages[0].type, 'flex')
+  assert.equal(replyBody.messages[0].altText, 'Welcome to Ask Audrey!')
+  assert.deepEqual(replyBody.messages[0].contents, en_welcome)
+})
+
+test('webhook follow event sends the Chinese welcome for zh profiles (issue #31)', async () => {
+  const { fetchCalls } = await runFollowWebhook({
+    source: { type: 'user', userId: 'line-user' },
+    profileLanguage: 'zh-TW',
+  })
+  const replyCall = fetchCalls.find(
+    (call) => call.url === 'https://api.line.me/v2/bot/message/reply',
+  )
+  assert.ok(replyCall, 'expected a reply call')
+  const replyBody = JSON.parse(String(replyCall.init?.body))
+  assert.equal(replyBody.messages[0].altText, '歡迎加入鳳問！')
+  assert.deepEqual(replyBody.messages[0].contents, zh_welcome)
+})
+
+test('webhook follow event defaults to Chinese when profile has no language (issue #31)', async () => {
+  // 非認證帳號 profile 不含 language → 預設繁中。
+  const { fetchCalls } = await runFollowWebhook({
+    source: { type: 'user', userId: 'line-user' },
+  })
+  const replyCall = fetchCalls.find(
+    (call) => call.url === 'https://api.line.me/v2/bot/message/reply',
+  )
+  assert.ok(replyCall, 'expected a reply call')
+  const replyBody = JSON.parse(String(replyCall.init?.body))
+  assert.deepEqual(replyBody.messages[0].contents, zh_welcome)
+})
+
+test('webhook follow event defaults to Chinese when the profile fetch fails (issue #31)', async () => {
+  const { fetchCalls } = await runFollowWebhook({
+    source: { type: 'user', userId: 'line-user' },
+    profileStatus: 404,
+  })
+  const replyCall = fetchCalls.find(
+    (call) => call.url === 'https://api.line.me/v2/bot/message/reply',
+  )
+  assert.ok(replyCall, 'expected a reply call')
+  const replyBody = JSON.parse(String(replyCall.init?.body))
+  assert.deepEqual(replyBody.messages[0].contents, zh_welcome)
+})
+
+test('webhook follow event without userId is dropped — no profile fetch, no reply (issue #31)', async () => {
+  // 無 userId：讀不到語言偏好、也無從限流，直接 ack 丟棄。
+  const { status, fetchCalls } = await runFollowWebhook({
+    source: { type: 'user' },
+  })
+  assert.equal(status, 200)
+  assert.equal(fetchCalls.length, 0)
 })
 
 test('markdownCitationFootnotes rewrites comma-separated citations', async () => {

@@ -42,7 +42,9 @@
   per-key Durable Object 冷卻）、全域生成預算（每分鐘 30 次、每日 1000
   次）、30 秒 CPU 上限、嚴格 CSP 與安全標頭。觸發限流或問題過長會寫入
   D1 異常請求 log，累犯自動進黑名單（預設 24 小時內 3 次 → `403`）；
-  未綁 `ABUSE_DB` 時優雅降級（不寫 log、黑名單視為空）。
+  未綁 `ABUSE_DB` 時優雅降級（不寫 log、黑名單視為空）。LINE 事件若無可
+  識別的個別身分（1:1 個人未提供 `userId`，無從限流、也無從加黑名單）一律
+  ack 後丟棄；群組／房間有 `groupId`／`roomId` 可識別，正常回應。
 - **品質** — 離線 eval harness（`npm run eval:cag`、
   `npm run eval:cag:depth`）在模型或檢索改動上線前，先評估回答深度與
   引據是否退步。

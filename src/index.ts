@@ -1268,6 +1268,13 @@ app.post('/webhook', async (c) => {
   // 全英文提問（issue #37）連同固定提示一併以英文回覆；含中文則沿用預設繁中。
   const lang: WebMessageLang = detectCagAnswerLanguage(userText) === 'en' ? 'en' : 'zh-Hant'
 
+  // 個別使用者未提供可識別 ID（issue #39）：1:1 個人聊天無 userId、又非帶 groupId/roomId
+  // 的群組/房間，會落入共用的 'line:anonymous' 桶——無從個別限流、也無從加入黑名單，
+  // 故直接 ack 丟棄，不生成、不回覆。群組/房間因有 groupId/roomId 可識別，正常回應。
+  if (lineRateLimitKey(event.source) === 'line:anonymous') {
+    return c.text('OK', 200)
+  }
+
   // 黑名單成員直接 ack 後丟棄（issue #27）：不回覆、不做任何 DO/KV 限流記帳，
   // 完全不消耗全域生成額度。回 200 是為了避免 LINE 平台重送同一事件。
   if (await isBlacklisted(c.env.ABUSE_DB, lineRateLimitKey(event.source))) {

@@ -49,6 +49,8 @@ import {
   formatFuseAnswerFlex,
   type LineReplyMessage,
 } from './utils/search'
+// 加好友（follow event）雙語歡迎 Flex（issue #31）：各語言獨立硬編碼 bubble JSON。
+import { en_welcome, zh_welcome } from './line_welcome/follow'
 
 // Cloudflare Workers 內建 Rate Limiting binding 的最小型別（@cloudflare/workers-types 未必有）。
 // limit() 不是 subrequest、in-memory、零有感延遲，用作便宜的第一層洪水防護。
@@ -124,7 +126,13 @@ type LineWebhookBody = {
 
 const LINE_REPLY_ENDPOINT = 'https://api.line.me/v2/bot/message/reply'
 const LINE_LOADING_ENDPOINT = 'https://api.line.me/v2/bot/chat/loading/start'
+// Get profile：GET {endpoint}/{userId}，Bearer 授權。language（ISO 639-1，如 en、zh-TW）
+// 僅在認證／付費官方帳號才回傳，否則缺席——故 resolveWelcomeLang 以 zh-Hant 為預設。
+const LINE_PROFILE_ENDPOINT = 'https://api.line.me/v2/bot/profile'
 const REPLY_TOKEN_TTL_MS = 50_000
+// 加好友歡迎 Flex 的替代文字（Flex 無法顯示時的 fallback、推播通知預覽用）。
+const WELCOME_ALT_TEXT = '歡迎加入鳳問！'
+const WELCOME_ALT_TEXT_EN = 'Welcome to Ask Audrey!'
 // CAG 在 webhook 走非同步回覆（ctx.waitUntil），慢工作須在回 200 之後約 30 秒內完成。
 // 檢索 top-k=4 餵給模型；只引用／顯示前 4 筆最相符來源
 // （對齊 formatCagAnswerFlex 的 4 格出處、引註 [1][2][3][4][5][6] 一一對應）。
@@ -702,6 +710,59 @@ async function startLineLoading(
   }
 }
 
+type LineProfile = {
+  userId?: string
+  displayName?: string
+  language?: string
+}
+
+// Get profile API：GET /v2/bot/profile/{userId}，Bearer 授權。失敗時回 null（優雅降級）。
+async function getLineProfile(
+  env: Bindings,
+  userId: string,
+): Promise<LineProfile | null> {
+  try {
+    const res = await fetch(`${LINE_PROFILE_ENDPOINT}/${encodeURIComponent(userId)}`, {
+      headers: { Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}` },
+    })
+    if (!res.ok) {
+      console.error('LINE Profile API 錯誤:', res.status, await res.text())
+      return null
+    }
+    return (await res.json()) as LineProfile
+  } catch (e) {
+    console.error('LINE Profile API 例外:', e)
+    return null
+  }
+}
+
+// 歡迎訊息語言（issue #31）：profile.language 以 zh 開頭（zh-TW／zh-Hant…）用繁中，
+// 其餘（en／ja…）用英文。language 缺席時（未授權或非認證帳號）預設 zh-Hant。
+export function resolveWelcomeLang(profileLanguage: string | undefined): WebMessageLang {
+  const lang = profileLanguage || 'zh-Hant'
+  return lang.startsWith('zh') ? 'zh-Hant' : 'en'
+}
+
+// 加好友 follow event 的歡迎回覆（issue #31）：讀 profile 語言偏好，回對應語言的歡迎 Flex。
+// 呼叫端已保證有 userId；黑名單成員（issue #27）只 ack 不回覆，與訊息路徑一致。
+async function replyWithWelcome(
+  env: Bindings,
+  replyToken: string,
+  source: LineMessageEvent['source'],
+): Promise<void> {
+  const userId = source.userId
+  if (!userId) return
+  if (await isBlacklisted(env.ABUSE_DB, lineRateLimitKey(source))) return
+
+  const profile = await getLineProfile(env, userId)
+  const welcomeLang = resolveWelcomeLang(profile?.language)
+  await replyToLine(env, replyToken, {
+    type: 'flex',
+    altText: welcomeLang === 'en' ? WELCOME_ALT_TEXT_EN : WELCOME_ALT_TEXT,
+    contents: welcomeLang === 'en' ? en_welcome : zh_welcome,
+  })
+}
+
 // Fuse 退路：CAG 失敗或查無結果時，改用預建索引的前兩則最相近段落回覆。
 async function replyWithFuseFallback(
   env: Bindings,
@@ -1177,7 +1238,21 @@ app.post('/webhook', async (c) => {
   }
 
   const event = body.events?.[0]
-  if (!event || event.type !== 'message' || event.message?.type !== 'text') {
+  if (!event) {
+    return c.text('OK', 200)
+  }
+
+  // 加好友（follow event）：依使用者 profile 語言偏好回雙語歡迎 Flex（issue #31）。
+  // 無 userId（使用者未授權 profile）就只 ack 丟棄：既讀不到語言偏好、也無從限流。
+  // reply token 過期（多為 LINE 重送的舊事件）同樣略過。
+  if (event.type === 'follow') {
+    if (event.source.userId && Date.now() - event.timestamp <= REPLY_TOKEN_TTL_MS) {
+      c.executionCtx.waitUntil(replyWithWelcome(c.env, event.replyToken, event.source))
+    }
+    return c.text('OK', 200)
+  }
+
+  if (event.type !== 'message' || event.message?.type !== 'text') {
     return c.text('OK', 200)
   }
 
@@ -1192,6 +1267,13 @@ app.post('/webhook', async (c) => {
   const userText = event.message.text ?? ''
   // 全英文提問（issue #37）連同固定提示一併以英文回覆；含中文則沿用預設繁中。
   const lang: WebMessageLang = detectCagAnswerLanguage(userText) === 'en' ? 'en' : 'zh-Hant'
+
+  // 個別使用者未提供可識別 ID（issue #39）：1:1 個人聊天無 userId、又非帶 groupId/roomId
+  // 的群組/房間，會落入共用的 'line:anonymous' 桶——無從個別限流、也無從加入黑名單，
+  // 故直接 ack 丟棄，不生成、不回覆。群組/房間因有 groupId/roomId 可識別，正常回應。
+  if (lineRateLimitKey(event.source) === 'line:anonymous') {
+    return c.text('OK', 200)
+  }
 
   // 黑名單成員直接 ack 後丟棄（issue #27）：不回覆、不做任何 DO/KV 限流記帳，
   // 完全不消耗全域生成額度。回 200 是為了避免 LINE 平台重送同一事件。

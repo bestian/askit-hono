@@ -33,14 +33,18 @@
   Message（答案＋最多四張來源卡片）。CAG 失敗時，退回模糊搜尋前兩則
   最相近段落。另以快速字元判別：提問若只含英文與符號（無漢字）就以英文
   作答，連同 Flex 出處標籤（`Source N`／`Visit`）與找不到／限流／字數過長
-  等固定提示也一併英文。
+  等固定提示也一併英文。新好友（follow event）依其 LINE profile 語言收到
+  雙語歡迎 Flex（非中文→英文，其餘→繁中）；取不到 `userId` 的 follow 只
+  ack 不回覆。
 - **快取** — 相同問題直接從 **7 天** R2 答案快取回應（HTTP 標頭
   `X-Cache: HIT`）；檢索來源另以 KV 快取 **1 小時**。
 - **防濫用** — 雙層限流（edge limiter 每把 key 10 秒 15 次，之後還有
   per-key Durable Object 冷卻）、全域生成預算（每分鐘 30 次、每日 1000
   次）、30 秒 CPU 上限、嚴格 CSP 與安全標頭。觸發限流或問題過長會寫入
   D1 異常請求 log，累犯自動進黑名單（預設 24 小時內 3 次 → `403`）；
-  未綁 `ABUSE_DB` 時優雅降級（不寫 log、黑名單視為空）。
+  未綁 `ABUSE_DB` 時優雅降級（不寫 log、黑名單視為空）。LINE 事件若無可
+  識別的個別身分（1:1 個人未提供 `userId`，無從限流、也無從加黑名單）一律
+  ack 後丟棄；群組／房間有 `groupId`／`roomId` 可識別，正常回應。
 - **品質** — 離線 eval harness（`npm run eval:cag`、
   `npm run eval:cag:depth`）在模型或檢索改動上線前，先評估回答深度與
   引據是否退步。

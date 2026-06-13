@@ -37,7 +37,9 @@ Also available as a LINE bot.
   sections if CAG fails. A quick character check answers questions that contain
   only English and symbols (no Han characters) in English — answer, the Flex
   source labels (`Source N` / `Visit`), and the fixed not-found / rate-limit /
-  too-long replies.
+  too-long replies. New followers get a bilingual welcome Flex message keyed on
+  their LINE profile language (non-Chinese → English, otherwise Traditional
+  Chinese); follows without a shared `userId` are acked silently.
 - **Caching** — identical questions are served from a 7-day R2 answer cache
   (`X-Cache: HIT`); retrieval sources are cached in KV for 1 hour.
 - **Abuse protection** — two-layer rate limiting (edge limiter 15 req/10 s
@@ -46,6 +48,9 @@ Also available as a LINE bot.
   Rate-limit hits and over-long questions are logged to a D1 abuse log, and
   repeat offenders are auto-blacklisted (default: 3 events in 24 h → `403`);
   unbind `ABUSE_DB` and it degrades gracefully (no log, empty blacklist).
+  LINE events with no per-source identity (a 1:1 user who didn't share a
+  `userId`, so they can't be rate-limited or blacklisted) are acked and
+  dropped; groups/rooms keep their `groupId`/`roomId` and respond normally.
 - **Quality** — an offline eval harness (`npm run eval:cag`,
   `npm run eval:cag:depth`) scores answer depth and grounding before model
   or retrieval changes ship.

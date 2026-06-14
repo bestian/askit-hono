@@ -13,10 +13,10 @@ const PRIVACY_STRINGS = {
     navLang: { href: '/en/privacy', label: 'English' },
   },
   en: {
-    title: 'Privacy Policy | 隱私權政策 | Ask Audrey Anything',
+    title: 'Privacy Policy | 隱私權政策 | Ask Audrey',
     description:
-      'Ask Audrey Anything’s privacy policy: we do not sell or exchange personal data; the production service keeps questions, IPs and user IDs only to prevent abuse.',
-    ogSiteName: 'Ask Audrey Anything',
+      'Ask Audrey’s privacy policy: we do not sell or exchange personal data; the production service keeps questions, IPs and user IDs only to prevent abuse.',
+    ogSiteName: 'Ask Audrey',
     ogLocale: 'en_US',
     canonicalPath: '/en/privacy',
     navHome: { href: '/en', label: 'Home' },
@@ -40,7 +40,7 @@ function zhSection(cssClass: string): string {
 function enSection(cssClass: string): string {
   return `<section${cssClass} aria-labelledby="privacy-en">
       <h2 id="privacy-en">English</h2>
-      <p>We hope Ask Audrey Anything can serve as a friendly, open, and sustainable public knowledge gateway where people can ask, share, and learn with confidence.</p>
+      <p>We hope Ask Audrey can serve as a friendly, open, and sustainable public knowledge gateway where people can ask, share, and learn with confidence.</p>
       <p>This Bot does not sell or exchange your personal data, and does not build an advertising profile of you.</p>
       <p>When you send a message to this Bot, the production version collects and retains the questions you submit to generate replies, maintain service quality, detect abuse, and handle security incidents.</p>
       <p>To keep the service stable and fair for everyone, and to prevent abuse, attacks, rate-limit bypasses, or large-scale automated requests, the production version also collects and retains necessary anti-abuse information, including connection IP addresses, LINE user IDs or website user IDs (userId, if available), request times, rate-limit records, and related technical logs.</p>

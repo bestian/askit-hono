@@ -41,8 +41,8 @@
       ],
     },
     en: {
-      logoAlt: 'Ask Audrey Anything logo',
-      heading: 'Ask Audrey Anything',
+      logoAlt: 'Ask Audrey logo',
+      heading: 'Ask Audrey',
       tagline: 'Get to know Audrey Tang’s thinking, one question at a time',
       consentPrefix: 'I have read and agree to the ',
       consentJoin: ' and the ',

@@ -1,11 +1,11 @@
-# 鳳問 · Ask Audrey Anything
+# 鳳問 · Ask Audrey
 
 [![CI](https://github.com/bestian/askit-hono/actions/workflows/ci.yml/badge.svg)](https://github.com/bestian/askit-hono/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 **English | [華語](README.zh-TW.md)**
 
-Ask Audrey Anything — AI answers grounded in Audrey Tang's 30-year public
+Ask Audrey — AI answers grounded in Audrey Tang's 30-year public
 transcript archive ([archive.tw](https://archive.tw)), with every answer cited
 back to its original source.
 
@@ -14,7 +14,7 @@ Also available as a LINE bot.
 
 | English (`/en`) | 華語 (`/`) |
 | --- | --- |
-| ![Ask Audrey Anything English UI](docs/img/home-en.png) | ![鳳問華語介面](docs/img/home-zh.png) |
+| ![Ask Audrey English UI](docs/img/home-en.png) | ![鳳問華語介面](docs/img/home-zh.png) |
 
 ## How it works
 
@@ -60,7 +60,7 @@ Also available as a LINE bot.
 | Route | Purpose |
 | --- | --- |
 | `GET /` | 鳳問 web app (華語); returning visitors who saved an English preference are redirected client-side to `/en` |
-| `GET /en` | Ask Audrey Anything web app (English); a saved 華語 preference redirects back to `/` (client-side) |
+| `GET /en` | Ask Audrey web app (English); a saved 華語 preference redirects back to `/` (client-side) |
 | `GET /privacy` · `GET /terms` | Legal pages, 華語-first (`/en/privacy` · `/en/terms` are English-first twins) |
 | `GET /cag/status` | Current retriever, archive base URL, model and top-k caps |
 | `GET /cag/:question` | Streaming Markdown answer with footnote citations |

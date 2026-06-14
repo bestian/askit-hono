@@ -18,12 +18,12 @@ const HOME_STRINGS = {
     langSwitchTarget: 'en',
   },
   en: {
-    title: 'Ask Audrey Anything — cited answers from Audrey Tang’s 30-year archive',
+    title: 'Ask Audrey — cited answers from Audrey Tang’s 30-year archive',
     description:
       'Ask a question and AI answers from Audrey Tang’s public transcript archive — every answer cited back to its original source.',
     ogDescription:
       'Ask a question and AI answers from Audrey Tang’s public transcript archive — every answer cited back to its original source.',
-    ogSiteName: 'Ask Audrey Anything',
+    ogSiteName: 'Ask Audrey',
     ogLocale: 'en_US',
     canonicalPath: '/en',
     privacyHref: '/en/privacy',

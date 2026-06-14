@@ -13,10 +13,10 @@ const TERMS_STRINGS = {
     navLang: { href: '/en/terms', label: 'English' },
   },
   en: {
-    title: 'Terms of Use | 使用條款 | Ask Audrey Anything',
+    title: 'Terms of Use | 使用條款 | Ask Audrey',
     description:
-      'Ask Audrey Anything’s terms: by using the service you agree to these terms and to the collection of questions, IPs and user IDs needed to prevent abuse.',
-    ogSiteName: 'Ask Audrey Anything',
+      'Ask Audrey’s terms: by using the service you agree to these terms and to the collection of questions, IPs and user IDs needed to prevent abuse.',
+    ogSiteName: 'Ask Audrey',
     ogLocale: 'en_US',
     canonicalPath: '/en/terms',
     navHome: { href: '/en', label: 'Home' },

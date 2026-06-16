@@ -683,7 +683,7 @@ test('normalizeCagOptions returns effective parameters used by CAG', () => {
   assert.equal(minimums.maxCompletionTokens, 1)
 })
 
-test('public CAG endpoints always use fixed Gemma model', async () => {
+test('public CAG endpoint always uses fixed Gemma model', async () => {
   const aiCalls: { model: string; input: Record<string, unknown> }[] = []
   const ai = {
     run: async (model: string, input: Record<string, unknown>) => {
@@ -728,29 +728,10 @@ test('public CAG endpoints always use fixed Gemma model', async () => {
   assert.equal(getResponse.status, 200)
   await getResponse.text()
 
-  const postResponse = await app.request(
-    '/cag',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        question: '測試',
-        model: '@cf/attacker/expensive-model',
-      }),
-    },
-    env,
-    executionCtx,
-  )
-  assert.equal(postResponse.status, 200)
-  await postResponse.text()
-
   const chatModels = aiCalls
     .filter(({ input }) => Array.isArray(input.messages))
     .map(({ model }) => model)
-  assert.deepEqual(chatModels, [
-    DEFAULT_CAG_MODEL,
-    DEFAULT_CAG_MODEL,
-  ])
+  assert.deepEqual(chatModels, [DEFAULT_CAG_MODEL])
 })
 
 test('question endpoints reject questions over 100 characters before retrieval or AI', async () => {
@@ -781,18 +762,6 @@ test('question endpoints reject questions over 100 characters before retrieval o
   )
   assert.equal(getCagResponse.status, 400)
   assert.equal(await getCagResponse.text(), message)
-
-  const postCagResponse = await app.request(
-    '/cag',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: longQuestion }),
-    },
-    env,
-  )
-  assert.equal(postCagResponse.status, 400)
-  assert.equal(await postCagResponse.text(), message)
   assert.equal(aiCalls.length, 0)
 })
 
@@ -818,16 +787,8 @@ test('ask not-found replies wait until the rate-limit cooldown has elapsed', asy
   assert.equal(Date.now(), 10_000)
 })
 
-test('POST APIs reject oversized request bodies', async () => {
+test('webhook rejects oversized request bodies', async () => {
   const oversizedQuestion = '長'.repeat(33 * 1024)
-
-  const cagResponse = await app.request('/cag', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question: oversizedQuestion }),
-  })
-  assert.equal(cagResponse.status, 413)
-  assert.equal(await cagResponse.text(), 'Request body too large')
 
   const webhookResponse = await app.request('/webhook', {
     method: 'POST',

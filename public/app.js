@@ -26,6 +26,8 @@
       searching: '檢索逐字稿中…',
       fetchError: '查詢發生錯誤，請稍後再試。',
       networkError: '連線發生錯誤，請稍後再試。',
+      download: '下載 Markdown',
+      downloadFallbackName: '回答',
       sourcesHeading: '出處',
       samples: [
         '什麼是仁工智慧？',
@@ -53,6 +55,8 @@
       searching: 'Searching the transcripts…',
       fetchError: 'Something went wrong. Please try again later.',
       networkError: 'Connection error. Please try again later.',
+      download: 'Download Markdown',
+      downloadFallbackName: 'answer',
       sourcesHeading: 'Sources',
       samples: [
         'What is Plurality?',
@@ -168,8 +172,32 @@
     return message ? sanitizeHtml(message) : ''
   }
 
+  // 去掉檔名保留字元、收斂空白並截斷，讓 {問題} 能安全當檔名。
+  function sanitizeFilenamePart(value) {
+    return value
+      .replace(/[\\/:*?"<>|]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80)
+  }
+
+  function formatDateStamp(date) {
+    const y = date.getFullYear()
+    const m = String(date.getMonth() + 1).padStart(2, '0')
+    const d = String(date.getDate()).padStart(2, '0')
+    return y + '-' + m + '-' + d
+  }
+
+  function buildDownloadFilename(question, date, fallbackName) {
+    const q = sanitizeFilenamePart(question) || fallbackName || 'answer'
+    return 'ans-' + q + '-' + formatDateStamp(date) + '.md'
+  }
+
   if (globalThis.__ASKIT_ENABLE_TEST_HOOKS__) {
-    globalThis.__ASKIT_TESTS__ = { parseAnswer, isSafeHttpUrl, sanitizeHtml, formatErrorHtml, STRINGS }
+    globalThis.__ASKIT_TESTS__ = {
+      parseAnswer, isSafeHttpUrl, sanitizeHtml, formatErrorHtml, STRINGS,
+      sanitizeFilenamePart, formatDateStamp, buildDownloadFilename,
+    }
   }
 
   createApp({
@@ -239,6 +267,41 @@
           startCooldown()
         }
       }
+
+      const canDownload = computed(() =>
+        Boolean(raw.value) && !loading.value && !error.value,
+      )
+
+      function downloadMarkdown() {
+        if (!canDownload.value) return
+        const filename = buildDownloadFilename(question.value, new Date(), T.downloadFallbackName)
+        const blob = new Blob([raw.value], { type: 'text/markdown;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const anchor = document.createElement('a')
+        anchor.href = url
+        anchor.download = filename
+        document.body.appendChild(anchor)
+        anchor.click()
+        anchor.remove()
+        URL.revokeObjectURL(url)
+      }
+
+      const downloadIcon = () => h('svg', {
+        class: 'download-icon',
+        width: 16,
+        height: 16,
+        viewBox: '0 0 24 24',
+        fill: 'none',
+        stroke: 'currentColor',
+        'stroke-width': 2,
+        'stroke-linecap': 'round',
+        'stroke-linejoin': 'round',
+        'aria-hidden': 'true',
+      }, [
+        h('path', { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' }),
+        h('polyline', { points: '7 10 12 15 17 10' }),
+        h('line', { x1: 12, y1: 15, x2: 12, y2: 3 }),
+      ])
 
       return () => h('div', [
         h('div', { class: 'hero' }, [
@@ -314,6 +377,17 @@
                       h('a', { href: src.href, target: '_blank', rel: 'noopener noreferrer' }, src.label),
                     ]),
                   )),
+                ])
+                : null,
+              canDownload.value
+                ? h('div', { class: 'answer-actions' }, [
+                  h('button', {
+                    type: 'button',
+                    class: 'download-md',
+                    onClick: downloadMarkdown,
+                    'aria-label': T.download,
+                    title: T.download,
+                  }, [downloadIcon(), h('span', T.download)]),
                 ])
                 : null,
             ])

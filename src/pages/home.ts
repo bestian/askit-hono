@@ -83,6 +83,9 @@ export function renderHomePage(lang: PageLang = 'zh-Hant'): string {
       --card: #ffffff;
       --accent: #2457a6;
       --accent-fg: #ffffff;
+      --notice-bg: #fff4e5;
+      --notice-fg: #8a4b00;
+      --notice-border: #f0c690;
     }
     * { box-sizing: border-box; }
     body {
@@ -128,6 +131,16 @@ export function renderHomePage(lang: PageLang = 'zh-Hant'): string {
       width: 100%;
       margin-top: 36px;
       text-align: left;
+    }
+    .capacity-notice {
+      margin: 0 0 16px;
+      padding: 12px 16px;
+      font-size: 0.95rem;
+      color: var(--notice-fg);
+      background: var(--notice-bg);
+      border: 1px solid var(--notice-border);
+      border-radius: 12px;
+      overflow-wrap: anywhere;
     }
     .ask-form {
       display: flex;
@@ -277,6 +290,9 @@ export function renderHomePage(lang: PageLang = 'zh-Hant'): string {
         --link: #9fc2ff;
         --card: #1b211e;
         --accent: #3a6fc4;
+        --notice-bg: #2a2113;
+        --notice-fg: #f3c98b;
+        --notice-border: #5a4a2a;
       }
     }
     @media (max-width: 480px) {

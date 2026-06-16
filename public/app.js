@@ -19,6 +19,7 @@
       termsLabel: '使用條款',
       placeholderReady: '輸入你的問題，例如：什麼是仁工智慧？',
       placeholderConsent: '請先同意隱私權政策和使用條款，才能發問',
+      capacityFull: '目前全域用量已滿，請稍候或隔天再試。',
       questionAria: '問題',
       submit: '送出',
       thinking: '思考中…',
@@ -48,6 +49,7 @@
       termsLabel: 'Terms of Use',
       placeholderReady: 'Type your question, e.g. “What is Plurality?”',
       placeholderConsent: 'Please agree to the Privacy Policy and Terms of Use first',
+      capacityFull: 'The service is at full capacity right now. Please wait a moment or try again tomorrow.',
       questionAria: 'Question',
       submit: 'Ask',
       thinking: 'Thinking…',
@@ -209,7 +211,22 @@
       const error = ref('')
       const consentAccepted = ref(false)
       const cooldown = ref(0)
+      const capacityFull = ref(false)
       let cooldownTimer = null
+
+      // 提問前先打自己的 /capacity（issue #43）：額度滿時擋下發問並提示。
+      // 查詢失敗就維持可發問，別讓狀態查詢本身擋住使用者。
+      async function refreshCapacity() {
+        try {
+          const res = await fetch('/capacity')
+          if (!res.ok) return
+          const data = await res.json()
+          // capacityFull.value = true
+          capacityFull.value = Boolean(data) && data.status === 'full'
+        } catch (e) {
+          // 查不到容量就當作可發問。
+        }
+      }
 
       function startCooldown() {
         cooldown.value = COOLDOWN_SECONDS
@@ -231,15 +248,16 @@
       const errorHtml = computed(() => formatErrorHtml(error.value))
       const sources = computed(() => parsed.value.sources)
       const canSubmit = computed(() =>
-        consentAccepted.value && !loading.value && cooldown.value <= 0 && Boolean(question.value.trim()),
+        consentAccepted.value && !loading.value && cooldown.value <= 0 &&
+        !capacityFull.value && Boolean(question.value.trim()),
       )
       const canAskSample = computed(() =>
-        consentAccepted.value && !loading.value && cooldown.value <= 0,
+        consentAccepted.value && !loading.value && cooldown.value <= 0 && !capacityFull.value,
       )
 
       async function run(q) {
         const query = q.trim()
-        if (!query || !consentAccepted.value || loading.value || cooldown.value > 0) return
+        if (!query || !consentAccepted.value || loading.value || cooldown.value > 0 || capacityFull.value) return
         question.value = query
         loading.value = true
         answered.value = true
@@ -265,6 +283,8 @@
         } finally {
           loading.value = false
           startCooldown()
+          // 一次發問可能讓全域額度見底，重查一次好即時擋下下一題。
+          refreshCapacity()
         }
       }
 
@@ -303,6 +323,8 @@
         h('line', { x1: 12, y1: 15, x2: 12, y2: 3 }),
       ])
 
+      refreshCapacity()
+
       return () => h('div', [
         h('div', { class: 'hero' }, [
           h('img', { class: 'logo', src: '/logo.png', alt: T.logoAlt }),
@@ -326,6 +348,9 @@
           ]),
         ]),
         h('section', { class: 'demo' }, [
+          capacityFull.value
+            ? h('p', { class: 'capacity-notice', role: 'status' }, T.capacityFull)
+            : null,
           h('form', {
             class: 'ask-form',
             onSubmit: (event) => {

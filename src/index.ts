@@ -155,6 +155,10 @@ const WEBHOOK_CAG_ANSWER_INSTRUCTION_EN =
 const RATE_LIMIT_WINDOW_MS = 3_000
 const NOT_FOUND_REPLY_MIN_DELAY_MS = RATE_LIMIT_WINDOW_MS
 const RATE_LIMIT_RETRY_AFTER_SECONDS = Math.ceil(RATE_LIMIT_WINDOW_MS / 1000)
+// /capacity 是公開、可被 archive.tw 輪詢的狀態端點：獨立冷卻桶，避免影響真正發問。
+const CAPACITY_RATE_LIMIT_WINDOW_MS = 5_000
+const CAPACITY_RATE_LIMIT_RETRY_AFTER_SECONDS = Math.ceil(CAPACITY_RATE_LIMIT_WINDOW_MS / 1000)
+const CAPACITY_CACHE_CONTROL = 'public, max-age=5, s-maxage=5'
 
 // 網頁串流路由（GET /cag/:question）使用者可見訊息的雙語表：?lang=en 取英文、其餘繁中。
 // zh-Hant 字串須與既有字面值逐字相同；LINE webhook 與其他路由沿用 zh-Hant 這一份。
@@ -208,6 +212,7 @@ const BLACKLISTED_HTTP_MESSAGE = WEB_MESSAGES['zh-Hant'].blacklisted
 const ROBOTS_TXT = `User-agent: *
 Disallow: /ask/
 Disallow: /cag/
+Disallow: /capacity
 Disallow: /webhook
 `
 
@@ -304,7 +309,6 @@ const maxApiBodySize: MiddlewareHandler = async (c, next) => {
   await next()
 }
 
-app.use('/cag', maxApiBodySize)
 app.use('/webhook', maxApiBodySize)
 
 function decodeRouteParam(value: string): string {
@@ -423,7 +427,11 @@ type BudgetLimitDecision = {
 //   第二層（精準、強一致）：每個 key 一顆 Durable Object（idFromName 路由），
 //     物件內以「上次通過時間」判斷是否仍在冷卻視窗內，做真正的逐人冷卻。
 // 任一層未綁（dev/測試）或 DO 檢查發生錯誤時，該層放行，以免誤擋正常使用者。
-async function isRateLimited(env: Bindings, key: string): Promise<boolean> {
+async function isRateLimited(
+  env: Bindings,
+  key: string,
+  windowMs = RATE_LIMIT_WINDOW_MS,
+): Promise<boolean> {
   // 第一層：內建限流（免費、零延遲）。太頻繁直接擋，不付 DO 成本。
   if (env.RATE_LIMITER) {
     const { success } = await env.RATE_LIMITER.limit({ key })
@@ -436,7 +444,7 @@ async function isRateLimited(env: Bindings, key: string): Promise<boolean> {
   try {
     const stub = ns.get(ns.idFromName(key))
     const res = await stub.fetch(
-      `https://rate-limit/?window_ms=${RATE_LIMIT_WINDOW_MS}`,
+      `https://rate-limit/?window_ms=${windowMs}`,
     )
     const data = (await res.json()) as { allowed: boolean }
     return !data.allowed
@@ -504,6 +512,16 @@ async function isIpRateLimited(c: Context<{ Bindings: Bindings }>): Promise<bool
   const ip = c.req.header('cf-connecting-ip')
   if (!ip) return false
   return isRateLimited(c.env, ipRateLimitKeyFromIp(ip))
+}
+
+async function isCapacityRateLimited(c: Context<{ Bindings: Bindings }>): Promise<boolean> {
+  const ip = c.req.header('cf-connecting-ip')
+  if (!ip) return false
+  return isRateLimited(
+    c.env,
+    `capacity:${ipRateLimitKeyFromIp(ip)}`,
+    CAPACITY_RATE_LIMIT_WINDOW_MS,
+  )
 }
 
 // ── 異常請求追蹤與黑名單（issue #27）────────────────────────────────────────
@@ -609,6 +627,59 @@ async function checkGlobalGenerationBudget(
 
 function retryAfterForBudget(decision: BudgetLimitDecision): string {
   return String(Math.max(1, decision.retryAfterSeconds ?? 60))
+}
+
+// 全域生成餘量比例（issue #40）：取分鐘/每日兩窗較緊者的剩餘占比，夾在 [0,1]，
+// 再向下取到小數兩位 —— 寧可低估、不可高估（同一刻可能有別的請求正在消耗）。
+export function capacityFraction(
+  minuteCount: number,
+  minuteLimit: number,
+  dayCount: number,
+  dayLimit: number,
+): number {
+  const minuteFraction = minuteLimit > 0 ? (minuteLimit - minuteCount) / minuteLimit : 0
+  const dayFraction = dayLimit > 0 ? (dayLimit - dayCount) / dayLimit : 0
+  const fraction = Math.min(minuteFraction, dayFraction)
+  const clamped = Math.min(1, Math.max(0, fraction))
+  return Math.floor(clamped * 100) / 100
+}
+
+export type GenerationCapacityStatus = 'available' | 'busy' | 'full'
+
+export function capacityStatus(capacity: number): GenerationCapacityStatus {
+  if (capacity >= 0.6) return 'available'
+  if (capacity >= 0.3) return 'busy'
+  return 'full'
+}
+
+// 查全域生成餘量（issue #40）：打 budget DO 的唯讀 /capacity 端點，不增計數、不消耗額度。
+// 未綁 DO（dev/測試）或查詢失敗時回 1 —— 與 checkGlobalGenerationBudget 同樣 fail-open，
+// 因為此時生成本就不受全域配額擋下，回報滿額才與實際放行行為一致。
+async function getGenerationCapacity(env: Bindings): Promise<number> {
+  const ns = env.RATE_LIMIT_DO
+  if (!ns) return 1
+
+  const minuteLimit = parsePositiveInteger(
+    env.GLOBAL_GENERATION_LIMIT_PER_MINUTE,
+    GLOBAL_GENERATION_LIMIT_PER_MINUTE,
+  )
+  const dayLimit = parsePositiveInteger(
+    env.GLOBAL_GENERATION_LIMIT_PER_DAY,
+    GLOBAL_GENERATION_LIMIT_PER_DAY,
+  )
+
+  try {
+    const stub = ns.get(ns.idFromName('global:generation-budget'))
+    const url = new URL('https://rate-limit/capacity')
+    url.searchParams.set('minute_limit', String(minuteLimit))
+    url.searchParams.set('day_limit', String(dayLimit))
+    const res = await stub.fetch(url.toString())
+    const data = (await res.json()) as { capacity?: number }
+    return typeof data.capacity === 'number' ? data.capacity : 1
+  } catch (e) {
+    console.error('全域生成餘量查詢失敗，回報滿額:', e)
+    return 1
+  }
 }
 
 function shouldBypassCaches(refresh: string | undefined): boolean {
@@ -1013,6 +1084,23 @@ app.get('/cag/status', (c) => {
   }))
 })
 
+// 任何人都能查目前 AI 生成狀態（issue #40）：機器人由 robots.txt 擋，
+// 惡意 IP 仍走黑名單與獨立 IP 限流；唯讀查 DO、不消耗額度。
+app.get('/capacity', async (c) => {
+  const abuse = await checkHttpBlacklist(c)
+  if (abuse.blocked) {
+    return c.text(BLACKLISTED_HTTP_MESSAGE, 403)
+  }
+  if (await isCapacityRateLimited(c)) {
+    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
+      'Retry-After': String(CAPACITY_RATE_LIMIT_RETRY_AFTER_SECONDS),
+    })
+  }
+  const capacity = await getGenerationCapacity(c.env)
+  c.header('Cache-Control', CAPACITY_CACHE_CONTROL)
+  return c.json({ status: capacityStatus(capacity) })
+})
+
 app.get('/cag/:question', async (c) => {
   const startedAt = Date.now()
   // 網頁 UI 從這條路由串流，使用者可見訊息依 ?lang=en 在地化；一次解析、整路沿用。
@@ -1098,120 +1186,6 @@ app.get('/cag/:question', async (c) => {
       headers: response.headers,
     })
   }
-  return cacheCagResponse(c, bypassCache ? null : cacheKey, response)
-})
-
-app.post('/cag', async (c) => {
-  const startedAt = Date.now()
-  // 黑名單比對在任何 DO/KV 限流記帳之前（issue #27）。
-  const abuse = await checkHttpBlacklist(c)
-  if (abuse.blocked) {
-    return c.text(BLACKLISTED_HTTP_MESSAGE, 403)
-  }
-  if (await isIpRateLimited(c)) {
-    // body 已被 maxApiBodySize 中介層緩衝在記憶體，best-effort 解析問題供記錄。
-    let loggedQuestion = ''
-    try {
-      const body = (await c.req.json()) as { question?: unknown }
-      if (typeof body.question === 'string') loggedQuestion = body.question
-    } catch {
-      // 解析失敗就記空問題。
-    }
-    reportAbuse(c, {
-      key: abuse.key,
-      kind: 'rate_limit',
-      path: 'cag',
-      question: loggedQuestion,
-      ip: abuse.ip,
-    })
-    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
-      'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
-    })
-  }
-  let payload: { question?: unknown; topK?: unknown; top_k?: unknown; citableTopK?: unknown; cite_top_k?: unknown; maxTokens?: unknown; max_tokens?: unknown; retriever?: unknown; minScore?: unknown; min_score?: unknown; refresh?: unknown }
-  try {
-    payload = await c.req.json()
-  } catch {
-    return c.text('Invalid JSON payload', 400)
-  }
-
-  const question = typeof payload.question === 'string' ? payload.question : ''
-  if (question.trim() === '') {
-    return c.text('question is required', 400)
-  }
-  if (isQuestionTooLong(question)) {
-    reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'cag', question, ip: abuse.ip })
-    return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
-  }
-
-  const bypassCache = typeof payload.refresh === 'boolean'
-    ? payload.refresh
-    : typeof payload.refresh === 'string'
-      ? shouldBypassCaches(payload.refresh)
-      : false
-  const topK = typeof payload.topK === 'number'
-    ? payload.topK
-    : typeof payload.top_k === 'number'
-      ? payload.top_k
-      : DEFAULT_TOP_K
-  const maxCompletionTokens = typeof payload.maxTokens === 'number'
-    ? payload.maxTokens
-    : typeof payload.max_tokens === 'number'
-      ? payload.max_tokens
-      : DEFAULT_MAX_COMPLETION_TOKENS
-  const citableTopK = typeof payload.citableTopK === 'number'
-    ? payload.citableTopK
-    : typeof payload.cite_top_k === 'number'
-      ? payload.cite_top_k
-      : undefined
-  const vectorizeMinScore = typeof payload.minScore === 'number'
-    ? payload.minScore
-    : typeof payload.min_score === 'number'
-      ? payload.min_score
-      : resolveVectorizeMinScore(c.env.CAG_VECTORIZE_MIN_SCORE)
-
-  const retriever = resolveCagRetriever(
-    typeof payload.retriever === 'string' ? payload.retriever : undefined,
-    c.env.CAG_RETRIEVER,
-  )
-  const cagOptions = normalizeCagOptions({
-    archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
-    topK,
-    citableTopK,
-    maxCompletionTokens,
-    retriever,
-    vectorize: c.env.VECTORIZE,
-    vectorizeMinScore,
-    cagCache: c.env.CAG_CACHE,
-    skipSourceCache: bypassCache,
-  })
-
-  // 快取 key 納入實際生效的參數（含 clamp/default 後的值），避免用超大參數繞過快取。
-  const cacheKey = await buildCacheKey('cag', question, {
-    archiveBaseUrl: cagOptions.archiveBaseUrl,
-    model: DEFAULT_CAG_MODEL,
-    topK: cagOptions.topK,
-    citableTopK: cagOptions.citableTopK,
-    maxCompletionTokens: cagOptions.maxCompletionTokens,
-    retriever: cagOptions.retriever,
-    vectorizeMinScore: cagOptions.vectorizeMinScore,
-  })
-  if (!bypassCache) {
-    const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
-    if (cached) {
-      c.executionCtx.waitUntil(refreshCachedResponse(c.env.ASK_CACHE, cacheKey, cached))
-      return respondFromCache(cached.body, cached.contentType)
-    }
-  }
-
-  const budget = await checkGlobalGenerationBudget(c.env)
-  if (!budget.allowed) {
-    return c.text(GLOBAL_BUDGET_HTTP_MESSAGE, 429, {
-      'Retry-After': retryAfterForBudget(budget),
-    })
-  }
-
-  const response = await streamCagAnswer(c.env.AI, question, cagOptions)
   return cacheCagResponse(c, bypassCache ? null : cacheKey, response)
 })
 
@@ -1326,6 +1300,9 @@ export class RateLimiterDO {
     if (url.pathname === '/quota') {
       return this.handleQuota(url)
     }
+    if (url.pathname === '/capacity') {
+      return this.handleCapacity(url)
+    }
 
     const windowMs =
       Number(url.searchParams.get('window_ms')) || RATE_LIMIT_WINDOW_MS
@@ -1381,6 +1358,27 @@ export class RateLimiterDO {
     })
 
     return Response.json(decision)
+  }
+
+  // 唯讀餘量查詢（issue #40）：只讀兩個桶、不開 transaction、不寫回 —— 不增計數、不消耗額度。
+  // 視窗已輪替的桶其計數視為 0（與 handleQuota 的重置邏輯一致）。
+  private async handleCapacity(url: URL): Promise<Response> {
+    const minuteLimit =
+      Number(url.searchParams.get('minute_limit')) || GLOBAL_GENERATION_LIMIT_PER_MINUTE
+    const dayLimit =
+      Number(url.searchParams.get('day_limit')) || GLOBAL_GENERATION_LIMIT_PER_DAY
+    const now = Date.now()
+    const minuteStartMs = Math.floor(now / 60_000) * 60_000
+    const dayStartMs = Math.floor(now / 86_400_000) * 86_400_000
+
+    const minute = await this.state.storage.get<QuotaBucket>('quota:minute')
+    const day = await this.state.storage.get<QuotaBucket>('quota:day')
+    const minuteCount = minute?.windowStartMs === minuteStartMs ? minute.count : 0
+    const dayCount = day?.windowStartMs === dayStartMs ? day.count : 0
+
+    return Response.json({
+      capacity: capacityFraction(minuteCount, minuteLimit, dayCount, dayLimit),
+    })
   }
 }
 

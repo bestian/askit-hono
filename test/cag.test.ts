@@ -362,6 +362,64 @@ test('security headers apply to manual responses, cache hits, and CAG streams', 
   await Promise.all(waitUntilPromises)
 })
 
+test('public CAG allows archive.tw to read cached stream responses across origins', async () => {
+  const executionCtx = {
+    waitUntil: () => {},
+    passThroughOnException: () => {},
+    props: {},
+  }
+  const response = await app.request(
+    '/cag/%E6%B8%AC%E8%A9%A6',
+    { headers: { Origin: 'https://archive.tw' } },
+    {
+      ASK_CACHE: createCachedResponseBucket(
+        'cached answer [1]\n\n[^1]: [Source](https://archive.tw/demo#s1)',
+        'text/markdown; charset=UTF-8',
+      ),
+    },
+    executionCtx,
+  )
+
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('X-Cache'), 'HIT')
+  assert.equal(response.headers.get('Access-Control-Allow-Origin'), 'https://archive.tw')
+  assert.equal(response.headers.get('Access-Control-Allow-Methods'), 'GET, OPTIONS')
+  assert.equal(response.headers.get('Access-Control-Allow-Headers'), 'Content-Type')
+  assert.match(response.headers.get('Vary') ?? '', /\bOrigin\b/)
+  assert.match(await response.text(), /cached answer/)
+})
+
+test('public CAG CORS rejects unlisted origins and supports archive.tw preflight', async () => {
+  const executionCtx = {
+    waitUntil: () => {},
+    passThroughOnException: () => {},
+    props: {},
+  }
+  const rejected = await app.request(
+    '/cag/%E6%B8%AC%E8%A9%A6',
+    { headers: { Origin: 'https://evil.example' } },
+    {
+      ASK_CACHE: createCachedResponseBucket(
+        'cached answer',
+        'text/markdown; charset=UTF-8',
+      ),
+    },
+    executionCtx,
+  )
+
+  assert.equal(rejected.status, 200)
+  assert.equal(rejected.headers.get('Access-Control-Allow-Origin'), null)
+
+  const preflight = await app.request('/cag/%E6%B8%AC%E8%A9%A6', {
+    method: 'OPTIONS',
+    headers: { Origin: 'https://archive.tw' },
+  })
+
+  assert.equal(preflight.status, 204)
+  assert.equal(preflight.headers.get('Access-Control-Allow-Origin'), 'https://archive.tw')
+  assert.equal(preflight.headers.get('Access-Control-Max-Age'), '600')
+})
+
 test('homepage parser rejects non-http citation URLs and relative URLs', async () => {
   const { isSafeHttpUrl, parseAnswer } = await loadAppTestHooks()
 

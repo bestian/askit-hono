@@ -11,6 +11,9 @@ export type AppTestHooks = {
   isSafeHttpUrl: (value: string) => boolean
   sanitizeHtml: (html: string) => string
   formatErrorHtml: (message: string) => string
+  sanitizeFilenamePart: (value: string) => string
+  formatDateStamp: (date: Date) => string
+  buildDownloadFilename: (question: string, date: Date, fallbackName?: string) => string
   STRINGS: PageStrings
 }
 

@@ -159,6 +159,10 @@ const RATE_LIMIT_RETRY_AFTER_SECONDS = Math.ceil(RATE_LIMIT_WINDOW_MS / 1000)
 const CAPACITY_RATE_LIMIT_WINDOW_MS = 5_000
 const CAPACITY_RATE_LIMIT_RETRY_AFTER_SECONDS = Math.ceil(CAPACITY_RATE_LIMIT_WINDOW_MS / 1000)
 const CAPACITY_CACHE_CONTROL = 'public, max-age=5, s-maxage=5'
+const ASK_CORS_ALLOWED_ORIGINS = new Set(['https://archive.tw', 'http://localhost:8787'])
+const ASK_CORS_ALLOWED_METHODS = 'GET, OPTIONS'
+const ASK_CORS_ALLOWED_HEADERS = 'Content-Type'
+const ASK_CORS_MAX_AGE_SECONDS = '600'
 
 // 網頁串流路由（GET /cag/:question）使用者可見訊息的雙語表：?lang=en 取英文、其餘繁中。
 // zh-Hant 字串須與既有字面值逐字相同；LINE webhook 與其他路由沿用 zh-Hant 這一份。
@@ -192,6 +196,40 @@ export function webMessage(key: WebMessageKey, lang: WebMessageLang): string {
 // 網頁路由的語言只看 ?lang=en；其餘一律繁中（與既有行為相同）。
 function resolveWebLang(lang: string | undefined): WebMessageLang {
   return lang === 'en' ? 'en' : 'zh-Hant'
+}
+
+function appendVary(headers: Headers, value: string): void {
+  const existing = headers.get('Vary')
+  if (!existing) {
+    headers.set('Vary', value)
+    return
+  }
+  const values = existing.split(',').map((item) => item.trim().toLowerCase())
+  if (!values.includes(value.toLowerCase())) {
+    headers.set('Vary', `${existing}, ${value}`)
+  }
+}
+
+function applyAskCors(c: Context<{ Bindings: Bindings }>, response: Response): Response {
+  const origin = c.req.header('Origin')
+  if (!origin || !ASK_CORS_ALLOWED_ORIGINS.has(origin)) return response
+
+  const headers = new Headers(response.headers)
+  headers.set('Access-Control-Allow-Origin', origin)
+  headers.set('Access-Control-Allow-Methods', ASK_CORS_ALLOWED_METHODS)
+  headers.set('Access-Control-Allow-Headers', ASK_CORS_ALLOWED_HEADERS)
+  headers.set('Access-Control-Max-Age', ASK_CORS_MAX_AGE_SECONDS)
+  appendVary(headers, 'Origin')
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
+}
+
+function askCorsPreflight(c: Context<{ Bindings: Bindings }>): Response {
+  return applyAskCors(c, new Response(null, { status: 204 }))
 }
 
 const NOT_FOUND_REPLY = WEB_MESSAGES['zh-Hant'].notFound
@@ -1084,21 +1122,24 @@ app.get('/cag/status', (c) => {
   }))
 })
 
+app.options('/capacity', askCorsPreflight)
+app.options('/cag/:question', askCorsPreflight)
+
 // 任何人都能查目前 AI 生成狀態（issue #40）：機器人由 robots.txt 擋，
 // 惡意 IP 仍走黑名單與獨立 IP 限流；唯讀查 DO、不消耗額度。
 app.get('/capacity', async (c) => {
   const abuse = await checkHttpBlacklist(c)
   if (abuse.blocked) {
-    return c.text(BLACKLISTED_HTTP_MESSAGE, 403)
+    return applyAskCors(c, c.text(BLACKLISTED_HTTP_MESSAGE, 403))
   }
   if (await isCapacityRateLimited(c)) {
-    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
+    return applyAskCors(c, c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
       'Retry-After': String(CAPACITY_RATE_LIMIT_RETRY_AFTER_SECONDS),
-    })
+    }))
   }
   const capacity = await getGenerationCapacity(c.env)
   c.header('Cache-Control', CAPACITY_CACHE_CONTROL)
-  return c.json({ status: capacityStatus(capacity) })
+  return applyAskCors(c, c.json({ status: capacityStatus(capacity) }))
 })
 
 app.get('/cag/:question', async (c) => {
@@ -1110,17 +1151,17 @@ app.get('/cag/:question', async (c) => {
   // 黑名單比對在任何 DO/KV 限流記帳之前（issue #27）。
   const abuse = await checkHttpBlacklist(c)
   if (abuse.blocked) {
-    return c.text(messages.blacklisted, 403)
+    return applyAskCors(c, c.text(messages.blacklisted, 403))
   }
   if (await isIpRateLimited(c)) {
     reportAbuse(c, { key: abuse.key, kind: 'rate_limit', path: 'cag', question, ip: abuse.ip })
-    return c.text(messages.rateLimited, 429, {
+    return applyAskCors(c, c.text(messages.rateLimited, 429, {
       'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
-    })
+    }))
   }
   if (isQuestionTooLong(question)) {
     reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'cag', question, ip: abuse.ip })
-    return c.text(messages.tooLong, 400)
+    return applyAskCors(c, c.text(messages.tooLong, 400))
   }
   const bypassCache = shouldBypassCaches(c.req.query('refresh'))
   const topK = parsePositiveInteger(c.req.query('top_k') ?? c.req.query('topK'), DEFAULT_TOP_K)
@@ -1165,15 +1206,15 @@ app.get('/cag/:question', async (c) => {
     const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
     if (cached) {
       c.executionCtx.waitUntil(refreshCachedResponse(c.env.ASK_CACHE, cacheKey, cached))
-      return respondFromCache(cached.body, cached.contentType)
+      return applyAskCors(c, respondFromCache(cached.body, cached.contentType))
     }
   }
 
   const budget = await checkGlobalGenerationBudget(c.env)
   if (!budget.allowed) {
-    return c.text(messages.budget, 429, {
+    return applyAskCors(c, c.text(messages.budget, 429, {
       'Retry-After': retryAfterForBudget(budget),
-    })
+    }))
   }
 
   const response = await streamCagAnswer(c.env.AI, question, cagOptions)
@@ -1181,12 +1222,12 @@ app.get('/cag/:question', async (c) => {
   // 英文介面（?lang=en）換成對應的英文 HTML 版本。
   if (response.status === 404 && lang === 'en') {
     await response.body?.cancel()
-    return new Response(NOT_FOUND_REPLY_HTML_EN, {
+    return applyAskCors(c, new Response(NOT_FOUND_REPLY_HTML_EN, {
       status: 404,
       headers: response.headers,
-    })
+    }))
   }
-  return cacheCagResponse(c, bypassCache ? null : cacheKey, response)
+  return applyAskCors(c, cacheCagResponse(c, bypassCache ? null : cacheKey, response))
 })
 
 app.post('/webhook', async (c) => {

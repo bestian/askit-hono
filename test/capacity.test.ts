@@ -145,6 +145,38 @@ test('GET /capacity reports full capacity when no budget DO is bound', async () 
   assert.deepEqual(await res.json(), { status: 'available' })
 })
 
+test('GET /capacity allows archive.tw to read capacity across origins', async () => {
+  const res = await app.request('/capacity', {
+    headers: { Origin: 'https://archive.tw' },
+  }, {})
+
+  assert.equal(res.status, 200)
+  assert.equal(res.headers.get('Access-Control-Allow-Origin'), 'https://archive.tw')
+  assert.equal(res.headers.get('Access-Control-Allow-Methods'), 'GET, OPTIONS')
+  assert.equal(res.headers.get('Access-Control-Allow-Headers'), 'Content-Type')
+  assert.match(res.headers.get('Vary') ?? '', /\bOrigin\b/)
+})
+
+test('GET /capacity does not allow unlisted origins', async () => {
+  const res = await app.request('/capacity', {
+    headers: { Origin: 'https://evil.example' },
+  }, {})
+
+  assert.equal(res.status, 200)
+  assert.equal(res.headers.get('Access-Control-Allow-Origin'), null)
+})
+
+test('OPTIONS /capacity returns CORS preflight headers for archive.tw', async () => {
+  const res = await app.request('/capacity', {
+    method: 'OPTIONS',
+    headers: { Origin: 'https://archive.tw' },
+  }, {})
+
+  assert.equal(res.status, 204)
+  assert.equal(res.headers.get('Access-Control-Allow-Origin'), 'https://archive.tw')
+  assert.equal(res.headers.get('Access-Control-Max-Age'), '600')
+})
+
 test('GET /capacity is rate limited with an independent per-IP key and window', async () => {
   const seen: { key: string }[] = []
   const env = {

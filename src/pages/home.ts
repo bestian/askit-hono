@@ -226,6 +226,31 @@ export function renderHomePage(lang: PageLang = 'zh-Hant'): string {
     }
     .sources ol { margin: 0; padding-left: 1.4em; }
     .sources li { margin-bottom: 6px; }
+    .answer-actions {
+      margin-top: 18px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+    }
+    .download-md {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      font-size: 0.9rem;
+      color: var(--link);
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      cursor: pointer;
+    }
+    .download-md:hover { border-color: var(--accent); }
+    .download-md:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+    .download-icon { display: block; }
     .cursor {
       display: inline-block;
       width: 0.5em;

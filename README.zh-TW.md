@@ -57,8 +57,7 @@
 | `GET /en` | Ask Audrey 網頁版（英文）；曾選擇華語的訪客會由前端自動導回 `/` |
 | `GET /privacy` · `GET /terms` | 法律頁面，華語優先（英文優先版為 `/en/privacy` · `/en/terms`） |
 | `GET /cag/status` | 顯示目前的 retriever、archive base URL、模型與 top-k 上限 |
-| `GET /cag/:question` | 串流 Markdown 回答，附 footnote 引註 |
-| `POST /cag` | JSON 版本：`{ "question": "...", "topK": 6 }`，同樣串流輸出 |
+| `GET /cag/:question` | 串流 Markdown 回答，附 footnote 引註（參數以 query string 帶入，例如 `?top_k=6&lang=en`） |
 | `GET /ask/:question` | 除錯用：以 R2 Fuse 索引找出最相近的單一段落 |
 | `POST /webhook` | LINE Messaging API webhook（三段式非同步回覆） |
 

@@ -304,7 +304,6 @@ const maxApiBodySize: MiddlewareHandler = async (c, next) => {
   await next()
 }
 
-app.use('/cag', maxApiBodySize)
 app.use('/webhook', maxApiBodySize)
 
 function decodeRouteParam(value: string): string {
@@ -1098,120 +1097,6 @@ app.get('/cag/:question', async (c) => {
       headers: response.headers,
     })
   }
-  return cacheCagResponse(c, bypassCache ? null : cacheKey, response)
-})
-
-app.post('/cag', async (c) => {
-  const startedAt = Date.now()
-  // 黑名單比對在任何 DO/KV 限流記帳之前（issue #27）。
-  const abuse = await checkHttpBlacklist(c)
-  if (abuse.blocked) {
-    return c.text(BLACKLISTED_HTTP_MESSAGE, 403)
-  }
-  if (await isIpRateLimited(c)) {
-    // body 已被 maxApiBodySize 中介層緩衝在記憶體，best-effort 解析問題供記錄。
-    let loggedQuestion = ''
-    try {
-      const body = (await c.req.json()) as { question?: unknown }
-      if (typeof body.question === 'string') loggedQuestion = body.question
-    } catch {
-      // 解析失敗就記空問題。
-    }
-    reportAbuse(c, {
-      key: abuse.key,
-      kind: 'rate_limit',
-      path: 'cag',
-      question: loggedQuestion,
-      ip: abuse.ip,
-    })
-    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
-      'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
-    })
-  }
-  let payload: { question?: unknown; topK?: unknown; top_k?: unknown; citableTopK?: unknown; cite_top_k?: unknown; maxTokens?: unknown; max_tokens?: unknown; retriever?: unknown; minScore?: unknown; min_score?: unknown; refresh?: unknown }
-  try {
-    payload = await c.req.json()
-  } catch {
-    return c.text('Invalid JSON payload', 400)
-  }
-
-  const question = typeof payload.question === 'string' ? payload.question : ''
-  if (question.trim() === '') {
-    return c.text('question is required', 400)
-  }
-  if (isQuestionTooLong(question)) {
-    reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'cag', question, ip: abuse.ip })
-    return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
-  }
-
-  const bypassCache = typeof payload.refresh === 'boolean'
-    ? payload.refresh
-    : typeof payload.refresh === 'string'
-      ? shouldBypassCaches(payload.refresh)
-      : false
-  const topK = typeof payload.topK === 'number'
-    ? payload.topK
-    : typeof payload.top_k === 'number'
-      ? payload.top_k
-      : DEFAULT_TOP_K
-  const maxCompletionTokens = typeof payload.maxTokens === 'number'
-    ? payload.maxTokens
-    : typeof payload.max_tokens === 'number'
-      ? payload.max_tokens
-      : DEFAULT_MAX_COMPLETION_TOKENS
-  const citableTopK = typeof payload.citableTopK === 'number'
-    ? payload.citableTopK
-    : typeof payload.cite_top_k === 'number'
-      ? payload.cite_top_k
-      : undefined
-  const vectorizeMinScore = typeof payload.minScore === 'number'
-    ? payload.minScore
-    : typeof payload.min_score === 'number'
-      ? payload.min_score
-      : resolveVectorizeMinScore(c.env.CAG_VECTORIZE_MIN_SCORE)
-
-  const retriever = resolveCagRetriever(
-    typeof payload.retriever === 'string' ? payload.retriever : undefined,
-    c.env.CAG_RETRIEVER,
-  )
-  const cagOptions = normalizeCagOptions({
-    archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
-    topK,
-    citableTopK,
-    maxCompletionTokens,
-    retriever,
-    vectorize: c.env.VECTORIZE,
-    vectorizeMinScore,
-    cagCache: c.env.CAG_CACHE,
-    skipSourceCache: bypassCache,
-  })
-
-  // 快取 key 納入實際生效的參數（含 clamp/default 後的值），避免用超大參數繞過快取。
-  const cacheKey = await buildCacheKey('cag', question, {
-    archiveBaseUrl: cagOptions.archiveBaseUrl,
-    model: DEFAULT_CAG_MODEL,
-    topK: cagOptions.topK,
-    citableTopK: cagOptions.citableTopK,
-    maxCompletionTokens: cagOptions.maxCompletionTokens,
-    retriever: cagOptions.retriever,
-    vectorizeMinScore: cagOptions.vectorizeMinScore,
-  })
-  if (!bypassCache) {
-    const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
-    if (cached) {
-      c.executionCtx.waitUntil(refreshCachedResponse(c.env.ASK_CACHE, cacheKey, cached))
-      return respondFromCache(cached.body, cached.contentType)
-    }
-  }
-
-  const budget = await checkGlobalGenerationBudget(c.env)
-  if (!budget.allowed) {
-    return c.text(GLOBAL_BUDGET_HTTP_MESSAGE, 429, {
-      'Retry-After': retryAfterForBudget(budget),
-    })
-  }
-
-  const response = await streamCagAnswer(c.env.AI, question, cagOptions)
   return cacheCagResponse(c, bypassCache ? null : cacheKey, response)
 })
 

@@ -63,8 +63,7 @@ Also available as a LINE bot.
 | `GET /en` | Ask Audrey web app (English); a saved 華語 preference redirects back to `/` (client-side) |
 | `GET /privacy` · `GET /terms` | Legal pages, 華語-first (`/en/privacy` · `/en/terms` are English-first twins) |
 | `GET /cag/status` | Current retriever, archive base URL, model and top-k caps |
-| `GET /cag/:question` | Streaming Markdown answer with footnote citations |
-| `POST /cag` | JSON `{ "question": "...", "topK": 6 }`; same streaming output |
+| `GET /cag/:question` | Streaming Markdown answer with footnote citations (params via query string, e.g. `?top_k=6&lang=en`) |
 | `GET /ask/:question` | Debug: closest single transcript section via the R2 Fuse index |
 | `POST /webhook` | LINE Messaging API webhook (three-stage async reply) |
 

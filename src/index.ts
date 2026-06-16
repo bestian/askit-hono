@@ -159,7 +159,7 @@ const RATE_LIMIT_RETRY_AFTER_SECONDS = Math.ceil(RATE_LIMIT_WINDOW_MS / 1000)
 const CAPACITY_RATE_LIMIT_WINDOW_MS = 5_000
 const CAPACITY_RATE_LIMIT_RETRY_AFTER_SECONDS = Math.ceil(CAPACITY_RATE_LIMIT_WINDOW_MS / 1000)
 const CAPACITY_CACHE_CONTROL = 'public, max-age=5, s-maxage=5'
-const ASK_CORS_ALLOWED_ORIGINS = new Set(['https://archive.tw', 'http://localhost:8787'])
+const ASK_CORS_ALLOWED_ORIGINS = new Set(['https://archive.tw', 'https://ask.archive.tw','http://localhost:8787'])
 const ASK_CORS_ALLOWED_METHODS = 'GET, OPTIONS'
 const ASK_CORS_ALLOWED_HEADERS = 'Content-Type'
 const ASK_CORS_MAX_AGE_SECONDS = '600'

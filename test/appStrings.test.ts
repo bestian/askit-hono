@@ -14,3 +14,9 @@ test('app.js zh-Hant and en string tables stay in parity', async () => {
   assert.equal(String(en.heading), 'Ask Audrey')
   assert.equal(String(zh.heading), '鳳問')
 })
+
+test('app.js exposes a capacity-full notice in both languages (issue #43)', async () => {
+  const { STRINGS: strings } = await loadAppTestHooks()
+  assert.equal(String(strings['zh-Hant'].capacityFull), '目前全域用量已滿，請稍候或隔天再試。')
+  assert.ok(String(strings.en.capacityFull).length > 0, 'en capacityFull must be set')
+})

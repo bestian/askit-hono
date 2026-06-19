@@ -204,6 +204,38 @@ LINE app.
 
 </details>
 
+### Trusted-caller token (bypass rate limiting & abuse checks)
+
+The answer endpoints (`/au`, `/cag`, `/ask`, and `/capacity`) are protected by
+per-IP rate limiting, a D1 blacklist, and a global generation budget. Automated
+tooling that calls them from a non-browser User-Agent can be throttled (`429`)
+or blocked (`403`). To let a trusted caller bypass all three, present a bearer
+token that matches the `AUDREYT_TRANSCRIPT_TOKEN` secret (this mirrors the
+sibling **sayit-hono** project, which uses the same env var name, the same
+`Authorization: Bearer <token>` header, and the same constant-time SHA-256
+comparison).
+
+| Name | Purpose |
+| --- | --- |
+| `AUDREYT_TRANSCRIPT_TOKEN` | Trusted-caller bearer token; a matching request skips rate limiting, the blacklist, and the global generation budget |
+
+It is sensitive — **do not** put it in `wrangler.jsonc` or commit it. Upload it
+to your Cloudflare account:
+
+```bash
+npx wrangler secret put AUDREYT_TRANSCRIPT_TOKEN
+```
+
+Then a trusted client calls the answer endpoints with the bearer header:
+
+```bash
+curl https://ask.archive.tw/au/$(python3 -c "import urllib.parse;print(urllib.parse.quote('你怎麼看開放政府'))") \
+  -H "Authorization: Bearer $AUDREYT_TRANSCRIPT_TOKEN"
+```
+
+When the secret is unset, every request follows the normal rate-limit /
+blacklist path; the header has no effect.
+
 ### 6. Deploy
 
 ```bash

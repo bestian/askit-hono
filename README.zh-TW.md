@@ -194,6 +194,35 @@ curl -X POST https://YOUR-WORKER-URL/webhook \
 
 </details>
 
+### 受信任呼叫端 token（略過限流與濫用檢查）
+
+答案端點（`/au`、`/cag`、`/ask`、`/capacity`）受到以 IP 為單位的限流、D1
+黑名單與全域生成預算保護。以非瀏覽器 User-Agent 呼叫的自動化工具，可能被限流
+（`429`）或擋下（`403`）。若要讓受信任的呼叫端略過這三道閘門，請帶上與
+`AUDREYT_TRANSCRIPT_TOKEN` secret 相符的 bearer token（此機制鏡像姊妹專案
+**sayit-hono**：相同的環境變數名稱、相同的 `Authorization: Bearer <token>`
+標頭、相同的 constant-time SHA-256 比對）。
+
+| 名稱 | 用途 |
+| --- | --- |
+| `AUDREYT_TRANSCRIPT_TOKEN` | 受信任呼叫端 bearer token；相符的請求略過限流、黑名單與全域生成預算 |
+
+此為機敏資訊，**不可**寫入 `wrangler.jsonc` 或提交至版本控制。請上傳到
+Cloudflare 帳號：
+
+```bash
+npx wrangler secret put AUDREYT_TRANSCRIPT_TOKEN
+```
+
+受信任的呼叫端即可帶 bearer 標頭呼叫答案端點：
+
+```bash
+curl https://ask.archive.tw/au/$(python3 -c "import urllib.parse;print(urllib.parse.quote('你怎麼看開放政府'))") \
+  -H "Authorization: Bearer $AUDREYT_TRANSCRIPT_TOKEN"
+```
+
+未設定此 secret 時，所有請求一律走原本的限流／黑名單路徑，此標頭不生效。
+
 ### 6. 部署
 
 ```bash

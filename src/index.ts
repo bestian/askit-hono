@@ -36,6 +36,7 @@ import {
   buildAudreySkillAnswerInstruction,
   resolveAudreySkillModel,
 } from './utils/audreySkill'
+import { isAuthorizedFromHeader } from './utils/auth'
 import {
   buildCacheKey,
   getCachedResponse,
@@ -100,6 +101,11 @@ type Bindings = {
   SAYIT_DB?: D1Database
   ABUSE_BLACKLIST_THRESHOLD?: string
   ABUSE_COUNT_WINDOW_HOURS?: string
+  // 受信任呼叫端 token（鏡像 sayit-hono 的 AUDREYT_TRANSCRIPT_TOKEN）。
+  // 自動化工具帶 `Authorization: Bearer <token>` 且與此 secret 相符時，
+  // 略過限流、黑名單與全域生成預算（見 isTrustedCaller）。應透過
+  // `wrangler secret put AUDREYT_TRANSCRIPT_TOKEN` 設定，勿寫入 wrangler.jsonc。
+  AUDREYT_TRANSCRIPT_TOKEN?: string
 }
 
 const DEFAULT_CAG_RETRIEVER: CagRetriever = 'vectorize'
@@ -573,6 +579,21 @@ async function isCapacityRateLimited(c: Context<{ Bindings: Bindings }>): Promis
     c.env,
     `capacity:${ipRateLimitKeyFromIp(ip)}`,
     CAPACITY_RATE_LIMIT_WINDOW_MS,
+  )
+}
+
+// 受信任呼叫端（鏡像 sayit-hono 的 Bearer token 機制）：自動化工具帶
+// `Authorization: Bearer <AUDREYT_TRANSCRIPT_TOKEN>` 且與 secret 相符時，
+// 答案端點（/ask、/cag、/au、/capacity）略過限流、黑名單與全域生成預算，
+// 讓非瀏覽器 User-Agent 也能正常呼叫，不會被 403/429 擋下。
+// 比對走 src/utils/auth.ts 的 constant-time SHA-256（與 sayit-hono 同一套）；
+// secret 未設定（dev/測試未帶）時恆為 false——一律走原本的限流／黑名單路徑。
+async function isTrustedCaller(c: Context<{ Bindings: Bindings }>): Promise<boolean> {
+  // c.env 在某些測試呼叫（app.request 未帶 env）會是 undefined；以 ?. 優雅降級，
+  // 與專案「未綁定即略過」的慣例一致——secret 取不到時 isAuthorizedFromHeader 回 false。
+  return isAuthorizedFromHeader(
+    c.req.header('Authorization'),
+    c.env?.AUDREYT_TRANSCRIPT_TOKEN,
   )
 }
 
@@ -1066,19 +1087,21 @@ app.get('/robots.txt', (c) => {
 app.get('/ask/:question', async (c) => {
   const startedAt = Date.now()
   const question = decodeRouteParam(c.req.param('question'))
+  // 受信任呼叫端（帶有效 AUDREYT_TRANSCRIPT_TOKEN）略過限流、黑名單與全域預算。
+  const trusted = await isTrustedCaller(c)
   // 黑名單比對在任何 DO/KV 限流記帳之前（issue #27）。
-  const abuse = await checkHttpBlacklist(c)
-  if (abuse.blocked) {
+  const abuse = trusted ? null : await checkHttpBlacklist(c)
+  if (abuse?.blocked) {
     return c.text(BLACKLISTED_HTTP_MESSAGE, 403)
   }
-  if (await isIpRateLimited(c)) {
-    reportAbuse(c, { key: abuse.key, kind: 'rate_limit', path: 'ask', question, ip: abuse.ip })
+  if (!trusted && await isIpRateLimited(c)) {
+    reportAbuse(c, { key: abuse?.key ?? null, kind: 'rate_limit', path: 'ask', question, ip: abuse?.ip })
     return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
       'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
     })
   }
   if (isQuestionTooLong(question)) {
-    reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'ask', question, ip: abuse.ip })
+    reportAbuse(c, { key: abuse?.key ?? null, kind: 'question_too_long', path: 'ask', question, ip: abuse?.ip })
     return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
   }
   // 相同問題 7 天內直接取用快取。
@@ -1092,7 +1115,7 @@ app.get('/ask/:question', async (c) => {
     }
   }
 
-  const budget = await checkGlobalGenerationBudget(c.env)
+  const budget = trusted ? { allowed: true } : await checkGlobalGenerationBudget(c.env)
   if (!budget.allowed) {
     return c.text(GLOBAL_BUDGET_HTTP_MESSAGE, 429, {
       'Retry-After': retryAfterForBudget(budget),
@@ -1145,18 +1168,20 @@ app.get('/au/:question', async (c) => {
   const lang = resolveWebLang(c.req.query('lang'))
   const messages = WEB_MESSAGES[lang]
   const question = decodeRouteParam(c.req.param('question'))
-  const abuse = await checkHttpBlacklist(c)
-  if (abuse.blocked) {
+  // 受信任呼叫端（帶有效 AUDREYT_TRANSCRIPT_TOKEN）略過限流、黑名單與全域預算。
+  const trusted = await isTrustedCaller(c)
+  const abuse = trusted ? null : await checkHttpBlacklist(c)
+  if (abuse?.blocked) {
     return c.text(messages.blacklisted, 403)
   }
-  if (await isIpRateLimited(c)) {
-    reportAbuse(c, { key: abuse.key, kind: 'rate_limit', path: 'au', question, ip: abuse.ip })
+  if (!trusted && await isIpRateLimited(c)) {
+    reportAbuse(c, { key: abuse?.key ?? null, kind: 'rate_limit', path: 'au', question, ip: abuse?.ip })
     return c.text(messages.rateLimited, 429, {
       'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
     })
   }
   if (isQuestionTooLong(question)) {
-    reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'au', question, ip: abuse.ip })
+    reportAbuse(c, { key: abuse?.key ?? null, kind: 'question_too_long', path: 'au', question, ip: abuse?.ip })
     return c.text(messages.tooLong, 400)
   }
 
@@ -1210,7 +1235,7 @@ app.get('/au/:question', async (c) => {
     }
   }
 
-  const budget = await checkGlobalGenerationBudget(c.env)
+  const budget = trusted ? { allowed: true } : await checkGlobalGenerationBudget(c.env)
   if (!budget.allowed) {
     return c.text(messages.budget, 429, {
       'Retry-After': retryAfterForBudget(budget),
@@ -1229,11 +1254,13 @@ app.get('/au/:question', async (c) => {
 })
 
 app.post('/au', async (c) => {
-  const abuse = await checkHttpBlacklist(c)
-  if (abuse.blocked) {
+  // 受信任呼叫端（帶有效 AUDREYT_TRANSCRIPT_TOKEN）略過限流、黑名單與全域預算。
+  const trusted = await isTrustedCaller(c)
+  const abuse = trusted ? null : await checkHttpBlacklist(c)
+  if (abuse?.blocked) {
     return c.text(BLACKLISTED_HTTP_MESSAGE, 403)
   }
-  if (await isIpRateLimited(c)) {
+  if (!trusted && await isIpRateLimited(c)) {
     let loggedQuestion = ''
     try {
       const body = (await c.req.json()) as { question?: unknown }
@@ -1242,11 +1269,11 @@ app.post('/au', async (c) => {
       // 解析失敗就記空問題。
     }
     reportAbuse(c, {
-      key: abuse.key,
+      key: abuse?.key ?? null,
       kind: 'rate_limit',
       path: 'au',
       question: loggedQuestion,
-      ip: abuse.ip,
+      ip: abuse?.ip,
     })
     return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
       'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
@@ -1265,7 +1292,7 @@ app.post('/au', async (c) => {
     return c.text('question is required', 400)
   }
   if (isQuestionTooLong(question)) {
-    reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'au', question, ip: abuse.ip })
+    reportAbuse(c, { key: abuse?.key ?? null, kind: 'question_too_long', path: 'au', question, ip: abuse?.ip })
     return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
   }
 
@@ -1334,7 +1361,7 @@ app.post('/au', async (c) => {
     }
   }
 
-  const budget = await checkGlobalGenerationBudget(c.env)
+  const budget = trusted ? { allowed: true } : await checkGlobalGenerationBudget(c.env)
   if (!budget.allowed) {
     return c.text(GLOBAL_BUDGET_HTTP_MESSAGE, 429, {
       'Retry-After': retryAfterForBudget(budget),
@@ -1371,11 +1398,13 @@ app.options('/cag/:question', askCorsPreflight)
 // 任何人都能查目前 AI 生成狀態（issue #40）：機器人由 robots.txt 擋，
 // 惡意 IP 仍走黑名單與獨立 IP 限流；唯讀查 DO、不消耗額度。
 app.get('/capacity', async (c) => {
-  const abuse = await checkHttpBlacklist(c)
-  if (abuse.blocked) {
+  // 受信任呼叫端（帶有效 AUDREYT_TRANSCRIPT_TOKEN）略過限流與黑名單。
+  const trusted = await isTrustedCaller(c)
+  const abuse = trusted ? null : await checkHttpBlacklist(c)
+  if (abuse?.blocked) {
     return applyAskCors(c, c.text(BLACKLISTED_HTTP_MESSAGE, 403))
   }
-  if (await isCapacityRateLimited(c)) {
+  if (!trusted && await isCapacityRateLimited(c)) {
     return applyAskCors(c, c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
       'Retry-After': String(CAPACITY_RATE_LIMIT_RETRY_AFTER_SECONDS),
     }))
@@ -1391,19 +1420,21 @@ app.get('/cag/:question', async (c) => {
   const lang = resolveWebLang(c.req.query('lang'))
   const messages = WEB_MESSAGES[lang]
   const question = decodeRouteParam(c.req.param('question'))
+  // 受信任呼叫端（帶有效 AUDREYT_TRANSCRIPT_TOKEN）略過限流、黑名單與全域預算。
+  const trusted = await isTrustedCaller(c)
   // 黑名單比對在任何 DO/KV 限流記帳之前（issue #27）。
-  const abuse = await checkHttpBlacklist(c)
-  if (abuse.blocked) {
+  const abuse = trusted ? null : await checkHttpBlacklist(c)
+  if (abuse?.blocked) {
     return applyAskCors(c, c.text(messages.blacklisted, 403))
   }
-  if (await isIpRateLimited(c)) {
-    reportAbuse(c, { key: abuse.key, kind: 'rate_limit', path: 'cag', question, ip: abuse.ip })
+  if (!trusted && await isIpRateLimited(c)) {
+    reportAbuse(c, { key: abuse?.key ?? null, kind: 'rate_limit', path: 'cag', question, ip: abuse?.ip })
     return applyAskCors(c, c.text(messages.rateLimited, 429, {
       'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
     }))
   }
   if (isQuestionTooLong(question)) {
-    reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'cag', question, ip: abuse.ip })
+    reportAbuse(c, { key: abuse?.key ?? null, kind: 'question_too_long', path: 'cag', question, ip: abuse?.ip })
     return applyAskCors(c, c.text(messages.tooLong, 400))
   }
   const bypassCache = shouldBypassCaches(c.req.query('refresh'))
@@ -1454,7 +1485,7 @@ app.get('/cag/:question', async (c) => {
     }
   }
 
-  const budget = await checkGlobalGenerationBudget(c.env)
+  const budget = trusted ? { allowed: true } : await checkGlobalGenerationBudget(c.env)
   if (!budget.allowed) {
     return applyAskCors(c, c.text(messages.budget, 429, {
       'Retry-After': retryAfterForBudget(budget),

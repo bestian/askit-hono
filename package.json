@@ -19,6 +19,7 @@
     "r2:lifecycle": "npm run r2:lifecycle:cache && npm run r2:lifecycle:cache:preview",
     "vectorize:create": "wrangler vectorize create askit-audrey-tang --dimensions=768 --metric=cosine",
     "vectorize:sync": "tsx --tsconfig scripts/tsconfig.json scripts/vectorize-sync.ts",
+    "index:bigram": "tsx --tsconfig scripts/tsconfig.json scripts/build-bigram-index.ts",
     "abuse:db:create": "wrangler d1 create askit-abuse-log",
     "abuse:db:init": "wrangler d1 execute askit-abuse-log --remote --file db/abuse-log-schema.sql --yes",
     "abuse:db:init:local": "wrangler d1 execute askit-abuse-log --local --file db/abuse-log-schema.sql --yes",

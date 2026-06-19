@@ -245,8 +245,11 @@ export function renderHomePage(lang: PageLang = 'zh-Hant'): string {
       border-top: 1px solid var(--border);
       display: flex;
       justify-content: flex-end;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
     }
-    .download-md {
+    .copy-md {
       display: inline-flex;
       align-items: center;
       gap: 6px;
@@ -258,12 +261,16 @@ export function renderHomePage(lang: PageLang = 'zh-Hant'): string {
       border-radius: 999px;
       cursor: pointer;
     }
-    .download-md:hover { border-color: var(--accent); }
-    .download-md:focus-visible {
+    .copy-md:hover { border-color: var(--accent); }
+    .copy-md:focus-visible {
       outline: 2px solid var(--accent);
       outline-offset: 1px;
     }
-    .download-icon { display: block; }
+    .copy-icon { display: block; }
+    .copy-status {
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
     .cursor {
       display: inline-block;
       width: 0.5em;

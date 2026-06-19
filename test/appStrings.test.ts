@@ -13,8 +13,8 @@ test('app.js zh-Hant and en string tables stay in parity', async () => {
   assert.match(String(en.submit), /^Ask$/)
   assert.equal(String(en.heading), 'Ask Audrey')
   assert.equal(String(zh.heading), '鳳問')
-  assert.match(String(zh.searching), /整理 Audrey 風格回答/)
-  assert.match(String(en.searching), /composing an Audrey-style answer/)
+  assert.match(String(zh.searching), /整理回答中/)
+  assert.match(String(en.searching), /composing an answer/)
 })
 
 test('app.js exposes a capacity-full notice in both languages (issue #43)', async () => {

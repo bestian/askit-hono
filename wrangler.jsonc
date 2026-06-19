@@ -29,7 +29,10 @@
     // 超量／過長請求，自動寫入黑名單，之後在任何限流記帳之前直接擋下。
     // 視窗設 "0" = 不限視窗、全期間累計。
     "ABUSE_BLACKLIST_THRESHOLD": "3",
-    "ABUSE_COUNT_WINDOW_HOURS": "24"
+    "ABUSE_COUNT_WINDOW_HOURS": "24",
+    // /au 預設模型：GLM-5.2（風格更貼近 Audrey 的對話式、重新框架口吻）。
+    // 程式碼 fallback 仍為 Gemma-4；若此值未設或被移除，會自動回退 Gemma。
+    "AUDREY_MODEL": "@cf/zai-org/glm-5.2"
   },
 
   // CPU 上限：避免單次請求異常消耗 Worker CPU；AI/網路等待不計入 CPU time。
@@ -89,6 +92,11 @@
       "binding": "ABUSE_DB",
       "database_name": "askit-abuse-log",
       "database_id": "d87861ce-46d5-4053-afdf-abf5c4a9f61c"
+    },
+    {
+      "binding": "SAYIT_DB",
+      "database_name": "sayit-database",
+      "database_id": "309347b7-de29-4d0f-b755-55d2638defc9"
     }
   ],
   // KV：CAG 檢索來源快取（1h TTL）。R2 ASK_CACHE 仍負責完整答案快取（7 天）。

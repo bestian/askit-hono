@@ -92,6 +92,98 @@ export const DEFAULT_CAG_EVAL_CASES: CagEvalCase[] = [
   },
 ]
 
+export const DEFAULT_AUDREY_EVAL_CASES: CagEvalCase[] = [
+  {
+    id: 'au-ren-ai-zh',
+    question: '用 #zh-tw 回答：什麼是仁工智慧？',
+    requireTraditionalChinese: true,
+    minCitations: 1,
+    minAnswerChars: 120,
+  },
+  {
+    id: 'au-digital-democracy-reframe-zh',
+    question: '用 #zh-tw 回答：什麼是數位民主？請用重新框架的方式回答。',
+    requireTraditionalChinese: true,
+    minCitations: 1,
+    minAnswerChars: 120,
+  },
+  {
+    id: 'au-plurality-zh',
+    question: '用 #zh-tw 回答：多元宇宙是什麼？',
+    requireTraditionalChinese: true,
+    minCitations: 1,
+    minAnswerChars: 120,
+  },
+  {
+    id: 'au-broad-listening-zh',
+    question: '用 #zh-tw 回答：什麼是 broad listening？',
+    requireTraditionalChinese: true,
+    minCitations: 1,
+    minAnswerChars: 120,
+  },
+  {
+    id: 'au-rough-consensus-zh',
+    question: '用 #zh-tw 回答：rough consensus 如何用在民主審議？',
+    requireTraditionalChinese: true,
+    minCitations: 1,
+    minAnswerChars: 120,
+  },
+  {
+    id: 'au-vtaiwan-zh',
+    question: '用 #zh-tw 回答：vTaiwan 解決了什麼問題？',
+    requireTraditionalChinese: true,
+    minCitations: 1,
+    minAnswerChars: 120,
+  },
+  {
+    id: 'au-join-zh',
+    question: '用 #zh-tw 回答：Join.gov.tw 的機制是什麼？',
+    requireTraditionalChinese: true,
+    minCitations: 1,
+    minAnswerChars: 120,
+  },
+  {
+    id: 'au-mask-map-zh',
+    question: '用 #zh-tw 回答：口罩地圖在疫情中代表什麼？',
+    requireTraditionalChinese: true,
+    minCitations: 1,
+    minAnswerChars: 120,
+  },
+  {
+    id: 'au-humor-over-rumor-zh',
+    question: '用 #zh-tw 回答：什麼是以幽默勝謠言？',
+    requireTraditionalChinese: true,
+    minCitations: 1,
+    minAnswerChars: 120,
+  },
+  {
+    id: 'au-alignment-assemblies-zh',
+    question: '用 #zh-tw 回答：對齊大會如何幫助 AI 治理？',
+    requireTraditionalChinese: true,
+    minCitations: 1,
+    minAnswerChars: 120,
+  },
+  {
+    id: 'au-open-government-zh',
+    question: '用 #zh-tw 回答：開放政府和激進透明如何互相支持？',
+    requireTraditionalChinese: true,
+    minCitations: 1,
+    minAnswerChars: 120,
+  },
+  {
+    id: 'au-broad-listening-en',
+    question: 'What is broad listening?',
+    minCitations: 1,
+    minAnswerChars: 120,
+  },
+  {
+    id: 'au-plurality-en',
+    question: 'What does Audrey Tang mean by Plurality?',
+    minCitations: 1,
+    minAnswerChars: 120,
+  },
+]
+
 export type CagEvalScore = {
   passed: boolean
   checks: {

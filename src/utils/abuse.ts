@@ -13,7 +13,7 @@
 // 黑名單視為未命中、寫 log 靜默略過，絕不讓追蹤機制阻斷正常請求。
 
 export type AbuseKind = 'rate_limit' | 'question_too_long'
-export type AbusePath = 'ask' | 'cag' | 'webhook'
+export type AbusePath = 'ask' | 'cag' | 'au' | 'webhook'
 
 export type AbuseLogEntry = {
   /** 正規化身分 key（ip:…／ip6:…／line:…），與限流 key 同一套，方便比對。 */

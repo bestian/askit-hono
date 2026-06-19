@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFile } from 'node:fs/promises'
 
 import app, { WEB_MESSAGES, webMessage } from '../src/index'
 import {
@@ -52,6 +53,12 @@ test('webMessage helper resolves keys per language', () => {
   assert.equal(webMessage('budget', 'zh-Hant'), WEB_MESSAGES['zh-Hant'].budget)
 })
 
+test('web app submits questions to the Audrey skill endpoint', async () => {
+  const appJs = await readFile(new URL('../public/app.js', import.meta.url), 'utf8')
+  assert.ok(appJs.includes("fetch('/au/' + encodeURIComponent(query)"))
+  assert.equal(appJs.includes("fetch('/cag/' + encodeURIComponent(query)"), false)
+})
+
 test('GET /cag/:question localises the too-long guard via ?lang=en', async () => {
   const longQuestion = encodeURIComponent('問'.repeat(101))
 
@@ -99,6 +106,8 @@ test('GET /cag/:question localises the global-budget message via ?lang=en', asyn
 })
 
 test('GET /cag/:question localises the not-found 404 via ?lang=en', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => Response.json({ results: [] })
   const makeEnv = () => ({
     AI: {
       run: async (_model: string, input: Record<string, unknown>) => {
@@ -112,18 +121,22 @@ test('GET /cag/:question localises the not-found 404 via ?lang=en', async () => 
     CAG_RETRIEVER: 'vectorize',
   })
 
-  const en = await app.request(
-    '/cag/%E6%B8%AC%E8%A9%A6?lang=en',
-    undefined,
-    makeEnv(),
-  )
-  assert.equal(en.status, 404)
-  assert.equal(await en.text(), NOT_FOUND_REPLY_HTML_EN)
+  try {
+    const en = await app.request(
+      '/cag/%E6%B8%AC%E8%A9%A6?lang=en',
+      undefined,
+      makeEnv(),
+    )
+    assert.equal(en.status, 404)
+    assert.equal(await en.text(), NOT_FOUND_REPLY_HTML_EN)
 
-  // zh 行為不變：沿用 streamCagAnswer 既有的 404 HTML 內文（issue #29）。
-  const zh = await app.request('/cag/%E6%B8%AC%E8%A9%A6', undefined, makeEnv())
-  assert.equal(zh.status, 404)
-  assert.equal(await zh.text(), NOT_FOUND_REPLY_HTML)
+    // zh 行為不變：沿用 streamCagAnswer 既有的 404 HTML 內文（issue #29）。
+    const zh = await app.request('/cag/%E6%B8%AC%E8%A9%A6', undefined, makeEnv())
+    assert.equal(zh.status, 404)
+    assert.equal(await zh.text(), NOT_FOUND_REPLY_HTML)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })
 
 test('GET /cag/:question localises the rate-limit message via ?lang=en', async () => {

@@ -12,6 +12,21 @@
   //
   // LINE_CHANNEL_ACCESS_TOKEN and LINE_CHANNEL_SECRET should be set via
   // `wrangler secret put`, not in this file.
+  //
+  // AUDREYT_TRANSCRIPT_TOKEN（受信任呼叫端 token，鏡像姊妹專案 sayit-hono）：
+  // 自動化工具於答案端點（/au、/cag、/ask、/capacity）帶
+  // `Authorization: Bearer <token>` 且與此 secret 相符時，略過限流、黑名單與
+  // 全域生成預算。同屬機敏資訊，務必用 `wrangler secret put AUDREYT_TRANSCRIPT_TOKEN`
+  // 設定，切勿寫入此檔案或提交至版本控制。未設定時所有請求一律走原本的限流／黑名單路徑。
+  //
+  // AUDREYT_TRANSCRIPT_TOKEN (trusted-caller token, mirroring the sibling
+  // sayit-hono project): when automated tooling calls the answer endpoints
+  // (/au, /cag, /ask, /capacity) with `Authorization: Bearer <token>` matching
+  // this secret, it bypasses rate limiting, the blacklist, and the global
+  // generation budget. It is sensitive — set it via
+  // `wrangler secret put AUDREYT_TRANSCRIPT_TOKEN`, never in this file or in
+  // version control. When unset, every request follows the normal
+  // rate-limit / blacklist path.
 
   "vars": {
     // 可在此放置非機敏的環境變數

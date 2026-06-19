@@ -8,6 +8,14 @@ ASK_ARCHIVE_BASE_URL=https://archive.tw
 # CAG 預設檢索器（vectorize|archive）；可不設，預設 vectorize（無索引時自動回退 archive）
 CAG_RETRIEVER=vectorize
 
+# 受信任呼叫端 token（鏡像 sayit-hono）；自動化工具帶
+# `Authorization: Bearer <token>` 且相符時略過限流／黑名單／全域預算。
+# 正式環境用 `wrangler secret put AUDREYT_TRANSCRIPT_TOKEN`；本機才放這裡。
+# Trusted-caller token (mirrors sayit-hono); a request with a matching
+# `Authorization: Bearer <token>` bypasses rate limiting / blacklist / budget.
+# In production set it via `wrangler secret put AUDREYT_TRANSCRIPT_TOKEN`.
+# AUDREYT_TRANSCRIPT_TOKEN=your-trusted-caller-token-here
+
 # ── Cloudflare 帳號（vectorize:sync 嵌入 REST 需要）────────────────────────────
 # CLOUDFLARE_ACCOUNT_ID=your-cloudflare-account-id
 # CLOUDFLARE_API_TOKEN=your-workers-ai-api-token

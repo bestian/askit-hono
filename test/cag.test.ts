@@ -1842,3 +1842,93 @@ test('resolveCagSources treats a failing D1 sayitDb as empty (issue #46 graceful
     globalThis.fetch = originalFetch
   }
 })
+
+// ── D1 bigram 索引回退（searchSectionsByContent）─────────────────────────────
+// 以 mocked sayitDb 驅動 resolveCagSources，驗證 bigram `WHERE bigram IN (...)`
+// 查詢路徑與全詞子字串驗證；archive.tw 搜尋故意留空以強制走 rescue。
+async function withStubbedFetch<T>(
+  handler: (url: URL) => Response,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input: RequestInfo | URL) => handler(new URL(String(input)))
+  try {
+    return await fn()
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+}
+
+function makeBigramSayitDb(rows: Array<{ section_id: number; hits: number }>): D1Database {
+  return {
+    prepare() {
+      return {
+        bind() {
+          return {
+            all: async () => ({ success: true, results: rows }),
+          }
+        },
+      }
+    },
+  } as unknown as D1Database
+}
+
+function archiveSectionResponse(sectionId: number, sectionContent: string) {
+  return {
+    filename: `2024-01-01-test.html`,
+    nest_filename: null,
+    section_id: sectionId,
+    section_content: sectionContent,
+    previous_content: '',
+    next_content: '',
+    display_name: '測試段落',
+    name: '唐鳳',
+  }
+}
+
+test('resolveCagSources uses bigram index rescue to find 萌典 section', async () => {
+  // archive.tw 搜尋留空 → sources=[] → needsD1Rescue=true；/api/section/123 回含萌典的內容。
+  await withStubbedFetch(
+    (url) => {
+      if (url.pathname === '/api/search.json') return Response.json({ results: [] })
+      if (url.pathname === '/api/section/123') {
+        return Response.json(archiveSectionResponse(123, '我們在這裡提到萌典這個詞。'))
+      }
+      return new Response('not found', { status: 404 })
+    },
+    async () => {
+      const noopAi = { run: async () => { throw new Error('should not be called') } } as unknown as Parameters<typeof resolveCagSources>[0]
+      const sources = await resolveCagSources(noopAi, '萌典', {
+        topK: 4,
+        archiveBaseUrl: 'https://archive.tw',
+        retriever: 'archive',
+        sayitDb: makeBigramSayitDb([{ section_id: 123, hits: 1 }]),
+      })
+      assert.ok(sources.some((s) => s.sectionId === 123), '應回 sectionId 123 的來源')
+    },
+  )
+})
+
+test('resolveCagSources bigram rescue rejects sections whose content lacks the full phrase', async () => {
+  // 索引「命中」section 123（mock 固定回傳），但取回的全文不含「萌典」全詞——
+  // 模擬散落 bigram 假陽性。全詞子字串驗證應過濾掉，回 []。
+  await withStubbedFetch(
+    (url) => {
+      if (url.pathname === '/api/search.json') return Response.json({ results: [] })
+      if (url.pathname === '/api/section/123') {
+        return Response.json(archiveSectionResponse(123, '這段內容完全沒有那個詞。'))
+      }
+      return new Response('not found', { status: 404 })
+    },
+    async () => {
+      const noopAi = { run: async () => { throw new Error('should not be called') } } as unknown as Parameters<typeof resolveCagSources>[0]
+      const sources = await resolveCagSources(noopAi, '萌典', {
+        topK: 4,
+        archiveBaseUrl: 'https://archive.tw',
+        retriever: 'archive',
+        sayitDb: makeBigramSayitDb([{ section_id: 123, hits: 1 }]),
+      })
+      assert.deepEqual(sources, [])
+    },
+  )
+})

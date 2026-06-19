@@ -18,6 +18,7 @@ import {
   type VectorizeBinding,
 } from './vectorize'
 import { NOT_FOUND_REPLY_HTML } from './notFoundReply'
+import { extractIndexKeys } from './bigramKeys'
 
 type WorkersAiBinding = {
   run: (model: string, input: Record<string, unknown>) => Promise<unknown>
@@ -582,8 +583,14 @@ export async function retrieveCagSources(
 
 /**
  * D1 內容搜尋回退：當 archive.tw 搜尋也查不到有意義的結果時，
- * 用 `section_content LIKE` 直接找到真正提及該詞的段落 ID，
- * 再透過 archive.tw `/api/section/<id>` 取全文。限定 Audrey 自己的段落。
+ * 用 CJK bigram 倒排索引 `askit_bigram_index` 找到真正提及該詞的段落 ID，
+ * 再透過 archive.tw `/api/section/<id>` 取全文。speaker 篩已內建於索引
+ * （建表只收 `name LIKE '唐鳳%'` 的段落）。
+ *
+ * 取代舊的 `section_content LIKE '%term%'` 全表掃描（~168K rows，D1 按
+ * examined rows 計費，且長查詢會拋 `LIKE or GLOB pattern too complex`）：
+ * runtime 把查詢詞拆成 2-char keys 查 `WHERE bigram IN (...)`，受建表
+ * DF 上限約束；hydration 後再以子字串驗證去除散落 bigram 假陽性。
  */
 async function searchSectionsByContent(
   sayitDb: D1Database,
@@ -592,45 +599,46 @@ async function searchSectionsByContent(
   topK: number,
 ): Promise<CagSource[]> {
   const baseUrl = normalizeArchiveBaseUrl(archiveBaseUrl)
-  // D1 LIKE 只用 full-length phrases，不用 2-char sliding windows。
-  // 直接算 cleaned（標點/疑問詞前綴已去）和 withoutQuestionWords（疑問詞已去），
-  // 不取 buildCagQueryVariants 的 sliding windows——那些是給 Fuse 用的。
-  const cleaned = stripQuestionDirectives(query)
+  // 查詢詞 → bigram keys（漢字 2-gram / 拉丁全詞小寫），查 askit_bigram_index
+  // `WHERE bigram IN (...)`。有界（受建表 BIGRAM_DF_MAX 約束），取代全表 LIKE。
+  const keys = [...extractIndexKeys(stripQuestionDirectives(query))].slice(0, 64)
+  if (keys.length === 0) return []
+
+  // 子字串驗證用「全詞」變體（不是 buildCagQueryVariants 拆出的 2-gram——
+  // 那些與索引 keys 同源，命中段落必含其一，.some() 形同虛設）。
+  // 用 cleaned / withoutQuestionWords 全詞，與 needsD1Rescue 觸發條件
+  // （s.content.includes(cleanedPhrase)）、舊 LIKE '%phrase%' 語意一致；
+  // 萌典 2-char 查詢 cleaned===萌典，全文含「萌典」才納入。
+  const cleanedPhrase = stripQuestionDirectives(query)
     .replace(/[?？!！。.,，;；:：()[\]{}「」『』"""'']/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-  const withoutQuestionWords = cleaned
+  const withoutQuestionWordsPhrase = cleanedPhrase
     .replace(/(如何|怎麼|怎么|為何|爲何|什麼|什么|請問|請|回答|說明|解釋)/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/^[^\p{L}\p{N}]+/u, '')
     .replace(/[^\p{L}\p{N}]+$/u, '')
-  const variants = [cleaned, withoutQuestionWords]
-    .filter((v, i, arr) => v.length >= 2 && v.length <= 15 && arr.indexOf(v) === i)
-  if (variants.length === 0) return []
+  const verifyVariants = [cleanedPhrase, withoutQuestionWordsPhrase]
+    .filter((v, i, arr) => v.length >= 2 && arr.indexOf(v) === i)
 
-  const placeholders = variants.map(() => 'sc.section_content LIKE ?').join(' OR ')
-  const likePatterns = variants.map((v) => `%${v.replace(/'/g, "''")}%`)
-  const bindings = [...likePatterns, topK]
-
-  // sayit-database 的 table 是 speech_content（不是 sections），speaker 欄位是
-  // section_speaker（references speakers.route_pathname），不是 name。
-  const stmt = sayitDb.prepare(
-    `SELECT sc.section_id FROM speech_content sc
-     LEFT JOIN speakers sp ON sc.section_speaker = sp.route_pathname
-     WHERE (${placeholders})
-     AND (sp.name LIKE '唐鳳%' OR sp.name LIKE 'Audrey Tang%')
-     AND TRIM(sc.section_content) != ''
-     AND sc.filename GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'
-     ORDER BY sc.filename DESC, sc.section_id ASC
-     LIMIT ?`,
-  ).bind(...bindings)
+  const placeholders = keys.map(() => '?').join(',')
+  const stmt = sayitDb
+    .prepare(
+      `SELECT section_id, COUNT(*) AS hits FROM askit_bigram_index
+       WHERE bigram IN (${placeholders})
+       GROUP BY section_id ORDER BY hits DESC LIMIT ?`,
+    )
+    .bind(...keys, topK * 3)
 
   try {
-    const result = await stmt.all<{ section_id: number }>()
+    const result = await stmt.all<{ section_id: number; hits: number }>()
     if (!result.success || result.results.length === 0) return []
 
-    const sectionIds = result.results.map((row) => row.section_id)
+    // 命中越多 bigram 的段落在前；只 hydrate 前 topK*2 筆（上限保險），再以子字串驗證。
+    const sectionIds = result.results
+      .map((row) => row.section_id)
+      .slice(0, Math.min(result.results.length, topK * 2))
     const sources = await Promise.all(
       sectionIds.map(async (sectionId): Promise<CagSource | null> => {
         const url = new URL(`/api/section/${sectionId}`, baseUrl)
@@ -645,7 +653,12 @@ async function searchSectionsByContent(
         return { content, href, label: `${displayName} — ${speaker}`, sectionId }
       }),
     )
-    return sources.filter((source): source is CagSource => source !== null)
+    // 子字串驗證：取回全文須真正含某查詢變體才納入；verifyVariants 為空時（理論上
+    // 不會發生——keys>0 必伴隨 ≥2 字元變體）保留全部，避免誤丟。
+    const verified = sources
+      .filter((source): source is CagSource => source !== null)
+      .filter((s) => verifyVariants.length === 0 || verifyVariants.some((v) => s.content.includes(v)))
+    return verified.slice(0, topK)
   } catch (e) {
     console.error('D1 內容搜尋回退失敗，視為查無結果:', e)
     return []
@@ -707,10 +720,10 @@ export async function resolveCagSources(
     })
   }
 
-  // D1 content LIKE 補強。leading-wildcard LIKE '%x%' 是全表掃描（168K+ rows），
-  // D1 按 examined rows 計費——只在 Vectorize 回了結果但內容裡找不到詞時才跑，
-  // 而非每個請求都跑。典型 rescued case：「萌典」的 Vectorize hits 是
-  // 「萌典松前記者會」的 title-match 段落，section_content 不含「萌典」。
+  // D1 bigram 索引補強：只在 Vectorize/archive 回了結果但內容裡找不到全詞時才跑，
+  // 而非每個請求都跑（省 CF 預算）。典型 rescued case：「萌典」的 Vectorize hits
+  // 是「萌典松前記者會」title-match 段落，section_content 不含「萌典」；
+  // 走 askit_bigram_index `WHERE bigram IN (...)` 有界查找（取代舊的全表 LIKE）。
   const { sayitDb } = options
   const cleanedPhrase = stripQuestionDirectives(question)
     .replace(/[?？!！。.,，;；:：()[\]{}「」『』"""'']/g, ' ')

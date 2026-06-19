@@ -27,8 +27,9 @@
       searching: '檢索逐字稿並整理回答中…',
       fetchError: '查詢發生錯誤，請稍後再試。',
       networkError: '連線發生錯誤，請稍後再試。',
-      download: '下載 Markdown',
-      downloadFallbackName: '回答',
+      copyMarkdown: '複製 Markdown',
+      copiedMarkdown: '已複製',
+      copyFailed: '無法複製，請手動選取文字',
       tooLong: '您的問題字數過長，請縮短問題的長度，謝謝！',
       sourcesHeading: '出處',
       samples: [
@@ -58,8 +59,9 @@
       searching: 'Searching transcripts and composing an answer…',
       fetchError: 'Something went wrong. Please try again later.',
       networkError: 'Connection error. Please try again later.',
-      download: 'Download Markdown',
-      downloadFallbackName: 'answer',
+      copyMarkdown: 'Copy Markdown',
+      copiedMarkdown: 'Copied',
+      copyFailed: 'Could not copy. Select the answer and copy manually.',
       tooLong: 'Your question is too long — please shorten it and try again. Thank you!',
       sourcesHeading: 'Sources',
       samples: [
@@ -176,31 +178,49 @@
     return message ? sanitizeHtml(message) : ''
   }
 
-  // 去掉檔名保留字元、收斂空白並截斷，讓 {問題} 能安全當檔名。
-  function sanitizeFilenamePart(value) {
-    return value
-      .replace(/[\\/:*?"<>|]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 80)
-  }
+  async function copyMarkdownText(text, navigatorObject, documentObject) {
+    if (!text) return false
 
-  function formatDateStamp(date) {
-    const y = date.getFullYear()
-    const m = String(date.getMonth() + 1).padStart(2, '0')
-    const d = String(date.getDate()).padStart(2, '0')
-    return y + '-' + m + '-' + d
-  }
+    const nav = navigatorObject || (typeof navigator !== 'undefined' ? navigator : undefined)
+    try {
+      if (nav && nav.clipboard && typeof nav.clipboard.writeText === 'function') {
+        await nav.clipboard.writeText(text)
+        return true
+      }
+    } catch (e) {
+      // Fall through to the DOM fallback below.
+    }
 
-  function buildDownloadFilename(question, date, fallbackName) {
-    const q = sanitizeFilenamePart(question) || fallbackName || 'answer'
-    return 'ans-' + q + '-' + formatDateStamp(date) + '.md'
+    const doc = documentObject || (typeof document !== 'undefined' ? document : undefined)
+    if (
+      !doc ||
+      !doc.body ||
+      typeof doc.createElement !== 'function' ||
+      typeof doc.execCommand !== 'function'
+    ) {
+      return false
+    }
+
+    const textarea = doc.createElement('textarea')
+    textarea.value = text
+    textarea.setAttribute('readonly', '')
+    textarea.style.position = 'fixed'
+    textarea.style.inset = '0 auto auto 0'
+    textarea.style.opacity = '0'
+    doc.body.appendChild(textarea)
+    textarea.focus()
+    textarea.select()
+    try {
+      return Boolean(doc.execCommand('copy'))
+    } finally {
+      textarea.remove()
+    }
   }
 
   if (globalThis.__ASKIT_ENABLE_TEST_HOOKS__) {
     globalThis.__ASKIT_TESTS__ = {
       parseAnswer, isSafeHttpUrl, sanitizeHtml, formatErrorHtml, STRINGS,
-      sanitizeFilenamePart, formatDateStamp, buildDownloadFilename,
+      copyMarkdownText,
     }
   }
 
@@ -214,7 +234,9 @@
       const consentAccepted = ref(false)
       const cooldown = ref(0)
       const capacityFull = ref(false)
+      const copyState = ref('idle')
       let cooldownTimer = null
+      let copyResetTimer = null
 
       watch(question, (newVal, oldVal) => {
         const codePoints = [...newVal]
@@ -277,6 +299,11 @@
         answered.value = true
         error.value = ''
         raw.value = ''
+        copyState.value = 'idle'
+        if (copyResetTimer) {
+          clearTimeout(copyResetTimer)
+          copyResetTimer = null
+        }
 
         try {
           const res = await fetch('/au/' + encodeURIComponent(query) + (LANG === 'en' ? '?lang=en' : ''))
@@ -302,26 +329,32 @@
         }
       }
 
-      const canDownload = computed(() =>
+      const canCopy = computed(() =>
         Boolean(raw.value) && !loading.value && !error.value,
       )
+      const copyLabel = computed(() =>
+        copyState.value === 'copied' ? T.copiedMarkdown : T.copyMarkdown,
+      )
+      const copyStatus = computed(() =>
+        copyState.value === 'failed' ? T.copyFailed : '',
+      )
 
-      function downloadMarkdown() {
-        if (!canDownload.value) return
-        const filename = buildDownloadFilename(question.value, new Date(), T.downloadFallbackName)
-        const blob = new Blob([raw.value], { type: 'text/markdown;charset=utf-8' })
-        const url = URL.createObjectURL(blob)
-        const anchor = document.createElement('a')
-        anchor.href = url
-        anchor.download = filename
-        document.body.appendChild(anchor)
-        anchor.click()
-        anchor.remove()
-        URL.revokeObjectURL(url)
+      function scheduleCopyStateReset() {
+        if (copyResetTimer) clearTimeout(copyResetTimer)
+        copyResetTimer = setTimeout(() => {
+          copyState.value = 'idle'
+          copyResetTimer = null
+        }, 2000)
       }
 
-      const downloadIcon = () => h('svg', {
-        class: 'download-icon',
+      async function copyMarkdown() {
+        if (!canCopy.value) return
+        copyState.value = await copyMarkdownText(raw.value) ? 'copied' : 'failed'
+        scheduleCopyStateReset()
+      }
+
+      const copyIcon = () => h('svg', {
+        class: 'copy-icon',
         width: 16,
         height: 16,
         viewBox: '0 0 24 24',
@@ -332,9 +365,8 @@
         'stroke-linejoin': 'round',
         'aria-hidden': 'true',
       }, [
-        h('path', { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' }),
-        h('polyline', { points: '7 10 12 15 17 10' }),
-        h('line', { x1: 12, y1: 15, x2: 12, y2: 3 }),
+        h('rect', { x: 9, y: 9, width: 13, height: 13, rx: 2, ry: 2 }),
+        h('path', { d: 'M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1' }),
       ])
 
       refreshCapacity()
@@ -418,15 +450,18 @@
                   )),
                 ])
                 : null,
-              canDownload.value
+              canCopy.value
                 ? h('div', { class: 'answer-actions' }, [
                   h('button', {
                     type: 'button',
-                    class: 'download-md',
-                    onClick: downloadMarkdown,
-                    'aria-label': T.download,
-                    title: T.download,
-                  }, [downloadIcon(), h('span', T.download)]),
+                    class: 'copy-md',
+                    onClick: copyMarkdown,
+                    'aria-label': copyLabel.value,
+                    title: copyLabel.value,
+                  }, [copyIcon(), h('span', copyLabel.value)]),
+                  copyStatus.value
+                    ? h('span', { class: 'copy-status', role: 'status', 'aria-live': 'polite' }, copyStatus.value)
+                    : null,
                 ])
                 : null,
             ])

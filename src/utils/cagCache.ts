@@ -1,4 +1,5 @@
 import type { CagRetriever, CagSource } from './cag'
+import { CACHE_VERSION } from './cache'
 
 /** Retrieved sources TTL — fresh enough for transcript drift without hammering archive.tw. */
 export const CAG_SOURCE_CACHE_TTL_SECONDS = 3_600
@@ -36,7 +37,7 @@ export async function buildCagSourceCacheKey(params: CagSourceCacheParams): Prom
     })
     .join('&')
   const hash = await sha256Hex(`${normalizeQuestion(params.question)}|${serializedParams}`)
-  return `cag:src:${hash}`
+  return `${CACHE_VERSION}:cag:src:${hash}`
 }
 
 function isCagSource(value: unknown): value is CagSource {

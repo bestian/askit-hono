@@ -7,5 +7,6 @@ dist/
 .DS_Store
 # build/ 全為生成物（Fuse 索引、manifest、Vectorize 同步用的 .sql / .ndjson），不入版控
 build/
+.claude/
 
 report.md

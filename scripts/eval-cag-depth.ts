@@ -1,11 +1,14 @@
 /**
- * Honest CAG depth eval: production-shaped Vectorize thin vs archive-hydrated sources.
+ * Honest CAG/Audrey depth eval: production-shaped Vectorize thin vs
+ * archive-hydrated sources.
  *
  * Usage:
  *   npm run eval:cag:depth
  *   npm run eval:cag:depth -- --mode=thin
  *   npm run eval:cag:depth -- --mode=hydrate
  *   npm run eval:cag:depth -- --cases=digital-signature,ai-governance
+ *   npm run eval:cag:depth -- --audrey --mode=hydrate --model=gemma
+ *   npm run eval:cag:depth -- --audrey --mode=hydrate --model=glm-5.2
  */
 import { execSync } from 'node:child_process'
 import { performance } from 'node:perf_hooks'
@@ -14,10 +17,17 @@ import {
   buildCagMessages,
   completeCagAnswer,
   DEFAULT_TOP_K,
+  detectCagAnswerLanguage,
   hydrateCagSourcesFromArchive,
   type CagSource,
 } from '../src/utils/cag'
 import {
+  buildAudreySkillAnswerInstruction,
+  resolveAudreySkillModel,
+} from '../src/utils/audreySkill'
+import {
+  CAG_MODEL_GEMMA,
+  DEFAULT_AUDREY_EVAL_CASES,
   DEFAULT_CAG_EVAL_CASES,
   scoreCagAnswer,
   scoreCagDepth,
@@ -40,6 +50,12 @@ type WorkersAiBinding = {
 }
 
 type EvalArm = 'thin' | 'hydrate'
+type EvalProfile = 'cag' | 'audrey'
+
+type EvalGenerateOptions = {
+  profile: EvalProfile
+  model: string
+}
 
 type CaseArmResult = {
   arm: EvalArm
@@ -79,6 +95,24 @@ function parseMode(argv: string[]): EvalArm | 'compare' {
   const mode = flag.slice('--mode='.length)
   if (mode === 'thin' || mode === 'hydrate' || mode === 'compare') return mode
   throw new Error(`Unknown --mode=${mode}. Use thin, hydrate, or compare.`)
+}
+
+function parseProfile(argv: string[]): EvalProfile {
+  return argv.includes('--audrey') || argv.includes('--profile=audrey')
+    ? 'audrey'
+    : 'cag'
+}
+
+function parseModel(argv: string[], profile: EvalProfile): string {
+  const flag = argv.find((arg) => arg.startsWith('--model='))
+  const raw = flag?.slice('--model='.length)
+  if (profile === 'cag') return CAG_MODEL_GEMMA
+  if (!raw) return resolveAudreySkillModel(process.env.AUDREY_MODEL)
+  if (raw === 'gemma') return resolveAudreySkillModel(CAG_MODEL_GEMMA)
+  if (raw === 'glm' || raw === 'glm-5.2') {
+    return resolveAudreySkillModel('@cf/zai-org/glm-5.2')
+  }
+  return resolveAudreySkillModel(raw)
 }
 
 function resolveAccountId(): string {
@@ -198,6 +232,7 @@ async function evalCaseArm(
   arm: EvalArm,
   archiveBaseUrl: string,
   topK: number,
+  generateOptions: EvalGenerateOptions,
 ): Promise<CaseArmResult | null> {
   const { sources: thinSources, retrievalMs } = await retrieveThinSources(
     ai,
@@ -223,8 +258,23 @@ async function evalCaseArm(
   }
 
   const generateStarted = performance.now()
-  const messages = buildCagMessages(testCase.question, sources)
-  const answer = await completeCagAnswer(ai, messages as ChatMessage[])
+  const answerLanguage = generateOptions.profile === 'audrey'
+    ? detectCagAnswerLanguage(testCase.question)
+    : undefined
+  const answerInstruction = generateOptions.profile === 'audrey'
+    ? buildAudreySkillAnswerInstruction(answerLanguage)
+    : undefined
+  const messages = buildCagMessages(
+    testCase.question,
+    sources,
+    [],
+    answerInstruction,
+    answerLanguage,
+  )
+  const answer = await completeCagAnswer(ai, messages as ChatMessage[], {
+    model: generateOptions.model,
+    maxCompletionTokens: 1024,
+  })
   const generateMs = performance.now() - generateStarted
 
   const binary = scoreCagAnswer(answer, sources.length, {
@@ -336,9 +386,12 @@ async function main() {
   const fullAnswers = parseFullAnswers(argv)
   const mode = parseMode(argv)
   const filter = parseCaseFilter(argv)
+  const profile = parseProfile(argv)
+  const model = parseModel(argv, profile)
+  const baseCases = profile === 'audrey' ? DEFAULT_AUDREY_EVAL_CASES : DEFAULT_CAG_EVAL_CASES
   const cases = filter
-    ? DEFAULT_CAG_EVAL_CASES.filter((testCase) => filter.includes(testCase.id))
-    : DEFAULT_CAG_EVAL_CASES
+    ? baseCases.filter((testCase) => filter.includes(testCase.id))
+    : baseCases
   if (cases.length === 0) throw new Error('No eval cases selected.')
 
   const archiveBaseUrl = process.env.ASK_ARCHIVE_BASE_URL ?? 'https://archive.tw'
@@ -348,32 +401,34 @@ async function main() {
   const ai = createWorkersAiBinding(accountId, token)
   const vectorize = createVectorizeBinding(accountId, token)
 
-  console.log(`CAG depth eval (${mode}) — topK=${topK}, index=${VECTORIZE_INDEX_NAME}`)
+  console.log(
+    `${profile === 'audrey' ? 'Audrey' : 'CAG'} depth eval (${mode}) — ` +
+    `model=${model}, topK=${topK}, index=${VECTORIZE_INDEX_NAME}`,
+  )
+
+  const generateOptions: EvalGenerateOptions = { profile, model }
 
   const comparisons: CompareCaseResult[] = []
   for (const testCase of cases) {
     console.log(`\n→ ${testCase.id}`)
     if (mode === 'compare') {
-      const thin = await evalCaseArm(ai, vectorize, testCase, 'thin', archiveBaseUrl, topK)
-      const hydrate = await evalCaseArm(ai, vectorize, testCase, 'hydrate', archiveBaseUrl, topK)
+      const thin = await evalCaseArm(ai, vectorize, testCase, 'thin', archiveBaseUrl, topK, generateOptions)
+      const hydrate = await evalCaseArm(ai, vectorize, testCase, 'hydrate', archiveBaseUrl, topK, generateOptions)
       const comparison = { caseId: testCase.id, thin, hydrate }
       comparisons.push(comparison)
       printCaseComparison(comparison, fullAnswers)
       continue
     }
 
-    const result = await evalCaseArm(ai, vectorize, testCase, mode, archiveBaseUrl, topK)
+    const result = await evalCaseArm(ai, vectorize, testCase, mode, archiveBaseUrl, topK, generateOptions)
     if (result) {
-      comparisons.push({
+      const comparison = {
         caseId: testCase.id,
         thin: mode === 'thin' ? result : null,
         hydrate: mode === 'hydrate' ? result : null,
-      })
-      printCaseComparison({
-        caseId: testCase.id,
-        thin: mode === 'thin' ? result : null,
-        hydrate: mode === 'hydrate' ? result : null,
-      }, fullAnswers)
+      }
+      comparisons.push(comparison)
+      printCaseComparison(comparison, fullAnswers)
     }
   }
 

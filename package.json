@@ -25,7 +25,8 @@
     "abuse:report": "tsx --tsconfig scripts/tsconfig.json scripts/abuse-report.ts",
     "abuse:unban": "tsx --tsconfig scripts/tsconfig.json scripts/abuse-unban.ts",
     "eval:cag": "tsx --tsconfig scripts/tsconfig.json scripts/eval-cag-models.ts",
-    "eval:cag:depth": "tsx --tsconfig scripts/tsconfig.json scripts/eval-cag-depth.ts"
+    "eval:cag:depth": "tsx --tsconfig scripts/tsconfig.json scripts/eval-cag-depth.ts",
+    "skill:mine": "tsx --tsconfig scripts/tsconfig.json scripts/mine-audrey-voice.ts"
   },
   "dependencies": {
     "fuse.js": "^7.3.0",

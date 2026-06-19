@@ -1,16 +1,20 @@
 // R2 答案快取（issue #25）：對「相同問題（且影響答案的參數也相同）」的回應做 7 天快取。
 // 收到問題時先簡單確認快取是否存在，命中就直接取用，不再跑檢索與 AI。
 //
-// 三條路徑各自獨立命名空間（key 前綴），避免互相污染：
 //   - /ask/      → scope 'ask'（HTML）
 //   - /cag/、/cag → scope 'cag'（markdown，含參數）
+//   - /au/、/au  → scope 'au'（Audrey skill markdown，含模型／參數）
 //   - /webhook   → scope 'webhook'（JSON：answer + sources）
 //
 // 任一情況下 bucket 未綁（dev／測試）或讀寫發生錯誤時都「優雅降級」：當作未命中、
 // 照常生成，絕不讓快取問題阻斷正常回答。
 
 /** 快取範圍，對應 issue 要求區分的三條路徑。 */
-export type CacheScope = 'ask' | 'cag' | 'webhook'
+export type CacheScope = 'ask' | 'cag' | 'au' | 'webhook'
+/** 快取版本：bump 讓所有舊快取 orphaned（新 key prefix，舊 key 自然 7 天過期）。
+    v2: 修正 D1 fallback table/columns + gate 到 archive fallback only。 */
+export const CACHE_VERSION = 'v8'
+
 
 /** 快取壽命：7 天。 */
 export const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
@@ -46,7 +50,7 @@ export async function buildCacheKey(
     .map((key) => `${key}=${String(params[key])}`)
     .join('&')
   const hash = await sha256Hex(`${normalizeQuestion(question)}|${serializedParams}`)
-  return `cache/${scope}/${hash}`
+  return `cache/${CACHE_VERSION}/${scope}/${hash}`
 }
 
 // 讀取快取。命中且未過期回傳內容；未綁 bucket、查無、過期或發生錯誤一律回 null（視為未命中）。

@@ -51,8 +51,8 @@ function createFakeBucket(initialUploadedAt = Date.now()) {
 test('buildCacheKey 區分 scope 且對相同輸入穩定', async () => {
   const ask = await buildCacheKey('ask', '地神香火如何')
   const cag = await buildCacheKey('cag', '地神香火如何')
-  assert.ok(ask.startsWith('cache/ask/'))
-  assert.ok(cag.startsWith('cache/cag/'))
+  assert.ok(ask.startsWith('cache/v8/ask/'))
+  assert.ok(cag.startsWith('cache/v8/cag/'))
   assert.notEqual(ask, cag)
   assert.equal(ask, await buildCacheKey('ask', '地神香火如何'))
 })

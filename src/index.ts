@@ -32,6 +32,11 @@ import {
   streamCagAnswer,
 } from './utils/cag'
 import {
+  audreySkillCitationFootnotes,
+  buildAudreySkillAnswerInstruction,
+  resolveAudreySkillModel,
+} from './utils/audreySkill'
+import {
   buildCacheKey,
   getCachedResponse,
   putCachedResponse,
@@ -66,6 +71,8 @@ type Bindings = {
   // 未設定時預設 'vectorize'；無 VECTORIZE binding 時自動回退 archive。
   CAG_RETRIEVER?: string
   CAG_VECTORIZE_MIN_SCORE?: string
+  /** Model used by /au (Gemma by default; @cf/zai-org/glm-5.2 allowed). */
+  AUDREY_MODEL?: string
   GLOBAL_GENERATION_LIMIT_PER_MINUTE?: string
   GLOBAL_GENERATION_LIMIT_PER_DAY?: string
   ASK_INDEX: R2Bucket
@@ -87,11 +94,17 @@ type Bindings = {
   // 超量／異常請求追蹤 log 與黑名單（issue #27）。未綁時優雅降級：
   // 不寫 log、黑名單視為空，請求照常處理。
   ABUSE_DB?: D1Database
+  // sayit-database D1：當 Vectorize 和 archive.tw 搜尋都找不到時，
+ // 用 section_content LIKE 做內容全文檢索（如「萌典」這類罕用專名）。
+  // 未綁時優雅降級——回到既有行為（空來源 → 404）。
+  SAYIT_DB?: D1Database
   ABUSE_BLACKLIST_THRESHOLD?: string
   ABUSE_COUNT_WINDOW_HOURS?: string
 }
 
 const DEFAULT_CAG_RETRIEVER: CagRetriever = 'vectorize'
+// /au 的預設 max_completion_tokens；GLM-5.2 較冗長，500 會截斷回答，1024 確保完整。
+const AUDREY_MAX_COMPLETION_TOKENS = 1024
 
 function resolveCagRetriever(
   ...values: (string | undefined)[]
@@ -251,6 +264,7 @@ const ROBOTS_TXT = `User-agent: *
 Disallow: /ask/
 Disallow: /cag/
 Disallow: /capacity
+Disallow: /au/
 Disallow: /webhook
 `
 
@@ -346,7 +360,7 @@ const maxApiBodySize: MiddlewareHandler = async (c, next) => {
   })
   await next()
 }
-
+app.use('/au', maxApiBodySize)
 app.use('/webhook', maxApiBodySize)
 
 function decodeRouteParam(value: string): string {
@@ -1109,6 +1123,235 @@ app.get('/ask/:question', async (c) => {
   }
 })
 
+app.get('/au/status', (c) => {
+  const model = resolveAudreySkillModel(c.env.AUDREY_MODEL)
+  return c.json({
+    ...getCagStatus({
+      archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
+      retriever: resolveCagRetriever(c.req.query('retriever'), c.env.CAG_RETRIEVER),
+      vectorizeBound: Boolean(c.env.VECTORIZE),
+      sourceCacheBound: Boolean(c.env.CAG_CACHE),
+      vectorizeMinScore: resolveVectorizeMinScore(
+        c.req.query('min_score') ?? c.req.query('minScore'),
+        c.env.CAG_VECTORIZE_MIN_SCORE,
+      ),
+      model,
+    }),
+    mode: 'audrey-skill',
+  })
+})
+
+app.get('/au/:question', async (c) => {
+  const lang = resolveWebLang(c.req.query('lang'))
+  const messages = WEB_MESSAGES[lang]
+  const question = decodeRouteParam(c.req.param('question'))
+  const abuse = await checkHttpBlacklist(c)
+  if (abuse.blocked) {
+    return c.text(messages.blacklisted, 403)
+  }
+  if (await isIpRateLimited(c)) {
+    reportAbuse(c, { key: abuse.key, kind: 'rate_limit', path: 'au', question, ip: abuse.ip })
+    return c.text(messages.rateLimited, 429, {
+      'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
+    })
+  }
+  if (isQuestionTooLong(question)) {
+    reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'au', question, ip: abuse.ip })
+    return c.text(messages.tooLong, 400)
+  }
+
+  const bypassCache = shouldBypassCaches(c.req.query('refresh'))
+  const topK = parsePositiveInteger(c.req.query('top_k') ?? c.req.query('topK'), DEFAULT_TOP_K)
+  const citableTopK = parseOptionalPositiveInteger(
+    c.req.query('cite_top_k') ?? c.req.query('citeTopK'),
+  )
+  const maxCompletionTokens = parsePositiveInteger(
+    c.req.query('max_tokens') ?? c.req.query('maxTokens'),
+    AUDREY_MAX_COMPLETION_TOKENS,
+  )
+  const retriever = resolveCagRetriever(c.req.query('retriever'), c.env.CAG_RETRIEVER)
+  const vectorizeMinScore = resolveVectorizeMinScore(
+    c.req.query('min_score') ?? c.req.query('minScore'),
+    c.env.CAG_VECTORIZE_MIN_SCORE,
+  )
+  const model = resolveAudreySkillModel(c.env.AUDREY_MODEL)
+  const answerLanguage = lang === 'en' ? 'en' : undefined
+  const cagOptions = normalizeCagOptions({
+    archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
+    topK,
+    citableTopK,
+    maxCompletionTokens,
+    model,
+    answerInstruction: buildAudreySkillAnswerInstruction(answerLanguage),
+    retriever,
+    vectorize: c.env.VECTORIZE,
+    vectorizeMinScore,
+    cagCache: c.env.CAG_CACHE,
+    skipSourceCache: bypassCache,
+    answerLanguage,
+    citationTransform: audreySkillCitationFootnotes,
+    sayitDb: c.env.SAYIT_DB,
+  })
+  const cacheKey = await buildCacheKey('au', question, {
+    archiveBaseUrl: cagOptions.archiveBaseUrl,
+    model: cagOptions.model,
+    topK: cagOptions.topK,
+    citableTopK: cagOptions.citableTopK,
+    maxCompletionTokens: cagOptions.maxCompletionTokens,
+    retriever: cagOptions.retriever,
+    vectorizeMinScore: cagOptions.vectorizeMinScore,
+    ...(answerLanguage === 'en' ? { answerLanguage: 'en' } : {}),
+  })
+  if (!bypassCache) {
+    const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
+    if (cached) {
+      c.executionCtx.waitUntil(refreshCachedResponse(c.env.ASK_CACHE, cacheKey, cached))
+      return respondFromCache(cached.body, cached.contentType)
+    }
+  }
+
+  const budget = await checkGlobalGenerationBudget(c.env)
+  if (!budget.allowed) {
+    return c.text(messages.budget, 429, {
+      'Retry-After': retryAfterForBudget(budget),
+    })
+  }
+
+  const response = await streamCagAnswer(c.env.AI, question, cagOptions)
+  if (response.status === 404 && lang === 'en') {
+    await response.body?.cancel()
+    return new Response(NOT_FOUND_REPLY_HTML_EN, {
+      status: 404,
+      headers: response.headers,
+    })
+  }
+  return cacheCagResponse(c, bypassCache ? null : cacheKey, response)
+})
+
+app.post('/au', async (c) => {
+  const abuse = await checkHttpBlacklist(c)
+  if (abuse.blocked) {
+    return c.text(BLACKLISTED_HTTP_MESSAGE, 403)
+  }
+  if (await isIpRateLimited(c)) {
+    let loggedQuestion = ''
+    try {
+      const body = (await c.req.json()) as { question?: unknown }
+      if (typeof body.question === 'string') loggedQuestion = body.question
+    } catch {
+      // 解析失敗就記空問題。
+    }
+    reportAbuse(c, {
+      key: abuse.key,
+      kind: 'rate_limit',
+      path: 'au',
+      question: loggedQuestion,
+      ip: abuse.ip,
+    })
+    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
+      'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
+    })
+  }
+
+  let payload: { question?: unknown; topK?: unknown; top_k?: unknown; citableTopK?: unknown; cite_top_k?: unknown; maxTokens?: unknown; max_tokens?: unknown; retriever?: unknown; minScore?: unknown; min_score?: unknown; refresh?: unknown }
+  try {
+    payload = await c.req.json()
+  } catch {
+    return c.text('Invalid JSON payload', 400)
+  }
+
+  const question = typeof payload.question === 'string' ? payload.question : ''
+  if (question.trim() === '') {
+    return c.text('question is required', 400)
+  }
+  if (isQuestionTooLong(question)) {
+    reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'au', question, ip: abuse.ip })
+    return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
+  }
+
+  const bypassCache = typeof payload.refresh === 'boolean'
+    ? payload.refresh
+    : typeof payload.refresh === 'string'
+      ? shouldBypassCaches(payload.refresh)
+      : false
+  const topK = typeof payload.topK === 'number'
+    ? payload.topK
+    : typeof payload.top_k === 'number'
+      ? payload.top_k
+      : DEFAULT_TOP_K
+  const maxCompletionTokens = typeof payload.maxTokens === 'number'
+    ? payload.maxTokens
+    : typeof payload.max_tokens === 'number'
+      ? payload.max_tokens
+      : AUDREY_MAX_COMPLETION_TOKENS
+  const citableTopK = typeof payload.citableTopK === 'number'
+    ? payload.citableTopK
+    : typeof payload.cite_top_k === 'number'
+      ? payload.cite_top_k
+      : undefined
+  const vectorizeMinScore = typeof payload.minScore === 'number'
+    ? payload.minScore
+    : typeof payload.min_score === 'number'
+      ? payload.min_score
+      : resolveVectorizeMinScore(c.env.CAG_VECTORIZE_MIN_SCORE)
+  const retriever = resolveCagRetriever(
+    typeof payload.retriever === 'string' ? payload.retriever : undefined,
+    c.env.CAG_RETRIEVER,
+  )
+  const answerLanguage = detectCagAnswerLanguage(question)
+  const model = resolveAudreySkillModel(c.env.AUDREY_MODEL)
+  const cagOptions = normalizeCagOptions({
+    archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
+    topK,
+    citableTopK,
+    maxCompletionTokens,
+    model,
+    answerInstruction: buildAudreySkillAnswerInstruction(answerLanguage),
+    retriever,
+    vectorize: c.env.VECTORIZE,
+    vectorizeMinScore,
+    cagCache: c.env.CAG_CACHE,
+    skipSourceCache: bypassCache,
+    answerLanguage,
+    citationTransform: audreySkillCitationFootnotes,
+    sayitDb: c.env.SAYIT_DB,
+  })
+  const cacheKey = await buildCacheKey('au', question, {
+    archiveBaseUrl: cagOptions.archiveBaseUrl,
+    model: cagOptions.model,
+    topK: cagOptions.topK,
+    citableTopK: cagOptions.citableTopK,
+    maxCompletionTokens: cagOptions.maxCompletionTokens,
+    retriever: cagOptions.retriever,
+    vectorizeMinScore: cagOptions.vectorizeMinScore,
+    ...(answerLanguage === 'en' ? { answerLanguage: 'en' } : {}),
+  })
+  if (!bypassCache) {
+    const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
+    if (cached) {
+      c.executionCtx.waitUntil(refreshCachedResponse(c.env.ASK_CACHE, cacheKey, cached))
+      return respondFromCache(cached.body, cached.contentType)
+    }
+  }
+
+  const budget = await checkGlobalGenerationBudget(c.env)
+  if (!budget.allowed) {
+    return c.text(GLOBAL_BUDGET_HTTP_MESSAGE, 429, {
+      'Retry-After': retryAfterForBudget(budget),
+    })
+  }
+
+  const response = await streamCagAnswer(c.env.AI, question, cagOptions)
+  if (response.status === 404 && answerLanguage === 'en') {
+    await response.body?.cancel()
+    return new Response(NOT_FOUND_REPLY_HTML_EN, {
+      status: 404,
+      headers: response.headers,
+    })
+  }
+  return cacheCagResponse(c, bypassCache ? null : cacheKey, response)
+})
+
 app.get('/cag/status', (c) => {
   return c.json(getCagStatus({
     archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
@@ -1188,6 +1431,7 @@ app.get('/cag/:question', async (c) => {
     cagCache: c.env.CAG_CACHE,
     skipSourceCache: bypassCache,
     answerLanguage: lang === 'en' ? 'en' : undefined,
+    sayitDb: c.env.SAYIT_DB,
   })
 
   // 快取 key 納入實際生效的參數（含 clamp/default 後的值），避免用超大參數繞過快取。

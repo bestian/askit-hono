@@ -1,0 +1,1525 @@
+{
+  "generatedAt": "2026-06-18T20:43:18.860Z",
+  "corpus": {
+    "speeches": 1871,
+    "audreySections": 168072,
+    "totalHanChars": 6296072,
+    "totalLatinWords": 2646134,
+    "dateRange": {
+      "from": "2015-07-22",
+      "to": "2026-06-10"
+    }
+  },
+  "seedPhrases": {
+    "zh": [
+      {
+        "phrase": "我們",
+        "count": 48940
+      },
+      {
+        "phrase": "這個",
+        "count": 45690
+      },
+      {
+        "phrase": "所以",
+        "count": 28444
+      },
+      {
+        "phrase": "如果",
+        "count": 22153
+      },
+      {
+        "phrase": "但是",
+        "count": 21593
+      },
+      {
+        "phrase": "大家",
+        "count": 21288
+      },
+      {
+        "phrase": "因為",
+        "count": 20056
+      },
+      {
+        "phrase": "其實",
+        "count": 13745
+      },
+      {
+        "phrase": "當然",
+        "count": 8139
+      },
+      {
+        "phrase": "我覺得",
+        "count": 7517
+      },
+      {
+        "phrase": "然後",
+        "count": 5969
+      },
+      {
+        "phrase": "我想",
+        "count": 4851
+      },
+      {
+        "phrase": "開放",
+        "count": 3888
+      },
+      {
+        "phrase": "一起",
+        "count": 3434
+      },
+      {
+        "phrase": "好像",
+        "count": 2307
+      },
+      {
+        "phrase": "共同",
+        "count": 2126
+      },
+      {
+        "phrase": "就像",
+        "count": 1559
+      },
+      {
+        "phrase": "共識",
+        "count": 977
+      },
+      {
+        "phrase": "可是",
+        "count": 877
+      },
+      {
+        "phrase": "多元",
+        "count": 736
+      },
+      {
+        "phrase": "透明",
+        "count": 714
+      },
+      {
+        "phrase": "對不對",
+        "count": 605
+      },
+      {
+        "phrase": "假設",
+        "count": 544
+      },
+      {
+        "phrase": "也就是說",
+        "count": 466
+      },
+      {
+        "phrase": "比如",
+        "count": 371
+      },
+      {
+        "phrase": "其實就是",
+        "count": 302
+      },
+      {
+        "phrase": "傾聽",
+        "count": 238
+      },
+      {
+        "phrase": "比如說",
+        "count": 13
+      },
+      {
+        "phrase": "換句話說",
+        "count": 10
+      },
+      {
+        "phrase": "譬如",
+        "count": 5
+      }
+    ],
+    "en": [
+      {
+        "phrase": "so",
+        "count": 67118
+      },
+      {
+        "phrase": "i think",
+        "count": 6861
+      },
+      {
+        "phrase": "actually",
+        "count": 5904
+      },
+      {
+        "phrase": "for example",
+        "count": 3563
+      },
+      {
+        "phrase": "you know",
+        "count": 528
+      },
+      {
+        "phrase": "plurality",
+        "count": 399
+      },
+      {
+        "phrase": "radical transparency",
+        "count": 394
+      },
+      {
+        "phrase": "in a sense",
+        "count": 331
+      },
+      {
+        "phrase": "rough consensus",
+        "count": 313
+      },
+      {
+        "phrase": "let me",
+        "count": 171
+      },
+      {
+        "phrase": "demonstrate",
+        "count": 129
+      },
+      {
+        "phrase": "broad listening",
+        "count": 90
+      },
+      {
+        "phrase": "prosocial",
+        "count": 82
+      },
+      {
+        "phrase": "we the people",
+        "count": 36
+      }
+    ]
+  },
+  "hanNgrams": [
+    {
+      "gram": "我們",
+      "n": 2,
+      "count": 48940
+    },
+    {
+      "gram": "這個",
+      "n": 2,
+      "count": 45690
+    },
+    {
+      "gram": "可以",
+      "n": 2,
+      "count": 37838
+    },
+    {
+      "gram": "一個",
+      "n": 2,
+      "count": 36801
+    },
+    {
+      "gram": "沒有",
+      "n": 2,
+      "count": 32495
+    },
+    {
+      "gram": "就是",
+      "n": 2,
+      "count": 30239
+    },
+    {
+      "gram": "所以",
+      "n": 2,
+      "count": 28444
+    },
+    {
+      "gram": "如果",
+      "n": 2,
+      "count": 22153
+    },
+    {
+      "gram": "但是",
+      "n": 2,
+      "count": 21593
+    },
+    {
+      "gram": "大家",
+      "n": 2,
+      "count": 21288
+    },
+    {
+      "gram": "不是",
+      "n": 2,
+      "count": 20903
+    },
+    {
+      "gram": "因為",
+      "n": 2,
+      "count": 20056
+    },
+    {
+      "gram": "或者",
+      "n": 2,
+      "count": 19429
+    },
+    {
+      "gram": "這一",
+      "n": 2,
+      "count": 19082
+    },
+    {
+      "gram": "這樣",
+      "n": 2,
+      "count": 19053
+    },
+    {
+      "gram": "一些",
+      "n": 2,
+      "count": 18204
+    },
+    {
+      "gram": "者是",
+      "n": 2,
+      "count": 17027
+    },
+    {
+      "gram": "或者是",
+      "n": 3,
+      "count": 16880
+    },
+    {
+      "gram": "覺得",
+      "n": 2,
+      "count": 15608
+    },
+    {
+      "gram": "有一",
+      "n": 2,
+      "count": 14805
+    },
+    {
+      "gram": "個是",
+      "n": 2,
+      "count": 14281
+    },
+    {
+      "gram": "時候",
+      "n": 2,
+      "count": 14152
+    },
+    {
+      "gram": "比較",
+      "n": 2,
+      "count": 13821
+    },
+    {
+      "gram": "的時",
+      "n": 2,
+      "count": 13821
+    },
+    {
+      "gram": "其實",
+      "n": 2,
+      "count": 13745
+    },
+    {
+      "gram": "什麼",
+      "n": 2,
+      "count": 13593
+    },
+    {
+      "gram": "他們",
+      "n": 2,
+      "count": 13208
+    },
+    {
+      "gram": "部分",
+      "n": 2,
+      "count": 12627
+    },
+    {
+      "gram": "現在",
+      "n": 2,
+      "count": 11951
+    },
+    {
+      "gram": "的話",
+      "n": 2,
+      "count": 11836
+    },
+    {
+      "gram": "也就",
+      "n": 2,
+      "count": 11480
+    },
+    {
+      "gram": "的時候",
+      "n": 3,
+      "count": 11442
+    },
+    {
+      "gram": "也就是",
+      "n": 3,
+      "count": 11340
+    },
+    {
+      "gram": "可能",
+      "n": 2,
+      "count": 11043
+    },
+    {
+      "gram": "這個是",
+      "n": 3,
+      "count": 10324
+    },
+    {
+      "gram": "問題",
+      "n": 2,
+      "count": 10034
+    },
+    {
+      "gram": "裡面",
+      "n": 2,
+      "count": 9880
+    },
+    {
+      "gram": "社會",
+      "n": 2,
+      "count": 9254
+    },
+    {
+      "gram": "自己",
+      "n": 2,
+      "count": 9179
+    },
+    {
+      "gram": "非常",
+      "n": 2,
+      "count": 9093
+    },
+    {
+      "gram": "樣的",
+      "n": 2,
+      "count": 8867
+    },
+    {
+      "gram": "是這",
+      "n": 2,
+      "count": 8854
+    },
+    {
+      "gram": "知道",
+      "n": 2,
+      "count": 8848
+    },
+    {
+      "gram": "是我",
+      "n": 2,
+      "count": 8529
+    },
+    {
+      "gram": "是一",
+      "n": 2,
+      "count": 8316
+    },
+    {
+      "gram": "當然",
+      "n": 2,
+      "count": 8139
+    },
+    {
+      "gram": "並不",
+      "n": 2,
+      "count": 7993
+    },
+    {
+      "gram": "是不",
+      "n": 2,
+      "count": 7851
+    },
+    {
+      "gram": "已經",
+      "n": 2,
+      "count": 7806
+    },
+    {
+      "gram": "之後",
+      "n": 2,
+      "count": 7753
+    },
+    {
+      "gram": "討論",
+      "n": 2,
+      "count": 7676
+    },
+    {
+      "gram": "這邊",
+      "n": 2,
+      "count": 7535
+    },
+    {
+      "gram": "我覺",
+      "n": 2,
+      "count": 7523
+    },
+    {
+      "gram": "我覺得",
+      "n": 3,
+      "count": 7517
+    },
+    {
+      "gram": "朋友",
+      "n": 2,
+      "count": 7367
+    },
+    {
+      "gram": "的人",
+      "n": 2,
+      "count": 7366
+    },
+    {
+      "gram": "不會",
+      "n": 2,
+      "count": 7249
+    },
+    {
+      "gram": "東西",
+      "n": 2,
+      "count": 7176
+    },
+    {
+      "gram": "是在",
+      "n": 2,
+      "count": 7145
+    },
+    {
+      "gram": "還是",
+      "n": 2,
+      "count": 7075
+    }
+  ],
+  "latinNgrams": [
+    {
+      "gram": "people",
+      "n": 1,
+      "count": 24299
+    },
+    {
+      "gram": "it's",
+      "n": 1,
+      "count": 20739
+    },
+    {
+      "gram": "just",
+      "n": 1,
+      "count": 14889
+    },
+    {
+      "gram": "like",
+      "n": 1,
+      "count": 14368
+    },
+    {
+      "gram": "because",
+      "n": 1,
+      "count": 12244
+    },
+    {
+      "gram": "very",
+      "n": 1,
+      "count": 11656
+    },
+    {
+      "gram": "also",
+      "n": 1,
+      "count": 10640
+    },
+    {
+      "gram": "all",
+      "n": 1,
+      "count": 10285
+    },
+    {
+      "gram": "that's",
+      "n": 1,
+      "count": 10193
+    },
+    {
+      "gram": "then",
+      "n": 1,
+      "count": 9622
+    },
+    {
+      "gram": "more",
+      "n": 1,
+      "count": 9348
+    },
+    {
+      "gram": "about",
+      "n": 1,
+      "count": 9191
+    },
+    {
+      "gram": "one",
+      "n": 1,
+      "count": 9084
+    },
+    {
+      "gram": "think",
+      "n": 1,
+      "count": 9084
+    },
+    {
+      "gram": "which",
+      "n": 1,
+      "count": 8469
+    },
+    {
+      "gram": "taiwan",
+      "n": 1,
+      "count": 8322
+    },
+    {
+      "gram": "there",
+      "n": 1,
+      "count": 7603
+    },
+    {
+      "gram": "what",
+      "n": 1,
+      "count": 7587
+    },
+    {
+      "gram": "our",
+      "n": 1,
+      "count": 7401
+    },
+    {
+      "gram": "when",
+      "n": 1,
+      "count": 7152
+    },
+    {
+      "gram": "social",
+      "n": 1,
+      "count": 7059
+    },
+    {
+      "gram": "other",
+      "n": 1,
+      "count": 6945
+    },
+    {
+      "gram": "there's",
+      "n": 1,
+      "count": 6670
+    },
+    {
+      "gram": "don't",
+      "n": 1,
+      "count": 6661
+    },
+    {
+      "gram": "my",
+      "n": 1,
+      "count": 6101
+    },
+    {
+      "gram": "who",
+      "n": 1,
+      "count": 6098
+    },
+    {
+      "gram": "actually",
+      "n": 1,
+      "count": 5895
+    },
+    {
+      "gram": "time",
+      "n": 1,
+      "count": 5857
+    },
+    {
+      "gram": "work",
+      "n": 1,
+      "count": 5739
+    },
+    {
+      "gram": "now",
+      "n": 1,
+      "count": 5726
+    },
+    {
+      "gram": "say",
+      "n": 1,
+      "count": 5545
+    },
+    {
+      "gram": "right",
+      "n": 1,
+      "count": 5335
+    },
+    {
+      "gram": "way",
+      "n": 1,
+      "count": 5309
+    },
+    {
+      "gram": "no",
+      "n": 1,
+      "count": 5247
+    },
+    {
+      "gram": "public",
+      "n": 1,
+      "count": 5216
+    },
+    {
+      "gram": "we're",
+      "n": 1,
+      "count": 5185
+    },
+    {
+      "gram": "really",
+      "n": 1,
+      "count": 5149
+    },
+    {
+      "gram": "see",
+      "n": 1,
+      "count": 5113
+    },
+    {
+      "gram": "i'm",
+      "n": 1,
+      "count": 5042
+    },
+    {
+      "gram": "things",
+      "n": 1,
+      "count": 4901
+    },
+    {
+      "gram": "into",
+      "n": 1,
+      "count": 4892
+    },
+    {
+      "gram": "make",
+      "n": 1,
+      "count": 4745
+    },
+    {
+      "gram": "your",
+      "n": 1,
+      "count": 4635
+    },
+    {
+      "gram": "them",
+      "n": 1,
+      "count": 4606
+    },
+    {
+      "gram": "something",
+      "n": 1,
+      "count": 4551
+    },
+    {
+      "gram": "only",
+      "n": 1,
+      "count": 4520
+    },
+    {
+      "gram": "even",
+      "n": 1,
+      "count": 4518
+    },
+    {
+      "gram": "course",
+      "n": 1,
+      "count": 4493
+    },
+    {
+      "gram": "laughs",
+      "n": 1,
+      "count": 4440
+    },
+    {
+      "gram": "how",
+      "n": 1,
+      "count": 4384
+    },
+    {
+      "gram": "data",
+      "n": 1,
+      "count": 4379
+    },
+    {
+      "gram": "get",
+      "n": 1,
+      "count": 4208
+    },
+    {
+      "gram": "open",
+      "n": 1,
+      "count": 4201
+    },
+    {
+      "gram": "different",
+      "n": 1,
+      "count": 4177
+    },
+    {
+      "gram": "these",
+      "n": 1,
+      "count": 4163
+    },
+    {
+      "gram": "any",
+      "n": 1,
+      "count": 4144
+    },
+    {
+      "gram": "government",
+      "n": 1,
+      "count": 4126
+    },
+    {
+      "gram": "example",
+      "n": 1,
+      "count": 4123
+    },
+    {
+      "gram": "those",
+      "n": 1,
+      "count": 4083
+    },
+    {
+      "gram": "same",
+      "n": 1,
+      "count": 4012
+    }
+  ],
+  "openings": [
+    {
+      "filename": "2026-06-10-creative-bureaucracy-award-acceptance-s",
+      "sectionId": 63856799,
+      "text": "Five thousand years. Stylus on clay. The first writing was bookkeeping: shared grain, counted and kept a village alive through winter.",
+      "href": "https://archive.tw/2026-06-10-creative-bureaucracy-award-acceptance-s#s63856799"
+    },
+    {
+      "filename": "2026-06-10-創意官吏獎得獎感言",
+      "sectionId": 63856811,
+      "text": "五千年前，尖筆壓進泥板。 最古老的書寫，是記帳： 村裡共有的資糧， 數清、存好， 讓全村活過冬天。",
+      "href": "https://archive.tw/2026-06-10-%E5%89%B5%E6%84%8F%E5%AE%98%E5%90%8F%E7%8D%8E%E5%BE%97%E7%8D%8E%E6%84%9F%E8%A8%80#s63856811"
+    },
+    {
+      "filename": "2026-05-28-till-data-soil-dont-drill-data-oil",
+      "sectionId": 63852302,
+      "text": "During a recent visit to Dharamsala in northern India, I came across a scene that has stayed with me ever since.",
+      "href": "https://archive.tw/2026-05-28-till-data-soil-dont-drill-data-oil#s63852302"
+    },
+    {
+      "filename": "2026-05-28-商周專欄-資料是土壤-不是石油",
+      "sectionId": 63852318,
+      "text": "前陣子我在印度北部的達蘭薩拉，看到很有啟發性的場景。",
+      "href": "https://archive.tw/2026-05-28-%E5%95%86%E5%91%A8%E5%B0%88%E6%AC%84-%E8%B3%87%E6%96%99%E6%98%AF%E5%9C%9F%E5%A3%A4-%E4%B8%8D%E6%98%AF%E7%9F%B3%E6%B2%B9#s63852318"
+    },
+    {
+      "filename": "2026-05-28-從憤怒到交集-仁工智慧與關懷六力",
+      "sectionId": 63852757,
+      "text": "謝謝 Roger，謝謝 Bo-Jiun，謝謝各位前來——也謝謝台灣研究系列講座在聖安東尼學院主辦這場活動。",
+      "href": "https://archive.tw/2026-05-28-%E5%BE%9E%E6%86%A4%E6%80%92%E5%88%B0%E4%BA%A4%E9%9B%86-%E4%BB%81%E5%B7%A5%E6%99%BA%E6%85%A7%E8%88%87%E9%97%9C%E6%87%B7%E5%85%AD%E5%8A%9B#s63852757"
+    },
+    {
+      "filename": "2026-05-28-outrage-to-overlap-civic-ai-and-6-pack-",
+      "sectionId": 63852882,
+      "text": "Thank you, Roger. Thank you, Bo-Jiun. Thank you all for joining us — and thank you to the Taiwan Studies Seminar Series for hosting this event at St Antony's.",
+      "href": "https://archive.tw/2026-05-28-outrage-to-overlap-civic-ai-and-6-pack-#s63852882"
+    },
+    {
+      "filename": "2026-05-14-we-the-people-are-truly-the-superintell",
+      "sectionId": 63852506,
+      "text": "",
+      "href": "https://archive.tw/2026-05-14-we-the-people-are-truly-the-superintell#s63852506"
+    },
+    {
+      "filename": "2026-05-14-我們全民才是超級智慧",
+      "sectionId": 63852595,
+      "text": "",
+      "href": "https://archive.tw/2026-05-14-%E6%88%91%E5%80%91%E5%85%A8%E6%B0%91%E6%89%8D%E6%98%AF%E8%B6%85%E7%B4%9A%E6%99%BA%E6%85%A7#s63852595"
+    },
+    {
+      "filename": "2026-05-08-scsp-presidents-tech-brief",
+      "sectionId": 63814173,
+      "text": "Every single year.",
+      "href": "https://archive.tw/2026-05-08-scsp-presidents-tech-brief#s63814173"
+    },
+    {
+      "filename": "2026-05-08-scsp-總統科技簡報",
+      "sectionId": 63814236,
+      "text": "每一年，無一例外。",
+      "href": "https://archive.tw/2026-05-08-scsp-%E7%B8%BD%E7%B5%B1%E7%A7%91%E6%8A%80%E7%B0%A1%E5%A0%B1#s63814236"
+    },
+    {
+      "filename": "2026-04-30-reject-ai-prophecies-free-the-future",
+      "sectionId": 63813779,
+      "text": "A growing number of organizations, from Silicon Valley tech outfits to a host of other big corporations, have begun linking AI use to performance evaluations. For many, survival in the workplace now i",
+      "href": "https://archive.tw/2026-04-30-reject-ai-prophecies-free-the-future#s63813779"
+    },
+    {
+      "filename": "2026-04-30-商周專欄-別讓-ai-預言指揮你的人生",
+      "sectionId": 63813795,
+      "text": "近來從矽谷科技公司到其他大型企業，愈來愈多組織開始把 AI 使用與績效評估連動。許多人為了職場求生，被要求投入大量時間與資源，學習與 AI 協作。",
+      "href": "https://archive.tw/2026-04-30-%E5%95%86%E5%91%A8%E5%B0%88%E6%AC%84-%E5%88%A5%E8%AE%93-ai-%E9%A0%90%E8%A8%80%E6%8C%87%E6%8F%AE%E4%BD%A0%E7%9A%84%E4%BA%BA%E7%94%9F#s63813795"
+    },
+    {
+      "filename": "2026-04-27-senate-standing-committee-on-human-righ",
+      "sectionId": 63813831,
+      "text": "Chair, deputy chair, honourable senators, thank you for the invitation to appear before you in my individual capacity. My name is Audrey Tang, and my perspective today is shaped by my current work as ",
+      "href": "https://archive.tw/2026-04-27-senate-standing-committee-on-human-righ#s63813831"
+    },
+    {
+      "filename": "2026-04-27-加拿大參議院人權委員會",
+      "sectionId": 63813957,
+      "text": "主席、副主席、各位尊敬的參議員，感謝邀請我以個人身分出席作證。我的名字是唐鳳。今天我的觀點，來自我目前擔任臺灣數位治理大使的工作、我在牛津大學 AI 倫理研究院的學人身分，以及我作為臺灣首任數位發展部長的經驗。",
+      "href": "https://archive.tw/2026-04-27-%E5%8A%A0%E6%8B%BF%E5%A4%A7%E5%8F%83%E8%AD%B0%E9%99%A2%E4%BA%BA%E6%AC%8A%E5%A7%94%E5%93%A1%E6%9C%83#s63813957"
+    },
+    {
+      "filename": "2026-04-26-鄭欣庭碩士論文訪談紀錄",
+      "sectionId": 4762843,
+      "text": "在籌設的時候，我想很核心的一個討論，就是當時我們在疫情期間看到，數位在防疫上起到了公共基礎建設的實質作用。",
+      "href": "https://archive.tw/2026-04-26-%E9%84%AD%E6%AC%A3%E5%BA%AD%E7%A2%A9%E5%A3%AB%E8%AB%96%E6%96%87%E8%A8%AA%E8%AB%87%E7%B4%80%E9%8C%84#s4762843"
+    },
+    {
+      "filename": "2026-04-14-how-community-notes-reduce-viral-misinf",
+      "sectionId": 63857245,
+      "text": "Great, so let’s look at a Community Note. That's a note. So what is it?",
+      "href": "https://archive.tw/2026-04-14-how-community-notes-reduce-viral-misinf#s63857245"
+    },
+    {
+      "filename": "2026-04-01-商周專欄-別當被馬牽著跑的人",
+      "sectionId": 638923,
+      "text": "最近，很多人開始厭倦社群媒體上那些一眼就有「AI 味」的貼文。它們情緒飽滿、看似句句有理，讀完卻什麼也沒留下。資訊愈來愈多，錯失焦慮（FOMO）也愈來愈重，最後不是更懂世界，而是更快耗盡心力。",
+      "href": "https://archive.tw/2026-04-01-%E5%95%86%E5%91%A8%E5%B0%88%E6%AC%84-%E5%88%A5%E7%95%B6%E8%A2%AB%E9%A6%AC%E7%89%BD%E8%91%97%E8%B7%91%E7%9A%84%E4%BA%BA#s638923"
+    },
+    {
+      "filename": "2026-04-01-saddle-up-and-ride-the-ai-horse",
+      "sectionId": 638933,
+      "text": "These days, more and more people are exhausted by gleaming AI-polished social media posts. The messaging is emotionally charged, and every sentence seems to make sense. Yet, by the end, nothing sticks",
+      "href": "https://archive.tw/2026-04-01-saddle-up-and-ride-the-ai-horse#s638933"
+    },
+    {
+      "filename": "2026-03-25-weekly-ochiai",
+      "sectionId": 638611,
+      "text": "When we last met, you noted that there is so much music on Suno, but insufficient time to listen to it all. I think the most important thing, of course, is to only listen to the kinds of music that pr",
+      "href": "https://archive.tw/2026-03-25-weekly-ochiai#s638611"
+    },
+    {
+      "filename": "2026-03-25-落合陽一對談",
+      "sectionId": 638763,
+      "text": "我們上次見面時，你提到 Suno 上的音樂多到聽不完。我覺得最重要的事情，當然是只去聽那些能夠維繫和增進人際關係的音樂。",
+      "href": "https://archive.tw/2026-03-25-%E8%90%BD%E5%90%88%E9%99%BD%E4%B8%80%E5%B0%8D%E8%AB%87#s638763"
+    },
+    {
+      "filename": "2026-03-25-democracy-needs-civic-ai",
+      "sectionId": 63852333,
+      "text": "",
+      "href": "https://archive.tw/2026-03-25-democracy-needs-civic-ai#s63852333"
+    },
+    {
+      "filename": "2026-03-25-民主需要仁工智慧",
+      "sectionId": 63852419,
+      "text": "",
+      "href": "https://archive.tw/2026-03-25-%E6%B0%91%E4%B8%BB%E9%9C%80%E8%A6%81%E4%BB%81%E5%B7%A5%E6%99%BA%E6%85%A7#s63852419"
+    },
+    {
+      "filename": "2026-03-24-why-audrey-tang-has-no-fear-for-ai-agen",
+      "sectionId": 638442,
+      "text": "Very happy to be here. It's long overdue. I just got back to Taiwan from India and Japan. The day of recording is March 18, but I understand this will air about a week later.",
+      "href": "https://archive.tw/2026-03-24-why-audrey-tang-has-no-fear-for-ai-agen#s638442"
+    },
+    {
+      "filename": "2026-03-24-為何唐鳳不害怕-ai-智慧體與-openclaw",
+      "sectionId": 638526,
+      "text": "很高興來到這裡。真的早就該來錄了。我才剛從印度和日本回到臺灣。錄音當天是 3 月 18 日，但我理解這集大約會在一週後播出。",
+      "href": "https://archive.tw/2026-03-24-%E7%82%BA%E4%BD%95%E5%94%90%E9%B3%B3%E4%B8%8D%E5%AE%B3%E6%80%95-ai-%E6%99%BA%E6%85%A7%E9%AB%94%E8%88%87-openclaw#s638526"
+    },
+    {
+      "filename": "2026-03-19-余紀忠文教基金會來訪",
+      "sectionId": 636976,
+      "text": "你說《AI 基本法》？",
+      "href": "https://archive.tw/2026-03-19-%E4%BD%99%E7%B4%80%E5%BF%A0%E6%96%87%E6%95%99%E5%9F%BA%E9%87%91%E6%9C%83%E4%BE%86%E8%A8%AA#s636976"
+    },
+    {
+      "filename": "2026-03-15-a-dialogue-with-hiroki-azuma",
+      "sectionId": 63853478,
+      "text": "Thank you.",
+      "href": "https://archive.tw/2026-03-15-a-dialogue-with-hiroki-azuma#s63853478"
+    },
+    {
+      "filename": "2026-03-15-東浩紀對談",
+      "sectionId": 63853765,
+      "text": "謝謝。",
+      "href": "https://archive.tw/2026-03-15-%E6%9D%B1%E6%B5%A9%E7%B4%80%E5%B0%8D%E8%AB%87#s63853765"
+    },
+    {
+      "filename": "2026-03-13-a-dialogue-on-civic-ai",
+      "sectionId": 636806,
+      "text": "The modern machine is constrained by two vast obscurities — the \"black boxes.\"",
+      "href": "https://archive.tw/2026-03-13-a-dialogue-on-civic-ai#s636806"
+    },
+    {
+      "filename": "2026-03-13-仁工智慧對話",
+      "sectionId": 636891,
+      "text": "現代機器受制於兩種巨大的幽暗，也就是兩個「黑箱」。",
+      "href": "https://archive.tw/2026-03-13-%E4%BB%81%E5%B7%A5%E6%99%BA%E6%85%A7%E5%B0%8D%E8%A9%B1#s636891"
+    },
+    {
+      "filename": "2026-03-05-good-enough-gardeners-must-harness-ai-t",
+      "sectionId": 636494,
+      "text": "After a February filled with back-to-back holidays, many of us have officially returned to the office. What we might not realize is that while celebrating Lunar New Year, a new generation of AI models",
+      "href": "https://archive.tw/2026-03-05-good-enough-gardeners-must-harness-ai-t#s636494"
+    },
+    {
+      "filename": "2026-03-05-商周專欄-當你的部屬是一群「會社交」的-ai",
+      "sectionId": 636507,
+      "text": "走過連假不斷的二月，許多人正式回到辦公室開工。你可能不知道，在我們歡度農曆年時，新一代的 AI 模型，已經跳脫各自單打獨鬥的工具角色，開始能彼此「社交」，甚至會動態分配任務、打造相互合作的 AI 團隊。",
+      "href": "https://archive.tw/2026-03-05-%E5%95%86%E5%91%A8%E5%B0%88%E6%AC%84-%E7%95%B6%E4%BD%A0%E7%9A%84%E9%83%A8%E5%B1%AC%E6%98%AF%E4%B8%80%E7%BE%A4%E3%80%8C%E6%9C%83%E7%A4%BE%E4%BA%A4%E3%80%8D%E7%9A%84-ai#s636507"
+    },
+    {
+      "filename": "2026-03-04-ciudadanía-digital",
+      "sectionId": 638022,
+      "text": "",
+      "href": "https://archive.tw/2026-03-04-ciudadan%C3%ADa-digital#s638022"
+    },
+    {
+      "filename": "2026-03-04-數位公民",
+      "sectionId": 638134,
+      "text": "",
+      "href": "https://archive.tw/2026-03-04-%E6%95%B8%E4%BD%8D%E5%85%AC%E6%B0%91#s638134"
+    },
+    {
+      "filename": "2026-02-25-interview-with-julien-devaureix",
+      "sectionId": 636316,
+      "text": "Hello. Good local time. Very good to be here.",
+      "href": "https://archive.tw/2026-02-25-interview-with-julien-devaureix#s636316"
+    },
+    {
+      "filename": "2026-02-17-treat-ai-safety-like-civil-defence",
+      "sectionId": 635679,
+      "text": "",
+      "href": "https://archive.tw/2026-02-17-treat-ai-safety-like-civil-defence#s635679"
+    },
+    {
+      "filename": "2026-02-17-把-ai-安全當成民防來對待",
+      "sectionId": 635698,
+      "text": "",
+      "href": "https://archive.tw/2026-02-17-%E6%8A%8A-ai-%E5%AE%89%E5%85%A8%E7%95%B6%E6%88%90%E6%B0%91%E9%98%B2%E4%BE%86%E5%B0%8D%E5%BE%85#s635698"
+    },
+    {
+      "filename": "2026-02-12-conversation-with-sarah-wilson",
+      "sectionId": 4762598,
+      "text": "Hello. Good local time, everyone. Very happy to be here.",
+      "href": "https://archive.tw/2026-02-12-conversation-with-sarah-wilson#s4762598"
+    },
+    {
+      "filename": "2026-02-12-與-sarah-wilson-對談",
+      "sectionId": 4762720,
+      "text": "大家好，各地時間都好。非常高興能來到這裡。",
+      "href": "https://archive.tw/2026-02-12-%E8%88%87-sarah-wilson-%E5%B0%8D%E8%AB%87#s4762720"
+    },
+    {
+      "filename": "2026-02-10-svt-forum-interview",
+      "sectionId": 635384,
+      "text": "I think it shows that we can have positive vision for positive action. Without positive alternatives of digital systems building the social fabric to bridge the polarization, the default trajectory is",
+      "href": "https://archive.tw/2026-02-10-svt-forum-interview#s635384"
+    },
+    {
+      "filename": "2026-02-10-瑞典電視台《論壇》專訪",
+      "sectionId": 636228,
+      "text": "我認為這表明我們可以對正面行動抱持正面願景。如果沒有數位系統的正面替代方案來建構社會結構、橋接極化，默認的軌跡就是走向威權主義和民主倒退。",
+      "href": "https://archive.tw/2026-02-10-%E7%91%9E%E5%85%B8%E9%9B%BB%E8%A6%96%E5%8F%B0%E3%80%8A%E8%AB%96%E5%A3%87%E3%80%8B%E5%B0%88%E8%A8%AA#s636228"
+    }
+  ],
+  "closings": [
+    {
+      "filename": "2026-06-10-creative-bureaucracy-award-acceptance-s",
+      "sectionId": 63856836,
+      "text": "Thank you.",
+      "href": "https://archive.tw/2026-06-10-creative-bureaucracy-award-acceptance-s#s63856836"
+    },
+    {
+      "filename": "2026-06-10-創意官吏獎得獎感言",
+      "sectionId": 63856892,
+      "text": "我們與全民攜手共創， 不只是服務人民。 與政府攜手共創， 不只是奉行政令。",
+      "href": "https://archive.tw/2026-06-10-%E5%89%B5%E6%84%8F%E5%AE%98%E5%90%8F%E7%8D%8E%E5%BE%97%E7%8D%8E%E6%84%9F%E8%A8%80#s63856892"
+    },
+    {
+      "filename": "2026-05-28-till-data-soil-dont-drill-data-oil",
+      "sectionId": 63852316,
+      "text": "The real challenge in the Age of AI is not about racing to refine the largest model, but working to best till the data soil — so that every hand can sow, steer and share in the harvest of inclusivity ",
+      "href": "https://archive.tw/2026-05-28-till-data-soil-dont-drill-data-oil#s63852316"
+    },
+    {
+      "filename": "2026-05-28-商周專欄-資料是土壤-不是石油",
+      "sectionId": 63852331,
+      "text": "AI 時代的挑戰已經不在於提煉出最大的模型，而是誰最能耕耘資料的土壤，讓全民攜手播種，共享普惠繁榮的果實。",
+      "href": "https://archive.tw/2026-05-28-%E5%95%86%E5%91%A8%E5%B0%88%E6%AC%84-%E8%B3%87%E6%96%99%E6%98%AF%E5%9C%9F%E5%A3%A4-%E4%B8%8D%E6%98%AF%E7%9F%B3%E6%B2%B9#s63852331"
+    },
+    {
+      "filename": "2026-05-28-從憤怒到交集-仁工智慧與關懷六力",
+      "sectionId": 63852881,
+      "text": "謝謝。沒有任何民主是孤島，台灣也不例外——我們都必須攜手合作，才能共創無限未來。謝謝。",
+      "href": "https://archive.tw/2026-05-28-%E5%BE%9E%E6%86%A4%E6%80%92%E5%88%B0%E4%BA%A4%E9%9B%86-%E4%BB%81%E5%B7%A5%E6%99%BA%E6%85%A7%E8%88%87%E9%97%9C%E6%87%B7%E5%85%AD%E5%8A%9B#s63852881"
+    },
+    {
+      "filename": "2026-05-28-outrage-to-overlap-civic-ai-and-6-pack-",
+      "sectionId": 63853003,
+      "text": "Thank you. No democracy is an island, not even Taiwan. And we all must strive to free the future — together. Thank you. Live long and … prosper.",
+      "href": "https://archive.tw/2026-05-28-outrage-to-overlap-civic-ai-and-6-pack-#s63853003"
+    },
+    {
+      "filename": "2026-05-14-we-the-people-are-truly-the-superintell",
+      "sectionId": 63852593,
+      "text": "Technology-forcing policies, like the Montreal Protocol, do not force us to slam the brake, and they do not tell us to accelerate off a cliff. They force us to invest, together, in constructing a bett",
+      "href": "https://archive.tw/2026-05-14-we-the-people-are-truly-the-superintell#s63852593"
+    },
+    {
+      "filename": "2026-05-14-我們全民才是超級智慧",
+      "sectionId": 63852682,
+      "text": "像蒙特婁議定書這樣的技術強制型政策，不是促使我們踩死煞車，也不是叫我們加速衝下懸崖。它們促使我們一起，去建造更好的方向盤。",
+      "href": "https://archive.tw/2026-05-14-%E6%88%91%E5%80%91%E5%85%A8%E6%B0%91%E6%89%8D%E6%98%AF%E8%B6%85%E7%B4%9A%E6%99%BA%E6%85%A7#s63852682"
+    },
+    {
+      "filename": "2026-05-08-scsp-presidents-tech-brief",
+      "sectionId": 63814228,
+      "text": "See you next year.",
+      "href": "https://archive.tw/2026-05-08-scsp-presidents-tech-brief#s63814228"
+    },
+    {
+      "filename": "2026-05-08-scsp-總統科技簡報",
+      "sectionId": 63814293,
+      "text": "明年見。",
+      "href": "https://archive.tw/2026-05-08-scsp-%E7%B8%BD%E7%B5%B1%E7%A7%91%E6%8A%80%E7%B0%A1%E5%A0%B1#s63814293"
+    },
+    {
+      "filename": "2026-04-30-reject-ai-prophecies-free-the-future",
+      "sectionId": 63813793,
+      "text": "Refusing inevitability does not mean rejecting technology. As long as we remain willing to deliberate, govern and build together, the future need not become the extension of a prophecy. It can become ",
+      "href": "https://archive.tw/2026-04-30-reject-ai-prophecies-free-the-future#s63813793"
+    },
+    {
+      "filename": "2026-04-30-商周專欄-別讓-ai-預言指揮你的人生",
+      "sectionId": 63813809,
+      "text": "拒絕把未來視為必然，並不等於拒絕科技。只要我們仍願意共同商議、共同治理、共同實作，未來就不必成為預言的延伸；它可以是我們一起改寫出來的結果。",
+      "href": "https://archive.tw/2026-04-30-%E5%95%86%E5%91%A8%E5%B0%88%E6%AC%84-%E5%88%A5%E8%AE%93-ai-%E9%A0%90%E8%A8%80%E6%8C%87%E6%8F%AE%E4%BD%A0%E7%9A%84%E4%BA%BA%E7%94%9F#s63813809"
+    },
+    {
+      "filename": "2026-04-27-senate-standing-committee-on-human-righ",
+      "sectionId": 63813930,
+      "text": "These two, together, allow each community to feel that they own their own social-cultural determination when it comes to language model training, but also incorporate that transcultural translation ca",
+      "href": "https://archive.tw/2026-04-27-senate-standing-committee-on-human-righ#s63813930"
+    },
+    {
+      "filename": "2026-04-27-加拿大參議院人權委員會",
+      "sectionId": 63814054,
+      "text": "這兩者結合起來，使每一個社群感覺到自己擁有其社會與文化自決權，就語言模型訓練而言；同時也納入跨文化翻譯能力，讓某種語言或文化取得某項能力時，如果社群覺得合適，就可以隨時把它引入自己的脈絡中。但能動性與主權，是由原住民族社群持有，而不是由上而下的國家委員會持有。我希望我說得清楚。我很樂意再以書面補充，但這就是整體想法。",
+      "href": "https://archive.tw/2026-04-27-%E5%8A%A0%E6%8B%BF%E5%A4%A7%E5%8F%83%E8%AD%B0%E9%99%A2%E4%BA%BA%E6%AC%8A%E5%A7%94%E5%93%A1%E6%9C%83#s63814054"
+    },
+    {
+      "filename": "2026-04-26-鄭欣庭碩士論文訪談紀錄",
+      "sectionId": 4762992,
+      "text": "很開心有機會對學術做貢獻。",
+      "href": "https://archive.tw/2026-04-26-%E9%84%AD%E6%AC%A3%E5%BA%AD%E7%A2%A9%E5%A3%AB%E8%AB%96%E6%96%87%E8%A8%AA%E8%AB%87%E7%B4%80%E9%8C%84#s4762992"
+    },
+    {
+      "filename": "2026-04-14-how-community-notes-reduce-viral-misinf",
+      "sectionId": 63857332,
+      "text": "The ending talks about [how] data is soil, so that the understanding between different communities tend together this garden of AI agents that grow with our communities, loyal to communities and not t",
+      "href": "https://archive.tw/2026-04-14-how-community-notes-reduce-viral-misinf#s63857332"
+    },
+    {
+      "filename": "2026-04-01-商周專欄-別當被馬牽著跑的人",
+      "sectionId": 638931,
+      "text": "與其被 AI 的無限產出捕獲，不如學著「停下來，上馬」。在瞬息萬變的心智中，主動駕馭工具，找回與真人連結的主權。",
+      "href": "https://archive.tw/2026-04-01-%E5%95%86%E5%91%A8%E5%B0%88%E6%AC%84-%E5%88%A5%E7%95%B6%E8%A2%AB%E9%A6%AC%E7%89%BD%E8%91%97%E8%B7%91%E7%9A%84%E4%BA%BA#s638931"
+    },
+    {
+      "filename": "2026-04-01-saddle-up-and-ride-the-ai-horse",
+      "sectionId": 638941,
+      "text": "Instead of falling prey to AI's endless output, we should learn to stop, get on the metaphorical horse and ride. Amid the constant churn of modern attention, we need to take the reins of our tools and",
+      "href": "https://archive.tw/2026-04-01-saddle-up-and-ride-the-ai-horse#s638941"
+    },
+    {
+      "filename": "2026-03-25-weekly-ochiai",
+      "sectionId": 638757,
+      "text": "Of course. To be continued. Thank you.",
+      "href": "https://archive.tw/2026-03-25-weekly-ochiai#s638757"
+    },
+    {
+      "filename": "2026-03-25-落合陽一對談",
+      "sectionId": 638911,
+      "text": "當然。未完待續。謝謝。",
+      "href": "https://archive.tw/2026-03-25-%E8%90%BD%E5%90%88%E9%99%BD%E4%B8%80%E5%B0%8D%E8%AB%87#s638911"
+    },
+    {
+      "filename": "2026-03-25-democracy-needs-civic-ai",
+      "sectionId": 63852418,
+      "text": "Rosalind, our garden is yours.",
+      "href": "https://archive.tw/2026-03-25-democracy-needs-civic-ai#s63852418"
+    },
+    {
+      "filename": "2026-03-25-民主需要仁工智慧",
+      "sectionId": 63852504,
+      "text": "Rosalind，這座花園交給你了。",
+      "href": "https://archive.tw/2026-03-25-%E6%B0%91%E4%B8%BB%E9%9C%80%E8%A6%81%E4%BB%81%E5%B7%A5%E6%99%BA%E6%85%A7#s63852504"
+    },
+    {
+      "filename": "2026-03-24-why-audrey-tang-has-no-fear-for-ai-agen",
+      "sectionId": 638522,
+      "text": "See you. Scroll less, sleep more.",
+      "href": "https://archive.tw/2026-03-24-why-audrey-tang-has-no-fear-for-ai-agen#s638522"
+    },
+    {
+      "filename": "2026-03-24-為何唐鳳不害怕-ai-智慧體與-openclaw",
+      "sectionId": 638606,
+      "text": "下次見。少滑手機，多睡一點。",
+      "href": "https://archive.tw/2026-03-24-%E7%82%BA%E4%BD%95%E5%94%90%E9%B3%B3%E4%B8%8D%E5%AE%B3%E6%80%95-ai-%E6%99%BA%E6%85%A7%E9%AB%94%E8%88%87-openclaw#s638606"
+    },
+    {
+      "filename": "2026-03-19-余紀忠文教基金會來訪",
+      "sectionId": 637538,
+      "text": "對，那我要是更早就已經被約走了，那我就會跟你們說。",
+      "href": "https://archive.tw/2026-03-19-%E4%BD%99%E7%B4%80%E5%BF%A0%E6%96%87%E6%95%99%E5%9F%BA%E9%87%91%E6%9C%83%E4%BE%86%E8%A8%AA#s637538"
+    },
+    {
+      "filename": "2026-03-15-a-dialogue-with-hiroki-azuma",
+      "sectionId": 63854147,
+      "text": "Because without that boundary, it's not bidirectional. You're just being affected by the room, but you have no energy to write it.",
+      "href": "https://archive.tw/2026-03-15-a-dialogue-with-hiroki-azuma#s63854147"
+    },
+    {
+      "filename": "2026-03-15-東浩紀對談",
+      "sectionId": 63854423,
+      "text": "所以多元宇宙不是某種目的論式的終點，而是一種此時此地已經存在的關係倫理，而且這種關係也同時存在於我們每個人內部。",
+      "href": "https://archive.tw/2026-03-15-%E6%9D%B1%E6%B5%A9%E7%B4%80%E5%B0%8D%E8%AB%87#s63854423"
+    },
+    {
+      "filename": "2026-03-13-a-dialogue-on-civic-ai",
+      "sectionId": 636887,
+      "text": "When a community gathers in a circle to share stories and pass wisdom to the next generation, there is no transaction and therefore no metric — but there is profound wealth. Not everything of highest ",
+      "href": "https://archive.tw/2026-03-13-a-dialogue-on-civic-ai#s636887"
+    },
+    {
+      "filename": "2026-03-13-仁工智慧對話",
+      "sectionId": 636972,
+      "text": "當一個社群圍成一圈，分享故事，把智慧傳給下一代時，那裡沒有交易，因此也沒有指標——但那裡有深刻的富足。最高價值的事物，不一定以交易形式出現。我們必須建造服務於這種富足的 AI：讓具體關係得到修復、更新與繁榮，讓人們更有能力、更自由，也更能彼此理解，而不需要把機器永遠放在中心。",
+      "href": "https://archive.tw/2026-03-13-%E4%BB%81%E5%B7%A5%E6%99%BA%E6%85%A7%E5%B0%8D%E8%A9%B1#s636972"
+    },
+    {
+      "filename": "2026-03-05-good-enough-gardeners-must-harness-ai-t",
+      "sectionId": 636505,
+      "text": "Given this trajectory, your AI goal for the year should not be chasing maximum performance metrics. It should be learning how to be a good enough gardener — guiding the AI team to follow the rules, fi",
+      "href": "https://archive.tw/2026-03-05-good-enough-gardeners-must-harness-ai-t#s636505"
+    },
+    {
+      "filename": "2026-03-05-商周專欄-當你的部屬是一群「會社交」的-ai",
+      "sectionId": 636518,
+      "text": "在這趨勢下，今年你的 AI 應用目標，不該再是比拼最大化績效數字，而是如何當一個好園丁——引領 AI 團隊服膺規矩、契合脈絡，人則專注於判斷力與人性互動，這樣的「仁」工智慧，才是開工之際最該牢記的思維。",
+      "href": "https://archive.tw/2026-03-05-%E5%95%86%E5%91%A8%E5%B0%88%E6%AC%84-%E7%95%B6%E4%BD%A0%E7%9A%84%E9%83%A8%E5%B1%AC%E6%98%AF%E4%B8%80%E7%BE%A4%E3%80%8C%E6%9C%83%E7%A4%BE%E4%BA%A4%E3%80%8D%E7%9A%84-ai#s636518"
+    },
+    {
+      "filename": "2026-03-04-ciudadanía-digital",
+      "sectionId": 63802201,
+      "text": "Thank you, Paulina. And thank you for 50 years.",
+      "href": "https://archive.tw/2026-03-04-ciudadan%C3%ADa-digital#s63802201"
+    },
+    {
+      "filename": "2026-03-04-數位公民",
+      "sectionId": 63813401,
+      "text": "謝謝寶琳娜（Paulina）。也感謝在此共存的——五十年光陰的點滴。",
+      "href": "https://archive.tw/2026-03-04-%E6%95%B8%E4%BD%8D%E5%85%AC%E6%B0%91#s63813401"
+    },
+    {
+      "filename": "2026-02-25-interview-with-julien-devaureix",
+      "sectionId": 636493,
+      "text": "Thank you so much for the great questions. Live long and prosper.",
+      "href": "https://archive.tw/2026-02-25-interview-with-julien-devaureix#s636493"
+    },
+    {
+      "filename": "2026-02-17-treat-ai-safety-like-civil-defence",
+      "sectionId": 635697,
+      "text": "Thank you. Live long and ... prosper.",
+      "href": "https://archive.tw/2026-02-17-treat-ai-safety-like-civil-defence#s635697"
+    },
+    {
+      "filename": "2026-02-17-把-ai-安全當成民防來對待",
+      "sectionId": 635716,
+      "text": "謝謝各位。生生不息……繁榮昌盛！",
+      "href": "https://archive.tw/2026-02-17-%E6%8A%8A-ai-%E5%AE%89%E5%85%A8%E7%95%B6%E6%88%90%E6%B0%91%E9%98%B2%E4%BE%86%E5%B0%8D%E5%BE%85#s635716"
+    },
+    {
+      "filename": "2026-02-12-conversation-with-sarah-wilson",
+      "sectionId": 4762717,
+      "text": "I really enjoyed this. Thank you. Live long and prosper.",
+      "href": "https://archive.tw/2026-02-12-conversation-with-sarah-wilson#s4762717"
+    },
+    {
+      "filename": "2026-02-12-與-sarah-wilson-對談",
+      "sectionId": 4762839,
+      "text": "我非常享受這次對談。謝謝你。生生不息，繁榮昌盛。",
+      "href": "https://archive.tw/2026-02-12-%E8%88%87-sarah-wilson-%E5%B0%8D%E8%AB%87#s4762839"
+    },
+    {
+      "filename": "2026-02-10-svt-forum-interview",
+      "sectionId": 635459,
+      "text": "Thank you.",
+      "href": "https://archive.tw/2026-02-10-svt-forum-interview#s635459"
+    },
+    {
+      "filename": "2026-02-10-瑞典電視台《論壇》專訪",
+      "sectionId": 636303,
+      "text": "謝謝。",
+      "href": "https://archive.tw/2026-02-10-%E7%91%9E%E5%85%B8%E9%9B%BB%E8%A6%96%E5%8F%B0%E3%80%8A%E8%AB%96%E5%A3%87%E3%80%8B%E5%B0%88%E8%A8%AA#s636303"
+    }
+  ],
+  "analogies": [
+    {
+      "filename": "2025-10-15-national-diet-of-japans-ai-and-democrac",
+      "sectionId": 624776,
+      "text": "To the honorable members of the Diet, Minister Taira, MP Anno, members of Team Mirai and all our friends in the media, good morning. Thank you for this opportunity. As you know, we all live in an era ",
+      "href": "https://archive.tw/2025-10-15-national-diet-of-japans-ai-and-democrac#s624776"
+    },
+    {
+      "filename": "2025-03-03-nikkei-bp-interview",
+      "sectionId": 621469,
+      "text": "What do you think about China’s “DeepSeek”? What are its problems? DeepSeek, as many know, is an open model—like a LEGO brick that anyone can use to build their own towers. When DeepSeek first appeare",
+      "href": "https://archive.tw/2025-03-03-nikkei-bp-interview#s621469"
+    },
+    {
+      "filename": "2016-01-25-artetv-tous-les-internets",
+      "sectionId": 4232,
+      "text": "Yes. The Sunflower Movement was in March 2014. Around that time already the Occupy Movement, the Arab Spring, the work from others organizers had already taken place, and researchers like Manuel Caste",
+      "href": "https://archive.tw/2016-01-25-artetv-tous-les-internets#s4232"
+    },
+    {
+      "filename": "2016-01-28-world-after-tomorrow",
+      "sectionId": 3991,
+      "text": "Actually, during this whole event, during lunch, and during the radio interviews, I’ve been asking Saskia Sassen, Souleymane Bachir Diagne, and everybody I met to put on this goggles and watch Earth w",
+      "href": "https://archive.tw/2016-01-28-world-after-tomorrow#s3991"
+    },
+    {
+      "filename": "2025-10-15-日本國會ai-與民主跨黨派議員會議",
+      "sectionId": 624782,
+      "text": "尊敬的國會議員、平（Taira）大臣、安野（Anno）委員、Team Mirai 的成員，以及所有媒體朋友，大家早安，感謝各位給我這個機會。 如各位所知，我們生活在一個高 PPM 的時代。我指的不是碳濃度的百萬分之一（parts per million），而是「每分鐘的極化程度」（polarization per minute），每當我們打開社群媒體，就會受那些旨在讓我們保持憤怒的內容影響。 十年",
+      "href": "https://archive.tw/2025-10-15-%E6%97%A5%E6%9C%AC%E5%9C%8B%E6%9C%83ai-%E8%88%87%E6%B0%91%E4%B8%BB%E8%B7%A8%E9%BB%A8%E6%B4%BE%E8%AD%B0%E5%93%A1%E6%9C%83%E8%AD%B0#s624782"
+    },
+    {
+      "filename": "2025-06-19-bw-column-to-perceive-the-pain-others-c",
+      "sectionId": 621814,
+      "text": "This year, Microsoft’s announcement of nearly 10,000 layoffs sent shockwaves through the industry. It was jarring because many of those let go were not poor performers; their roles had simply ceased t",
+      "href": "https://archive.tw/2025-06-19-bw-column-to-perceive-the-pain-others-c#s621814"
+    },
+    {
+      "filename": "2026-01-29-bw-column-collaborative-ai-sovereignty-",
+      "sectionId": 634391,
+      "text": "The International AI Summit is set to convene in India this February. As the former back office of the global software industry, India currently finds itself in a position fraught with contradiction a",
+      "href": "https://archive.tw/2026-01-29-bw-column-collaborative-ai-sovereignty-#s634391"
+    },
+    {
+      "filename": "2025-11-06-bw-column-opening-up-ai-safety",
+      "sectionId": 627498,
+      "text": "Last week, OpenAI released the world’s first openly available safety reasoning model: “gpt-oss-safeguard.” While it didn’t generate the kind of buzz that accompanies each new generation of ChatGPT, it",
+      "href": "https://archive.tw/2025-11-06-bw-column-opening-up-ai-safety#s627498"
+    },
+    {
+      "filename": "2016-01-25-artetv-tous-les-internets",
+      "sectionId": 4234,
+      "text": "As I explained, 80 percent of Taiwan’s population is on Internet, which is coming very close to the literacy rate. It just enabled a very rapid dissemination of ideas, of critiques, of conversations, ",
+      "href": "https://archive.tw/2016-01-25-artetv-tous-les-internets#s4234"
+    },
+    {
+      "filename": "2025-03-03-日經新聞採訪",
+      "sectionId": 621538,
+      "text": "美國跟中國之間，現在不管是經濟、技術，都有對立、分裂、脫鉤的情況，對立也日漸嚴重。您剛剛提到的很多 Open Source（開源）的努力，是否會因為這個對立造成一些阻礙呢？或者在 AI 安全上，美中的政治對立會不會是阻力？ 我想即使是在冷戰最劇烈的時候，美國也有分享關於像核燃料怎麼樣子安全儲存的技術給蘇聯。因為如果不管任何人，因為一個不小心或者是故意的犯罪行為，導致大規模放射性事件，對全世界都是壞",
+      "href": "https://archive.tw/2025-03-03-%E6%97%A5%E7%B6%93%E6%96%B0%E8%81%9E%E6%8E%A1%E8%A8%AA#s621538"
+    },
+    {
+      "filename": "2016-01-28-world-after-tomorrow",
+      "sectionId": 4024,
+      "text": "Yeah, two minutes. Start counting... I was just talking with Saskia Sassen about that on a radio show a few hours ago. She has this idea of expulsion. People just dislocate, because of the ecological ",
+      "href": "https://archive.tw/2016-01-28-world-after-tomorrow#s4024"
+    },
+    {
+      "filename": "2016-01-25-artetv-tous-les-internets",
+      "sectionId": 4240,
+      "text": "There are two main social media outlets in Taiwan, and they complement each other. There is one where the entire world uses, it’s Facebook. Pretty much everybody on Taiwan is on Facebook. There’s a pr",
+      "href": "https://archive.tw/2016-01-25-artetv-tous-les-internets#s4240"
+    },
+    {
+      "filename": "2016-07-19-數位時代訪問",
+      "sectionId": 9717,
+      "text": "也就是我們叫「電傳勞動（telework）」的工作方式。好的。 因為我自己其實已經快要忘記微型化、虛擬化之前是什麼這樣子（笑），我從出社會是1995年開始，就是可能比較混合式，大部分時候是在家上班，從2008年開始就完全是微型化、虛擬化，就是完全不去辦公室了，到現在大概也有八年多左右的時間，所以我這邊講的就是非常個人經驗，就是對我自己的影響，因為很多公司其實會想要員工去他的總部上班。 舉一個例子來",
+      "href": "https://archive.tw/2016-07-19-%E6%95%B8%E4%BD%8D%E6%99%82%E4%BB%A3%E8%A8%AA%E5%95%8F#s9717"
+    },
+    {
+      "filename": "2016-11-14-live-interview-with-ketagalan-media-and",
+      "sectionId": 14694,
+      "text": "We use a combination of strategies. One is that we used this tool called Polis (pol.is), which is a two-dimensional representation of everybody’s feelings on a particular topic. And the idea is that y",
+      "href": "https://archive.tw/2016-11-14-live-interview-with-ketagalan-media-and#s14694"
+    },
+    {
+      "filename": "2016-01-25-artetv-tous-les-internets",
+      "sectionId": 4218,
+      "text": "They were exiled! They couldn’t return to their country anymore. They were locked out from their country — because they believed that there is a better way for the people to communicate with the gover",
+      "href": "https://archive.tw/2016-01-25-artetv-tous-les-internets#s4218"
+    },
+    {
+      "filename": "2016-01-26-tout-numérique",
+      "sectionId": 4145,
+      "text": "Certainly. When I was in Germany, I already practiced computer programming. But at that time, the way for computers to talk to each other was limited to the academia, to universities, the early pionee",
+      "href": "https://archive.tw/2016-01-26-tout-num%C3%A9rique#s4145"
+    },
+    {
+      "filename": "2016-11-14-live-interview-with-ketagalan-media-and",
+      "sectionId": 14774,
+      "text": "I mean I was like non-binary when I was already 12, so it’s not much as coming out as saying that you know I don’t really want to be a confined into a specific gender role, so it’s with a very philoso",
+      "href": "https://archive.tw/2016-11-14-live-interview-with-ketagalan-media-and#s14774"
+    },
+    {
+      "filename": "2016-03-02-conference-at-superpublic",
+      "sectionId": 156439,
+      "text": "The subjects? This is a very good question. Re g0v I think the primary innovation is our domain name g0v.tw. All the government websites in Taiwan end with \"gov.tw\". In France it is “gouv.fr\" It is th",
+      "href": "https://archive.tw/2016-03-02-conference-at-superpublic#s156439"
+    },
+    {
+      "filename": "2024-03-13-conversation-with-yale-university-deleg",
+      "sectionId": 602372,
+      "text": "And so we very quickly said that we’re going to require digital signatures to all the investment related advertisements on YouTube, on Facebook and online and so on. And we’re quite fortunate because ",
+      "href": "https://archive.tw/2024-03-13-conversation-with-yale-university-deleg#s602372"
+    },
+    {
+      "filename": "2016-11-14-live-interview-with-ketagalan-media-and",
+      "sectionId": 14698,
+      "text": "Basically, the idea is what we call in mathematics the principle of component analysis. The idea is that if you propose some very radical opinions, a lot of people would vote \"Yes\" but also a lot of p",
+      "href": "https://archive.tw/2016-11-14-live-interview-with-ketagalan-media-and#s14698"
+    },
+    {
+      "filename": "2016-03-09-interview-with-amaëlle-guiton",
+      "sectionId": 26665,
+      "text": "Through radio and television, one person can speak to millions of people. Now, for the first time, we can listen to millions of people through the internet. Like many of you, I was a digital migrant; ",
+      "href": "https://archive.tw/2016-03-09-interview-with-ama%C3%ABlle-guiton#s26665"
+    },
+    {
+      "filename": "2025-10-30-sewf-reshaping-tomorrow",
+      "sectionId": 627111,
+      "text": "And people proposed many ideas. Some of them didn’t get a lot of votes. For example, “let’s put red carpets on all the walkways”—that didn’t get any votes. But some of the things, for example, making ",
+      "href": "https://archive.tw/2025-10-30-sewf-reshaping-tomorrow#s627111"
+    },
+    {
+      "filename": "2025-10-11-interview-with-pbs-firing-line",
+      "sectionId": 625770,
+      "text": "The main lesson is the government needs to trust the people before the people trust the government back. To give no trust is to get no trust. So, for example, in 2024, in Taiwan, we saw a lot of deepf",
+      "href": "https://archive.tw/2025-10-11-interview-with-pbs-firing-line#s625770"
+    },
+    {
+      "filename": "2024-03-13-conversation-with-yale-university-deleg",
+      "sectionId": 602359,
+      "text": "And for example, we always ensured that the government itself does not directly play “disinformation oversight” roles. Instead, we have a broad ecosystem of mostly open source civic tech communities. ",
+      "href": "https://archive.tw/2024-03-13-conversation-with-yale-university-deleg#s602359"
+    },
+    {
+      "filename": "2021-10-28-roundtable-talk-in-nbl-magazine-agile-g",
+      "sectionId": 492413,
+      "text": "That is a great question. For example, Taiwan’s main judiciary innovation when it comes to direct democracy is the “good only for two years” referendum. If you pass a referendum, a national one, it is",
+      "href": "https://archive.tw/2021-10-28-roundtable-talk-in-nbl-magazine-agile-g#s492413"
+    },
+    {
+      "filename": "2023-03-20-conversation-with-atsushi-osanai-and-mb",
+      "sectionId": 550380,
+      "text": "Yeah manufacturing is a very large field, so I cannot say with certainty that it will affect all the different sort of things that manufacturing does. But it seems to me that a lot of manufacturing is",
+      "href": "https://archive.tw/2023-03-20-conversation-with-atsushi-osanai-and-mb#s550380"
+    },
+    {
+      "filename": "2024-03-13-conversation-with-yale-university-deleg",
+      "sectionId": 602406,
+      "text": "Great. Yeah, I think I was interviewed by the VOA. So I basically said that you can package the whole VOA into a few hundred gigabytes and then send it as a USB stick or whatever, and then people have",
+      "href": "https://archive.tw/2024-03-13-conversation-with-yale-university-deleg#s602406"
+    },
+    {
+      "filename": "2023-03-20-conversation-with-atsushi-osanai-and-mb",
+      "sectionId": 550387,
+      "text": "Ok, so the question is, what would a business person do in the future? Essentially, that’s the question? Yeah, it’s interesting because previously, like, if you work in product management, in customer",
+      "href": "https://archive.tw/2023-03-20-conversation-with-atsushi-osanai-and-mb#s550387"
+    },
+    {
+      "filename": "2021-02-03-interview-with-catherine-tai",
+      "sectionId": 461982,
+      "text": "And they also take a proactive role, for example during COVID. The PO of Ministry of Health and Welfare, who lives with this very cute dog a Shiba Inu, actually walks back to their place, which is qui",
+      "href": "https://archive.tw/2021-02-03-interview-with-catherine-tai#s461982"
+    },
+    {
+      "filename": "2023-03-20-conversation-with-atsushi-osanai-and-mb",
+      "sectionId": 550402,
+      "text": "Yeah, that’s a great question. So technology doesn’t appear in a vacuum. It’s always compared to what goes before it. Right. So in Taiwan, when we introduced, for example, the universal health care sy",
+      "href": "https://archive.tw/2023-03-20-conversation-with-atsushi-osanai-and-mb#s550402"
+    },
+    {
+      "filename": "2022-02-23-lecture-at-the-innovation-governance-ex",
+      "sectionId": 498380,
+      "text": "So, through a secure multi-party configuration, only the contact tracer get access to the whole piece of the puzzle. And we respond to, for example, a police filing search warrants because they also w",
+      "href": "https://archive.tw/2022-02-23-lecture-at-the-innovation-governance-ex#s498380"
+    },
+    {
+      "filename": "2024-03-13-conversation-with-yale-university-deleg",
+      "sectionId": 602397,
+      "text": "That’s a great question. I think a lot of the frontier model labs, of course, they take from open source, but they don’t contribute back, mostly because they were afraid that those frontier models can",
+      "href": "https://archive.tw/2024-03-13-conversation-with-yale-university-deleg#s602397"
+    },
+    {
+      "filename": "2016-03-02-conference-at-superpublic",
+      "sectionId": 156500,
+      "text": "After people calmed down and there was no violence anymore we started to deliberate, to actually talk about the cross strait administration. The rallying cry was that if the legislators deliberate in ",
+      "href": "https://archive.tw/2016-03-02-conference-at-superpublic#s156500"
+    },
+    {
+      "filename": "2021-10-28-roundtable-talk-in-nbl-magazine-agile-g",
+      "sectionId": 492353,
+      "text": "Yes, and I think this is really a key issue because Taiwan uses the same Germany-inspired continental law system, so theoretically we should be operating on the same kind of constitutional law-mandate",
+      "href": "https://archive.tw/2021-10-28-roundtable-talk-in-nbl-magazine-agile-g#s492353"
+    },
+    {
+      "filename": "2016-11-14-live-interview-with-ketagalan-media-and",
+      "sectionId": 14740,
+      "text": "As an anarchist, I respect the United Nations. I submitted a paper, I couldn’t be there, but it was presented by my co-author at Habitat 3, a conference about the right to the city and make sure the p",
+      "href": "https://archive.tw/2016-11-14-live-interview-with-ketagalan-media-and#s14740"
+    },
+    {
+      "filename": "2026-02-25-interview-with-julien-devaureix",
+      "sectionId": 636334,
+      "text": "The computer program, but then the output, like a symphony, is the way people interact. And very quickly after programming quite a few games where other kids can use to learn mathematical concepts and",
+      "href": "https://archive.tw/2026-02-25-interview-with-julien-devaureix#s636334"
+    },
+    {
+      "filename": "2023-03-20-conversation-with-atsushi-osanai-and-mb",
+      "sectionId": 550366,
+      "text": "Okay. So to me it’s easy for around 20 people in the same room to spend a day enjoying food together and so on, building a mental model of each other, become good friends and then start creating somet",
+      "href": "https://archive.tw/2023-03-20-conversation-with-atsushi-osanai-and-mb#s550366"
+    },
+    {
+      "filename": "2026-02-25-interview-with-julien-devaureix",
+      "sectionId": 636387,
+      "text": "There's not even a reply button. There is only upvote, downvote, post your own idea, see the visualization of where you are among the clusters of people, and see the bridge. So this breaks the trolls ",
+      "href": "https://archive.tw/2026-02-25-interview-with-julien-devaureix#s636387"
+    },
+    {
+      "filename": "2026-02-25-interview-with-julien-devaureix",
+      "sectionId": 636438,
+      "text": "The Digital Markets Act at the moment is in another round of consultation about expanding it not just for instant messaging, but for social media as well. Actually, the state of Utah in the U.S. alrea",
+      "href": "https://archive.tw/2026-02-25-interview-with-julien-devaureix#s636438"
+    },
+    {
+      "filename": "2026-05-28-outrage-to-overlap-civic-ai-and-6-pack-",
+      "sectionId": 63852975,
+      "text": "That brings me to the second question. If there is no credibly neutral convener, this becomes very difficult, because people will say the criteria were gamed — that someone skewed the pseudo-random ge",
+      "href": "https://archive.tw/2026-05-28-outrage-to-overlap-civic-ai-and-6-pack-#s63852975"
+    }
+  ]
+}

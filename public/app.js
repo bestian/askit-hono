@@ -152,6 +152,15 @@
     const hrefByIndex = new Map(sources.map((s) => [s.index, s.href]))
 
     let html = escapeHtml(body)
+    // 將行首的 Markdown 標題（# ~ ######）轉成對應的 <h1>~<h6>，
+    // 只影響畫面顯示；下載／複製用的是未轉換的原始 Markdown。
+    html = html.replace(
+      /^(#{1,6})[ \t]+([^\n]+?)[ \t]*(?:\n|$)/gm,
+      (_m, hashes, text) => {
+        const level = hashes.length
+        return '<h' + level + '>' + text + '</h' + level + '>'
+      },
+    )
     html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     html = html.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
     html = html.replace(

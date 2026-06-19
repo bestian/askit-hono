@@ -606,7 +606,7 @@ async function searchSectionsByContent(
     .replace(/^[^\p{L}\p{N}]+/u, '')
     .replace(/[^\p{L}\p{N}]+$/u, '')
   const variants = [cleaned, withoutQuestionWords]
-    .filter((v, i, arr) => v.length >= 2 && arr.indexOf(v) === i)
+    .filter((v, i, arr) => v.length >= 2 && v.length <= 15 && arr.indexOf(v) === i)
   if (variants.length === 0) return []
 
   const placeholders = variants.map(() => 'sc.section_content LIKE ?').join(' OR ')

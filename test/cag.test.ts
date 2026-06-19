@@ -1831,7 +1831,7 @@ test('resolveCagSources treats a failing D1 sayitDb as empty (issue #46 graceful
   const noopAi = { run: async () => { throw new Error('should not be called') } } as unknown as Parameters<typeof resolveCagSources>[0]
 
   try {
-    const sources = await resolveCagSources(noopAi, '關懷六力的憑據是什麼？，在社會上不會受傷嗎', {
+    const sources = await resolveCagSources(noopAi, '關懷六力', {
       topK: 4,
       archiveBaseUrl: 'https://archive.tw',
       retriever: 'archive',

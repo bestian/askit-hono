@@ -23,6 +23,7 @@ import {
   normalizeCagOptions,
   parseArchiveSectionId,
   retrieveCagSources,
+  resolveCagSources,
 } from '../src/utils/cag'
 import {
   AUDREY_SKILL_GLM_52_MODEL,
@@ -1792,6 +1793,51 @@ test('retrieveCagSources rejects archive result URLs outside archive origin', as
     assert.match(sources[0].content, /合法同源內容/)
     assert.ok(!requests.some((url) => url.includes('/api/section/666')))
     assert.ok(!requests.some((url) => url.includes('/api/section/777')))
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('resolveCagSources treats a failing D1 sayitDb as empty (issue #46 graceful degradation)', async () => {
+  const originalFetch = globalThis.fetch
+  // Stub archive.tw so both primary and fallback search return zero hits,
+  // forcing resolveCagSources to try the D1 fallback path.
+  globalThis.fetch = async (input: RequestInfo | URL) => {
+    const url = new URL(String(input))
+    if (url.pathname === '/api/search.json') {
+      return Response.json({ results: [] })
+    }
+    return new Response('not found', { status: 404 })
+  }
+
+  // A prepare().all() that throws — mirrors prod's
+  // "D1_ERROR: LIKE or GLOB pattern too complex: SQLITE_ERROR" and also
+  // "no such table: speech_content" from a local empty-schema dev D1.
+  const throwingSayitDb = {
+    prepare() {
+      return {
+        bind() {
+          return {
+            all: async () => {
+              throw new Error('D1_ERROR: LIKE or GLOB pattern too complex: SQLITE_ERROR')
+            },
+          }
+        },
+      }
+    },
+  } as unknown as D1Database
+
+  // AI binding is unused when retriever='archive' and archive.tw search is empty.
+  const noopAi = { run: async () => { throw new Error('should not be called') } } as unknown as Parameters<typeof resolveCagSources>[0]
+
+  try {
+    const sources = await resolveCagSources(noopAi, '關懷六力的憑據是什麼？，在社會上不會受傷嗎', {
+      topK: 4,
+      archiveBaseUrl: 'https://archive.tw',
+      retriever: 'archive',
+      sayitDb: throwingSayitDb,
+    })
+    assert.deepEqual(sources, [])
   } finally {
     globalThis.fetch = originalFetch
   }

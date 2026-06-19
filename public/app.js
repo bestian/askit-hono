@@ -1,5 +1,5 @@
 (function () {
-  const { createApp, ref, computed, h } = Vue
+  const { createApp, ref, computed, h, watch } = Vue
 
   const COOLDOWN_SECONDS = 3
   const DOC_LANG = (typeof document !== 'undefined' && document.documentElement)
@@ -29,6 +29,7 @@
       networkError: '連線發生錯誤，請稍後再試。',
       download: '下載 Markdown',
       downloadFallbackName: '回答',
+      tooLong: '您的問題字數過長，請縮短問題的長度，謝謝！',
       sourcesHeading: '出處',
       samples: [
         '什麼是仁工智慧？',
@@ -59,6 +60,7 @@
       networkError: 'Connection error. Please try again later.',
       download: 'Download Markdown',
       downloadFallbackName: 'answer',
+      tooLong: 'Your question is too long — please shorten it and try again. Thank you!',
       sourcesHeading: 'Sources',
       samples: [
         'What is Plurality?',
@@ -213,6 +215,18 @@
       const cooldown = ref(0)
       const capacityFull = ref(false)
       let cooldownTimer = null
+
+      watch(question, (newVal, oldVal) => {
+        const codePoints = [...newVal]
+        if (codePoints.length > 100) {
+          question.value = codePoints.slice(0, 100).join('')
+          error.value = T.tooLong
+        } else if (error.value === T.tooLong && [...oldVal].length > 100) {
+          // Truncation trigger, do not clear error
+        } else if (error.value === T.tooLong) {
+          error.value = ''
+        }
+      })
 
       // 提問前先打自己的 /capacity（issue #43）：額度滿時擋下發問並提示。
       // 查詢失敗就維持可發問，別讓狀態查詢本身擋住使用者。
@@ -386,7 +400,7 @@
               }, sample),
             ))
             : null,
-          answered.value
+          (answered.value || error.value)
             ? h('div', { class: 'answer' }, [
               !bodyHtml.value && !error.value && loading.value
                 ? h('p', { class: 'placeholder' }, T.searching)

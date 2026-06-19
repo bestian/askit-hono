@@ -220,6 +220,28 @@ export function renderHomePage(lang: PageLang = 'zh-Hant'): string {
     }
     .answer .placeholder { color: var(--muted); }
     .answer .body { white-space: pre-wrap; }
+    .answer .body h1,
+    .answer .body h2,
+    .answer .body h3,
+    .answer .body h4,
+    .answer .body h5,
+    .answer .body h6 {
+      font-weight: 700;
+      line-height: 1.3;
+      margin: 1.1em 0 0.4em;
+    }
+    .answer .body h1:first-child,
+    .answer .body h2:first-child,
+    .answer .body h3:first-child,
+    .answer .body h4:first-child,
+    .answer .body h5:first-child,
+    .answer .body h6:first-child { margin-top: 0; }
+    .answer .body h1 { font-size: 1.3rem; }
+    .answer .body h2 { font-size: 1.15rem; }
+    .answer .body h3 { font-size: 1.02rem; }
+    .answer .body h4,
+    .answer .body h5,
+    .answer .body h6 { font-size: 0.95rem; }
     .answer .error { color: #b3261e; }
     sup.cite a {
       font-size: 0.72em;

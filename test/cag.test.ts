@@ -452,6 +452,34 @@ test('homepage parser rejects non-http citation URLs and relative URLs', async (
   assert.doesNotMatch(parsed.html, /href="\/relative\/path"/i)
 })
 
+test('homepage parser converts markdown headings to <h2>/<h3> for display', async () => {
+  const { parseAnswer } = await loadAppTestHooks()
+  const parsed = parseAnswer([
+    '## 主標題',
+    '',
+    '一些內文 **重點**。',
+    '',
+    '### 子標題',
+    '更多內文。',
+  ].join('\n'))
+
+  assert.match(parsed.html, /<h2>主標題<\/h2>/)
+  assert.match(parsed.html, /<h3>子標題<\/h3>/)
+  // 標題行不應留下原始的 ## / ### 標記
+  assert.doesNotMatch(parsed.html, /(^|\n)#{1,6}\s/)
+  // 內文仍然保留行內格式
+  assert.match(parsed.html, /<strong>重點<\/strong>/)
+})
+
+test('homepage parser leaves non-heading hashes untouched', async () => {
+  const { parseAnswer } = await loadAppTestHooks()
+  const parsed = parseAnswer('#沒有空白不是標題\n價格 #1 與 #2')
+
+  assert.doesNotMatch(parsed.html, /<h1>/)
+  assert.match(parsed.html, /#沒有空白不是標題/)
+  assert.match(parsed.html, /價格 #1 與 #2/)
+})
+
 test('homepage renders out-of-scope errors as sanitized html with archive.tw link', async () => {
   const { formatErrorHtml } = await loadAppTestHooks()
   const html = formatErrorHtml(NOT_FOUND_REPLY_HTML)

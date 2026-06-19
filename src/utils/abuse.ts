@@ -47,6 +47,9 @@ export function truncateQuestionForLog(question: string): string {
   if (chars.length <= MAX_LOGGED_QUESTION_CHARS) return chars.join('')
   return `${chars.slice(0, MAX_LOGGED_QUESTION_CHARS).join('')}…`
 }
+const blacklistCache = new Map<string, { value: boolean; expires: number }>()
+const CACHE_TTL_MS = 60 * 1000 // 1 minute
+
 
 // 黑名單比對。每個請求一次 point read；查詢失敗時 fail-open（視為未在黑名單），
 // 寧可放過也不誤擋。
@@ -55,12 +58,19 @@ export async function isBlacklisted(
   key: string,
 ): Promise<boolean> {
   if (!db) return false
+  const now = Date.now()
+  const cached = blacklistCache.get(key)
+  if (cached && cached.expires > now) {
+    return cached.value
+  }
   try {
     const row = await db
       .prepare('SELECT key FROM blacklist WHERE key = ?1')
       .bind(key)
       .first()
-    return row !== null
+    const isBanned = row !== null
+    blacklistCache.set(key, { value: isBanned, expires: now + CACHE_TTL_MS })
+    return isBanned
   } catch (e) {
     console.error('黑名單查詢失敗，視為未在黑名單:', e)
     return false
@@ -76,6 +86,7 @@ export async function recordAbuse(
   options: AbuseThresholdOptions,
 ): Promise<void> {
   if (!db) return
+  blacklistCache.delete(entry.key)
   const now = Date.now()
   const windowStart = options.windowMs > 0 ? now - options.windowMs : 0
   try {
@@ -106,6 +117,7 @@ export async function recordAbuse(
         )
         .bind(entry.key, entry.kind, now, windowStart, options.threshold),
     ])
+    blacklistCache.delete(entry.key)
   } catch (e) {
     console.error('異常請求 log 寫入失敗，略過:', e)
   }

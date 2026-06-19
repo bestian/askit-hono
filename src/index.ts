@@ -37,6 +37,7 @@ import {
   resolveAudreySkillModel,
 } from './utils/audreySkill'
 import { isAuthorizedFromHeader } from './utils/auth'
+import { isBlacklistExemptIp } from './utils/trustedRanges'
 import {
   buildCacheKey,
   getCachedResponse,
@@ -629,8 +630,13 @@ function reportAbuse(
 ): void {
   const { key, ...rest } = entry
   if (!key) return
+  // 共用基礎設施網段（Cloudflare／WARP 出口、loopback、私有網段）只記錄不進黑名單：
+  // 永久封鎖會誤傷同出口的無辜使用者（issue #49/#50）。即時限流與全域預算不受影響。
+  const skipBlacklist = rest.ip ? isBlacklistExemptIp(rest.ip) : false
   c.executionCtx.waitUntil(
-    recordAbuse(c.env.ABUSE_DB, { key, ...rest }, resolveAbuseOptions(c.env)),
+    recordAbuse(c.env.ABUSE_DB, { key, ...rest }, resolveAbuseOptions(c.env), {
+      skipBlacklist,
+    }),
   )
 }
 
@@ -648,6 +654,10 @@ async function checkHttpBlacklist(
   const ip = c.req.header('cf-connecting-ip')
   const key = ip ? ipRateLimitKeyFromIp(ip) : null
   if (!key) return { ip, key, blocked: false }
+  // 共用基礎設施網段（Cloudflare／WARP 出口、loopback、私有網段）豁免永久黑名單比對：
+  // 這些位址一個背後是海量使用者，封鎖會誤傷無辜、也鎖住走 WARP 的開發者
+  // （npm run preview 首頁 403，issue #49/#50）。即時限流與全域預算仍照常生效。
+  if (ip && isBlacklistExemptIp(ip)) return { ip, key, blocked: false }
   return { ip, key, blocked: await isBlacklisted(c.env.ABUSE_DB, key) }
 }
 

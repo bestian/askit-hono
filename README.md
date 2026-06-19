@@ -298,6 +298,35 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 | `npm run abuse:report` | Analyse the abuse log into `build/abuse-report.html` (`LOCAL=1` for local D1) |
 | `npm run abuse:unban -- <key>` | Remove a key from the blacklist (also clears its old log entries) |
 | `npm run tail` | Live-tail Worker logs |
+| `npm run skill:mine` | Mine Audrey's voice metrics from D1 into `skill/outputs/voice-metrics.json` (see [Audrey Tang skill](#audrey-tang-skill)) |
+
+## Audrey Tang skill
+
+A standalone, portable persona skill lives in [`skill/`](skill/SKILL.md) —
+it lets an AI assistant answer questions in Audrey's conversational,
+reframing, optimistic style, grounded in her
+[archive.tw](https://archive.tw) transcript archive with every substantive
+claim cited back to a source section. The skill **delegates retrieval to
+the existing `/cag` + archive.tw + Vectorize stack** — it builds no new
+index and changes nothing in the deployed Worker.
+
+The voice metrics in `skill/outputs/voice-metrics.json` (signature-phrase
+counts, openings, closings, analogies) are mined from the D1 `sections`
+table by `scripts/mine-audrey-voice.ts`. Regenerate them when the archive
+grows:
+
+```bash
+npm run skill:mine
+```
+
+Optional env vars (`SPEAKER_LIKE` / `SPEAKER_LIKE_EN` for the 華語 / English
+speaker filters, `TOP_N`, `SAMPLE`, `OUT`, `LOCAL=1`) mirror
+`npm run build:index`. The miner refuses to write an empty corpus and warns
+loudly if either language branch comes back empty (likely a speaker-filter
+mismatch). The skill files (`skill/SKILL.md` and `skill/references/*.md`)
+are hand-curated from the mined evidence — see
+[`skill/references/sources.md`](skill/references/sources.md) for the
+maintenance workflow.
 
 ## Project structure
 
@@ -318,8 +347,9 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 │       └── askIndexFormat.ts      # Shared index types/options
 ├── public/                        # Static assets + Vue front-end (app.js)
 ├── db/                            # D1 schema for the abuse log + blacklist
-├── scripts/                       # build-ask-index / vectorize-sync / evals / abuse ops
+├── scripts/                       # build-ask-index / vectorize-sync / evals / abuse ops / skill:mine
 ├── test/                          # node --test suites
+├── skill/                         # Portable Audrey Tang persona skill (SKILL.md + references/)
 ├── design/                        # Architecture notes + system diagram
 ├── config/                        # R2 lifecycle rules
 └── wrangler.jsonc                 # Workers config (R2, KV, Vectorize, AI, DO)

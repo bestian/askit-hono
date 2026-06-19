@@ -284,6 +284,29 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 | `npm run abuse:report` | 分析異常請求 log → `build/abuse-report.html`（`LOCAL=1` 讀本機 D1） |
 | `npm run abuse:unban -- <key>` | 解除封鎖（同時清掉該 key 的舊 log 紀錄） |
 | `npm run tail` | 即時看 Worker log |
+| `npm run skill:mine` | 從 D1 採礦 Audrey 的語音指標 → `skill/outputs/voice-metrics.json`（詳見 [Audrey Tang skill](#audrey-tang-skill)） |
+
+## Audrey Tang skill
+
+`skill/` 目錄是一個可攜式 persona skill（入口在 [`skill/SKILL.md`](skill/SKILL.md)），
+讓 AI 助理能以 Audrey 的對話式、重新框架、樂觀的風格回答問題，並以她的
+[archive.tw](https://archive.tw) 逐字稿為依據，每個實質論述都引註回原出處段落。
+此 skill **將檢索委派給現有的 `/cag` + archive.tw + Vectorize 架構**——不新建索引、
+不改動已部署的 Worker。
+
+`skill/outputs/voice-metrics.json` 裡的語音指標（簽名片語計數、開場、結語、類比）
+由 `scripts/mine-audrey-voice.ts` 從 D1 的 `sections` 表採礦而來。當 archive 增長時
+重新產生：
+
+```bash
+npm run skill:mine
+```
+
+選填的環境變數（`SPEAKER_LIKE` / `SPEAKER_LIKE_EN` 對應華語／英文講者篩選條件、
+`TOP_N`、`SAMPLE`、`OUT`、`LOCAL=1`）與 `npm run build:index` 一致。採礦器遇到
+空語料庫會拒絕寫入，任一語言分支為空時會明顯警告（通常是講者篩選條件不符）。
+Skill 檔案（`skill/SKILL.md` 與 `skill/references/*.md`）是從採礦證據手工策展
+而來——維護流程見 [`skill/references/sources.md`](skill/references/sources.md)。
 
 ## 專案結構
 
@@ -304,8 +327,9 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 │       └── askIndexFormat.ts      # 共用的索引型別與設定
 ├── public/                        # 靜態資源 + Vue 前端（app.js）
 ├── db/                            # 異常請求 log + 黑名單的 D1 schema
-├── scripts/                       # build-ask-index / vectorize-sync / evals / abuse 維運
+├── scripts/                       # build-ask-index / vectorize-sync / evals / abuse 維運 / skill:mine
 ├── test/                          # node --test 測試
+├── skill/                         # 可攜式 Audrey Tang persona skill（SKILL.md + references/）
 ├── design/                        # 架構筆記 + 系統圖
 ├── config/                        # R2 lifecycle 規則
 └── wrangler.jsonc                 # Workers 設定（R2、KV、Vectorize、AI、DO）

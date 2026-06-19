@@ -24,6 +24,9 @@ import {
   parseArchiveSectionId,
   retrieveCagSources,
 } from '../src/utils/cag'
+import {
+  AUDREY_SKILL_GLM_52_MODEL,
+} from '../src/utils/audreySkill'
 import { NOT_FOUND_REPLY_HTML } from '../src/utils/notFoundReply'
 import {
   findClosestMatchingSection,
@@ -457,24 +460,30 @@ test('homepage renders out-of-scope errors as sanitized html with archive.tw lin
 })
 
 test('public CAG returns html not-found body with archive.tw link when retrieval is empty', async () => {
-  const env = {
-    AI: {
-      run: async () => ({ data: [[0.1, 0.2, 0.3]] }),
-    },
-    VECTORIZE: {
-      query: async () => ({ matches: [] }),
-    },
-    CAG_RETRIEVER: 'vectorize',
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => Response.json({ results: [] })
+  try {
+    const env = {
+      AI: {
+        run: async () => ({ data: [[0.1, 0.2, 0.3]] }),
+      },
+      VECTORIZE: {
+        query: async () => ({ matches: [] }),
+      },
+      CAG_RETRIEVER: 'vectorize',
+    }
+
+    const response = await app.request('/cag/zzzzzz', undefined, env)
+
+    assert.equal(response.status, 404)
+    assert.equal(response.headers.get('Content-Type'), 'text/html; charset=UTF-8')
+    const body = await response.text()
+    assert.equal(body, NOT_FOUND_REPLY_HTML)
+    assert.match(body, /<a href="https:\/\/archive\.tw"/)
+    assert.doesNotMatch(body, /<script\b/i)
+  } finally {
+    globalThis.fetch = originalFetch
   }
-
-  const response = await app.request('/cag/zzzzzz', undefined, env)
-
-  assert.equal(response.status, 404)
-  assert.equal(response.headers.get('Content-Type'), 'text/html; charset=UTF-8')
-  const body = await response.text()
-  assert.equal(body, NOT_FOUND_REPLY_HTML)
-  assert.match(body, /<a href="https:\/\/archive\.tw"/)
-  assert.doesNotMatch(body, /<script\b/i)
 })
 
 test('homepage parser escapes html and markdown link attribute breakout payloads', async () => {
@@ -790,6 +799,142 @@ test('public CAG endpoint always uses fixed Gemma model', async () => {
     .filter(({ input }) => Array.isArray(input.messages))
     .map(({ model }) => model)
   assert.deepEqual(chatModels, [DEFAULT_CAG_MODEL])
+})
+test('/au uses Audrey skill prompt, selected safe model, strict citations, and separate cache namespace', async () => {
+  const aiCalls: { model: string; input: Record<string, unknown> }[] = []
+  const cacheGets: string[] = []
+  const cachePuts: string[] = []
+  const ai = {
+    run: async (model: string, input: Record<string, unknown>) => {
+      aiCalls.push({ model, input })
+      if ('text' in input) return { data: [[0.1, 0.2, 0.3]] }
+      return {
+        response:
+          '仁工智慧提升公民肌力 [1]。越界 [9]。假章節 [63852758]。原始網址 https://archive.tw/2026-05-28-demo#s63852758。',
+      }
+    },
+  }
+  const vectorize: VectorizeBinding = {
+    query: async () => ({
+      matches: [
+        {
+          id: '63852758',
+          score: 0.9,
+          metadata: {
+            section_id: 63852758,
+            filename: '2026-05-28-demo',
+            content: '仁工智慧提升社群照顧自己與他人的能力。',
+            display_name: '仁工智慧演講',
+          },
+        },
+      ],
+    }),
+  }
+  const waitUntilPromises: Promise<unknown>[] = []
+  const env = {
+    AI: ai,
+    VECTORIZE: vectorize,
+    CAG_RETRIEVER: 'vectorize',
+    AUDREY_MODEL: AUDREY_SKILL_GLM_52_MODEL,
+    ASK_CACHE: {
+      async get(key: string) {
+        cacheGets.push(key)
+        return null
+      },
+      async put(key: string) {
+        cachePuts.push(key)
+      },
+    },
+  }
+  const executionCtx = {
+    waitUntil: (promise: Promise<unknown>) => {
+      waitUntilPromises.push(promise)
+    },
+    passThroughOnException: () => {},
+    props: {},
+  }
+
+  const response = await app.request(
+    '/au/%E4%BB%80%E9%BA%BC%E6%98%AF%E4%BB%81%E5%B7%A5%E6%99%BA%E6%85%A7?model=@cf/attacker/expensive-model',
+    undefined,
+    env,
+    executionCtx,
+  )
+  assert.equal(response.status, 200)
+  const body = await response.text()
+  await Promise.all(waitUntilPromises)
+
+  const chatCall = aiCalls.find(({ input }) => Array.isArray(input.messages))
+  assert.ok(chatCall)
+  assert.equal(chatCall.model, AUDREY_SKILL_GLM_52_MODEL)
+  const messages = chatCall.input.messages as Array<{ role: string; content: string }>
+  const promptText = messages.map((message) => message.content).join('\n')
+  assert.match(promptText, /不要聲稱自己是 Audrey Tang|不要聲稱自己是唐鳳/)
+  assert.match(promptText, /重新框架/)
+
+  assert.match(body, /仁工智慧提升公民肌力 \[\^1\]/)
+  assert.doesNotMatch(body, /\[9\]/)
+  assert.doesNotMatch(body, /\[63852758\]/)
+  const answerBody = body.split('\n\n[^1]:')[0]!
+  assert.doesNotMatch(answerBody, /https:\/\/archive\.tw\/2026-05-28-demo#s63852758/)
+  assert.match(body, /\[\^1\]: \[[^\]]+ — 唐鳳\]\(https:\/\/archive\.tw\/2026-05-28-demo#s63852758\)/)
+
+  assert.ok(cacheGets.every((key) => key.startsWith('cache/v8/au/')))
+  assert.ok(cachePuts.every((key) => key.startsWith('cache/v8/au/')))
+  assert.ok(cacheGets.length >= 1)
+  assert.ok(cachePuts.length >= 1)
+})
+
+test('/au cache key varies by the selected Audrey model', async () => {
+  const makeRequest = async (model: string) => {
+    const keys: string[] = []
+    const env = {
+      AI: {
+        run: async (_model: string, input: Record<string, unknown>) => {
+          if ('text' in input) return { data: [[0.1, 0.2, 0.3]] }
+          return { response: '答案 [1]' }
+        },
+      },
+      VECTORIZE: {
+        query: async () => ({
+          matches: [
+            {
+              id: '1',
+              score: 0.9,
+              metadata: {
+                section_id: 1,
+                filename: '2024-01-01-demo',
+                content: '測試內容',
+                display_name: '示範會議',
+              },
+            },
+          ],
+        }),
+      } satisfies VectorizeBinding,
+      CAG_RETRIEVER: 'vectorize',
+      AUDREY_MODEL: model,
+      ASK_CACHE: {
+        async get(key: string) {
+          keys.push(key)
+          return null
+        },
+        async put() {},
+      },
+    }
+    const response = await app.request('/au/%E6%B8%AC%E8%A9%A6', undefined, env, {
+      waitUntil: (_promise: Promise<unknown>) => {},
+      passThroughOnException: () => {},
+      props: {},
+    })
+    assert.equal(response.status, 200)
+    await response.text()
+    return keys[0]
+  }
+
+  const gemmaKey = await makeRequest(DEFAULT_CAG_MODEL)
+  const glmKey = await makeRequest(AUDREY_SKILL_GLM_52_MODEL)
+  assert.ok(gemmaKey?.startsWith('cache/v8/au/'))
+  assert.ok(glmKey?.startsWith('cache/v8/au/'))
 })
 
 test('question endpoints reject questions over 100 characters before retrieval or AI', async () => {

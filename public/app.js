@@ -24,7 +24,7 @@
       submit: '送出',
       thinking: '思考中…',
       cooldownSuffix: ' 秒…',
-      searching: '檢索逐字稿中…',
+      searching: '檢索逐字稿並整理 Audrey 風格回答中…',
       fetchError: '查詢發生錯誤，請稍後再試。',
       networkError: '連線發生錯誤，請稍後再試。',
       download: '下載 Markdown',
@@ -54,7 +54,7 @@
       submit: 'Ask',
       thinking: 'Thinking…',
       cooldownSuffix: ' s…',
-      searching: 'Searching the transcripts…',
+      searching: 'Searching transcripts and composing an Audrey-style answer…',
       fetchError: 'Something went wrong. Please try again later.',
       networkError: 'Connection error. Please try again later.',
       download: 'Download Markdown',
@@ -265,7 +265,7 @@
         raw.value = ''
 
         try {
-          const res = await fetch('/cag/' + encodeURIComponent(query) + (LANG === 'en' ? '?lang=en' : ''))
+          const res = await fetch('/au/' + encodeURIComponent(query) + (LANG === 'en' ? '?lang=en' : ''))
           if (!res.ok) {
             error.value = (await res.text()) || T.fetchError
             return

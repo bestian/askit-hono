@@ -626,27 +626,32 @@ async function searchSectionsByContent(
      LIMIT ?`,
   ).bind(...bindings)
 
-  const result = await stmt.all<{ section_id: number }>()
-  if (!result.success || result.results.length === 0) return []
+  try {
+    const result = await stmt.all<{ section_id: number }>()
+    if (!result.success || result.results.length === 0) return []
 
-  const sectionIds = result.results.map((row) => row.section_id)
-  const sources = await Promise.all(
-    sectionIds.map(async (sectionId): Promise<CagSource | null> => {
-      const url = new URL(`/api/section/${sectionId}`, baseUrl)
-      const section = await fetchArchiveJson<ArchiveSectionResponse>(url)
-      if (!section) return null
-      const content = buildHydratedSectionContent(section, '')
-      if (content.trim() === '') return null
-      const displayName = section.display_name?.trim() || section.filename || `section ${sectionId}`
-      const speaker = section.name?.trim() || '唐鳳'
-      const filename = section.filename ?? ''
-      const href = `https://archive.tw/${encodeURIComponent(filename)}#s${sectionId}`
-      return { content, href, label: `${displayName} — ${speaker}`, sectionId }
-    }),
-  )
-  return sources.filter((source): source is CagSource => source !== null)
+    const sectionIds = result.results.map((row) => row.section_id)
+    const sources = await Promise.all(
+      sectionIds.map(async (sectionId): Promise<CagSource | null> => {
+        const url = new URL(`/api/section/${sectionId}`, baseUrl)
+        const section = await fetchArchiveJson<ArchiveSectionResponse>(url)
+        if (!section) return null
+        const content = buildHydratedSectionContent(section, '')
+        if (content.trim() === '') return null
+        const displayName = section.display_name?.trim() || section.filename || `section ${sectionId}`
+        const speaker = section.name?.trim() || '唐鳳'
+        const filename = section.filename ?? ''
+        const href = `https://archive.tw/${encodeURIComponent(filename)}#s${sectionId}`
+        return { content, href, label: `${displayName} — ${speaker}`, sectionId }
+      }),
+    )
+    return sources.filter((source): source is CagSource => source !== null)
+  } catch (e) {
+    console.error('D1 內容搜尋回退失敗，視為查無結果:', e)
+    return []
+  }
 }
-async function resolveCagSources(
+export async function resolveCagSources(
   ai: WorkersAiBinding,
   question: string,
   options: {

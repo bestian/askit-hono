@@ -23,7 +23,11 @@ import {
   normalizeCagOptions,
   parseArchiveSectionId,
   retrieveCagSources,
+  resolveCagSources,
 } from '../src/utils/cag'
+import {
+  AUDREY_SKILL_GLM_52_MODEL,
+} from '../src/utils/audreySkill'
 import { NOT_FOUND_REPLY_HTML } from '../src/utils/notFoundReply'
 import {
   findClosestMatchingSection,
@@ -448,6 +452,34 @@ test('homepage parser rejects non-http citation URLs and relative URLs', async (
   assert.doesNotMatch(parsed.html, /href="\/relative\/path"/i)
 })
 
+test('homepage parser converts markdown headings to <h2>/<h3> for display', async () => {
+  const { parseAnswer } = await loadAppTestHooks()
+  const parsed = parseAnswer([
+    '## 主標題',
+    '',
+    '一些內文 **重點**。',
+    '',
+    '### 子標題',
+    '更多內文。',
+  ].join('\n'))
+
+  assert.match(parsed.html, /<h2>主標題<\/h2>/)
+  assert.match(parsed.html, /<h3>子標題<\/h3>/)
+  // 標題行不應留下原始的 ## / ### 標記
+  assert.doesNotMatch(parsed.html, /(^|\n)#{1,6}\s/)
+  // 內文仍然保留行內格式
+  assert.match(parsed.html, /<strong>重點<\/strong>/)
+})
+
+test('homepage parser leaves non-heading hashes untouched', async () => {
+  const { parseAnswer } = await loadAppTestHooks()
+  const parsed = parseAnswer('#沒有空白不是標題\n價格 #1 與 #2')
+
+  assert.doesNotMatch(parsed.html, /<h1>/)
+  assert.match(parsed.html, /#沒有空白不是標題/)
+  assert.match(parsed.html, /價格 #1 與 #2/)
+})
+
 test('homepage renders out-of-scope errors as sanitized html with archive.tw link', async () => {
   const { formatErrorHtml } = await loadAppTestHooks()
   const html = formatErrorHtml(NOT_FOUND_REPLY_HTML)
@@ -457,24 +489,30 @@ test('homepage renders out-of-scope errors as sanitized html with archive.tw lin
 })
 
 test('public CAG returns html not-found body with archive.tw link when retrieval is empty', async () => {
-  const env = {
-    AI: {
-      run: async () => ({ data: [[0.1, 0.2, 0.3]] }),
-    },
-    VECTORIZE: {
-      query: async () => ({ matches: [] }),
-    },
-    CAG_RETRIEVER: 'vectorize',
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => Response.json({ results: [] })
+  try {
+    const env = {
+      AI: {
+        run: async () => ({ data: [[0.1, 0.2, 0.3]] }),
+      },
+      VECTORIZE: {
+        query: async () => ({ matches: [] }),
+      },
+      CAG_RETRIEVER: 'vectorize',
+    }
+
+    const response = await app.request('/cag/zzzzzz', undefined, env)
+
+    assert.equal(response.status, 404)
+    assert.equal(response.headers.get('Content-Type'), 'text/html; charset=UTF-8')
+    const body = await response.text()
+    assert.equal(body, NOT_FOUND_REPLY_HTML)
+    assert.match(body, /<a href="https:\/\/archive\.tw"/)
+    assert.doesNotMatch(body, /<script\b/i)
+  } finally {
+    globalThis.fetch = originalFetch
   }
-
-  const response = await app.request('/cag/zzzzzz', undefined, env)
-
-  assert.equal(response.status, 404)
-  assert.equal(response.headers.get('Content-Type'), 'text/html; charset=UTF-8')
-  const body = await response.text()
-  assert.equal(body, NOT_FOUND_REPLY_HTML)
-  assert.match(body, /<a href="https:\/\/archive\.tw"/)
-  assert.doesNotMatch(body, /<script\b/i)
 })
 
 test('homepage parser escapes html and markdown link attribute breakout payloads', async () => {
@@ -790,6 +828,142 @@ test('public CAG endpoint always uses fixed Gemma model', async () => {
     .filter(({ input }) => Array.isArray(input.messages))
     .map(({ model }) => model)
   assert.deepEqual(chatModels, [DEFAULT_CAG_MODEL])
+})
+test('/au uses Audrey skill prompt, selected safe model, strict citations, and separate cache namespace', async () => {
+  const aiCalls: { model: string; input: Record<string, unknown> }[] = []
+  const cacheGets: string[] = []
+  const cachePuts: string[] = []
+  const ai = {
+    run: async (model: string, input: Record<string, unknown>) => {
+      aiCalls.push({ model, input })
+      if ('text' in input) return { data: [[0.1, 0.2, 0.3]] }
+      return {
+        response:
+          '仁工智慧提升公民肌力 [1]。越界 [9]。假章節 [63852758]。原始網址 https://archive.tw/2026-05-28-demo#s63852758。',
+      }
+    },
+  }
+  const vectorize: VectorizeBinding = {
+    query: async () => ({
+      matches: [
+        {
+          id: '63852758',
+          score: 0.9,
+          metadata: {
+            section_id: 63852758,
+            filename: '2026-05-28-demo',
+            content: '仁工智慧提升社群照顧自己與他人的能力。',
+            display_name: '仁工智慧演講',
+          },
+        },
+      ],
+    }),
+  }
+  const waitUntilPromises: Promise<unknown>[] = []
+  const env = {
+    AI: ai,
+    VECTORIZE: vectorize,
+    CAG_RETRIEVER: 'vectorize',
+    AUDREY_MODEL: AUDREY_SKILL_GLM_52_MODEL,
+    ASK_CACHE: {
+      async get(key: string) {
+        cacheGets.push(key)
+        return null
+      },
+      async put(key: string) {
+        cachePuts.push(key)
+      },
+    },
+  }
+  const executionCtx = {
+    waitUntil: (promise: Promise<unknown>) => {
+      waitUntilPromises.push(promise)
+    },
+    passThroughOnException: () => {},
+    props: {},
+  }
+
+  const response = await app.request(
+    '/au/%E4%BB%80%E9%BA%BC%E6%98%AF%E4%BB%81%E5%B7%A5%E6%99%BA%E6%85%A7?model=@cf/attacker/expensive-model',
+    undefined,
+    env,
+    executionCtx,
+  )
+  assert.equal(response.status, 200)
+  const body = await response.text()
+  await Promise.all(waitUntilPromises)
+
+  const chatCall = aiCalls.find(({ input }) => Array.isArray(input.messages))
+  assert.ok(chatCall)
+  assert.equal(chatCall.model, AUDREY_SKILL_GLM_52_MODEL)
+  const messages = chatCall.input.messages as Array<{ role: string; content: string }>
+  const promptText = messages.map((message) => message.content).join('\n')
+  assert.match(promptText, /不要聲稱自己是 Audrey Tang|不要聲稱自己是唐鳳/)
+  assert.match(promptText, /重新框架/)
+
+  assert.match(body, /仁工智慧提升公民肌力 \[\^1\]/)
+  assert.doesNotMatch(body, /\[9\]/)
+  assert.doesNotMatch(body, /\[63852758\]/)
+  const answerBody = body.split('\n\n[^1]:')[0]!
+  assert.doesNotMatch(answerBody, /https:\/\/archive\.tw\/2026-05-28-demo#s63852758/)
+  assert.match(body, /\[\^1\]: \[[^\]]+ — 唐鳳\]\(https:\/\/archive\.tw\/2026-05-28-demo#s63852758\)/)
+
+  assert.ok(cacheGets.every((key) => key.startsWith('cache/v8/au/')))
+  assert.ok(cachePuts.every((key) => key.startsWith('cache/v8/au/')))
+  assert.ok(cacheGets.length >= 1)
+  assert.ok(cachePuts.length >= 1)
+})
+
+test('/au cache key varies by the selected Audrey model', async () => {
+  const makeRequest = async (model: string) => {
+    const keys: string[] = []
+    const env = {
+      AI: {
+        run: async (_model: string, input: Record<string, unknown>) => {
+          if ('text' in input) return { data: [[0.1, 0.2, 0.3]] }
+          return { response: '答案 [1]' }
+        },
+      },
+      VECTORIZE: {
+        query: async () => ({
+          matches: [
+            {
+              id: '1',
+              score: 0.9,
+              metadata: {
+                section_id: 1,
+                filename: '2024-01-01-demo',
+                content: '測試內容',
+                display_name: '示範會議',
+              },
+            },
+          ],
+        }),
+      } satisfies VectorizeBinding,
+      CAG_RETRIEVER: 'vectorize',
+      AUDREY_MODEL: model,
+      ASK_CACHE: {
+        async get(key: string) {
+          keys.push(key)
+          return null
+        },
+        async put() {},
+      },
+    }
+    const response = await app.request('/au/%E6%B8%AC%E8%A9%A6', undefined, env, {
+      waitUntil: (_promise: Promise<unknown>) => {},
+      passThroughOnException: () => {},
+      props: {},
+    })
+    assert.equal(response.status, 200)
+    await response.text()
+    return keys[0]
+  }
+
+  const gemmaKey = await makeRequest(DEFAULT_CAG_MODEL)
+  const glmKey = await makeRequest(AUDREY_SKILL_GLM_52_MODEL)
+  assert.ok(gemmaKey?.startsWith('cache/v8/au/'))
+  assert.ok(glmKey?.startsWith('cache/v8/au/'))
 })
 
 test('question endpoints reject questions over 100 characters before retrieval or AI', async () => {
@@ -1650,4 +1824,139 @@ test('retrieveCagSources rejects archive result URLs outside archive origin', as
   } finally {
     globalThis.fetch = originalFetch
   }
+})
+
+test('resolveCagSources treats a failing D1 sayitDb as empty (issue #46 graceful degradation)', async () => {
+  const originalFetch = globalThis.fetch
+  // Stub archive.tw so both primary and fallback search return zero hits,
+  // forcing resolveCagSources to try the D1 fallback path.
+  globalThis.fetch = async (input: RequestInfo | URL) => {
+    const url = new URL(String(input))
+    if (url.pathname === '/api/search.json') {
+      return Response.json({ results: [] })
+    }
+    return new Response('not found', { status: 404 })
+  }
+
+  // A prepare().all() that throws — mirrors prod's
+  // "D1_ERROR: LIKE or GLOB pattern too complex: SQLITE_ERROR" and also
+  // "no such table: speech_content" from a local empty-schema dev D1.
+  const throwingSayitDb = {
+    prepare() {
+      return {
+        bind() {
+          return {
+            all: async () => {
+              throw new Error('D1_ERROR: LIKE or GLOB pattern too complex: SQLITE_ERROR')
+            },
+          }
+        },
+      }
+    },
+  } as unknown as D1Database
+
+  // AI binding is unused when retriever='archive' and archive.tw search is empty.
+  const noopAi = { run: async () => { throw new Error('should not be called') } } as unknown as Parameters<typeof resolveCagSources>[0]
+
+  try {
+    const sources = await resolveCagSources(noopAi, '關懷六力', {
+      topK: 4,
+      archiveBaseUrl: 'https://archive.tw',
+      retriever: 'archive',
+      sayitDb: throwingSayitDb,
+    })
+    assert.deepEqual(sources, [])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+// ── D1 bigram 索引回退（searchSectionsByContent）─────────────────────────────
+// 以 mocked sayitDb 驅動 resolveCagSources，驗證 bigram `WHERE bigram IN (...)`
+// 查詢路徑與全詞子字串驗證；archive.tw 搜尋故意留空以強制走 rescue。
+async function withStubbedFetch<T>(
+  handler: (url: URL) => Response,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input: RequestInfo | URL) => handler(new URL(String(input)))
+  try {
+    return await fn()
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+}
+
+function makeBigramSayitDb(rows: Array<{ section_id: number; hits: number }>): D1Database {
+  return {
+    prepare() {
+      return {
+        bind() {
+          return {
+            all: async () => ({ success: true, results: rows }),
+          }
+        },
+      }
+    },
+  } as unknown as D1Database
+}
+
+function archiveSectionResponse(sectionId: number, sectionContent: string) {
+  return {
+    filename: `2024-01-01-test.html`,
+    nest_filename: null,
+    section_id: sectionId,
+    section_content: sectionContent,
+    previous_content: '',
+    next_content: '',
+    display_name: '測試段落',
+    name: '唐鳳',
+  }
+}
+
+test('resolveCagSources uses bigram index rescue to find 萌典 section', async () => {
+  // archive.tw 搜尋留空 → sources=[] → needsD1Rescue=true；/api/section/123 回含萌典的內容。
+  await withStubbedFetch(
+    (url) => {
+      if (url.pathname === '/api/search.json') return Response.json({ results: [] })
+      if (url.pathname === '/api/section/123') {
+        return Response.json(archiveSectionResponse(123, '我們在這裡提到萌典這個詞。'))
+      }
+      return new Response('not found', { status: 404 })
+    },
+    async () => {
+      const noopAi = { run: async () => { throw new Error('should not be called') } } as unknown as Parameters<typeof resolveCagSources>[0]
+      const sources = await resolveCagSources(noopAi, '萌典', {
+        topK: 4,
+        archiveBaseUrl: 'https://archive.tw',
+        retriever: 'archive',
+        sayitDb: makeBigramSayitDb([{ section_id: 123, hits: 1 }]),
+      })
+      assert.ok(sources.some((s) => s.sectionId === 123), '應回 sectionId 123 的來源')
+    },
+  )
+})
+
+test('resolveCagSources bigram rescue rejects sections whose content lacks the full phrase', async () => {
+  // 索引「命中」section 123（mock 固定回傳），但取回的全文不含「萌典」全詞——
+  // 模擬散落 bigram 假陽性。全詞子字串驗證應過濾掉，回 []。
+  await withStubbedFetch(
+    (url) => {
+      if (url.pathname === '/api/search.json') return Response.json({ results: [] })
+      if (url.pathname === '/api/section/123') {
+        return Response.json(archiveSectionResponse(123, '這段內容完全沒有那個詞。'))
+      }
+      return new Response('not found', { status: 404 })
+    },
+    async () => {
+      const noopAi = { run: async () => { throw new Error('should not be called') } } as unknown as Parameters<typeof resolveCagSources>[0]
+      const sources = await resolveCagSources(noopAi, '萌典', {
+        topK: 4,
+        archiveBaseUrl: 'https://archive.tw',
+        retriever: 'archive',
+        sayitDb: makeBigramSayitDb([{ section_id: 123, hits: 1 }]),
+      })
+      assert.deepEqual(sources, [])
+    },
+  )
 })

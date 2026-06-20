@@ -3,6 +3,12 @@ import { runInNewContext } from 'node:vm'
 
 export type PageStrings = Record<string, Record<string, unknown>>
 
+type ClipboardLike = {
+  clipboard?: {
+    writeText: (text: string) => Promise<void> | void
+  }
+}
+
 export type AppTestHooks = {
   parseAnswer: (raw: string) => {
     html: string
@@ -11,9 +17,11 @@ export type AppTestHooks = {
   isSafeHttpUrl: (value: string) => boolean
   sanitizeHtml: (html: string) => string
   formatErrorHtml: (message: string) => string
-  sanitizeFilenamePart: (value: string) => string
-  formatDateStamp: (date: Date) => string
-  buildDownloadFilename: (question: string, date: Date, fallbackName?: string) => string
+  copyMarkdownText: (
+    text: string,
+    navigatorObject?: ClipboardLike,
+    documentObject?: unknown,
+  ) => Promise<boolean>
   STRINGS: PageStrings
 }
 

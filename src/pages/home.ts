@@ -111,11 +111,12 @@ export function renderHomePage(lang: PageLang = 'zh-Hant'): string {
       width: clamp(112px, 28vw, 176px);
       height: auto;
       border-radius: 24px;
-      cursor: pointer;
+      cursor: not-allowed;
       transition: transform 0.2s ease;
     }
-    img.logo:hover { transform: scale(1.03); }
-    img.logo:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+    img.logo.interactive { cursor: pointer; }
+    img.logo.interactive:hover { transform: scale(1.03); }
+    img.logo.interactive:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
     img.logo.qr { background: #ffffff; padding: 8px; }
     /* 點擊提示：logo 下方一個彈跳的箭頭，再下面用 cursive 字體寫 Click Me */
     .click-hint {

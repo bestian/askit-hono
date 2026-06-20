@@ -143,6 +143,19 @@ test('視窗外的舊紀錄不列入計數', async () => {
   assert.equal(await isBlacklisted(d1, 'ip:1.2.3.4'), true)
 })
 
+test('skipBlacklist：共用網段只寫 log、永不進黑名單（即使達門檻）', async () => {
+  const { db, d1 } = createSqliteBackedD1()
+  const cf = entry({ key: 'ip:104.28.198.3', ip: '104.28.198.3' })
+  for (let i = 0; i < 5; i++) {
+    await recordAbuse(d1, cf, OPTIONS, { skipBlacklist: true })
+  }
+  const logs = db.prepare('SELECT * FROM abuse_log').all() as Record<string, unknown>[]
+  assert.equal(logs.length, 5) // log 照常累積，供分析
+  const bl = db.prepare('SELECT * FROM blacklist').all() as Record<string, unknown>[]
+  assert.equal(bl.length, 0) // 但永不進黑名單
+  assert.equal(await isBlacklisted(d1, 'ip:104.28.198.3'), false)
+})
+
 test('超長問題寫入 log 前會截斷', async () => {
   const { db, d1 } = createSqliteBackedD1()
   await recordAbuse(d1, entry({ question: 'x'.repeat(10_000) }), OPTIONS)

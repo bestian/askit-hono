@@ -46,8 +46,12 @@ Also available as a LINE bot.
   per key, then a per-key Durable Object cooldown), a global generation
   budget (30/min, 1000/day), 30 s CPU cap, strict CSP and security headers.
   Rate-limit hits and over-long questions are logged to a D1 abuse log, and
-  repeat offenders are auto-blacklisted (default: 3 events in 24 h → `403`);
-  unbind `ABUSE_DB` and it degrades gracefully (no log, empty blacklist).
+  repeat offenders are auto-blacklisted (default: 3 events in 24 h → `403`).
+  Shared-infrastructure ranges (Cloudflare/WARP egress, loopback, private
+  networks) are logged but never blacklisted, so a single shared egress IP
+  can't get innocent users — or a developer on WARP — locked out (issues
+  #49/#50; real-time rate limiting and the global budget still apply).
+  Unbind `ABUSE_DB` and it degrades gracefully (no log, empty blacklist).
   LINE events with no per-source identity (a 1:1 user who didn't share a
   `userId`, so they can't be rate-limited or blacklisted) are acked and
   dropped; groups/rooms keep their `groupId`/`roomId` and respond normally.

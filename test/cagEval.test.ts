@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   CAG_MODEL_GEMMA,
+  DEFAULT_AUDREY_EVAL_CASES,
   estimateCagRequestCostUsd,
   evalMeetsThreshold,
   extractCitationIndexes,
@@ -44,4 +45,14 @@ test('estimateCagRequestCostUsd returns a positive Gemma estimate', () => {
 test('evalMeetsThreshold enforces 90% pass ratio', () => {
   assert.equal(evalMeetsThreshold(9, 10), true)
   assert.equal(evalMeetsThreshold(8, 10), false)
+})
+
+test('Audrey eval cases make Traditional Chinese voice the primary axis', () => {
+  assert.ok(DEFAULT_AUDREY_EVAL_CASES.length >= 12)
+  const zhCases = DEFAULT_AUDREY_EVAL_CASES.filter((testCase) => testCase.requireTraditionalChinese)
+  assert.ok(zhCases.length >= 9)
+  assert.ok(zhCases.length / DEFAULT_AUDREY_EVAL_CASES.length >= 0.7)
+  assert.ok(DEFAULT_AUDREY_EVAL_CASES.some((testCase) => testCase.id === 'au-ren-ai-zh'))
+  assert.ok(DEFAULT_AUDREY_EVAL_CASES.some((testCase) => testCase.id === 'au-digital-democracy-reframe-zh'))
+  assert.ok(DEFAULT_AUDREY_EVAL_CASES.some((testCase) => testCase.id === 'au-broad-listening-en'))
 })

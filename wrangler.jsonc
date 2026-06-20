@@ -12,6 +12,21 @@
   //
   // LINE_CHANNEL_ACCESS_TOKEN and LINE_CHANNEL_SECRET should be set via
   // `wrangler secret put`, not in this file.
+  //
+  // AUDREYT_TRANSCRIPT_TOKEN（受信任呼叫端 token，鏡像姊妹專案 sayit-hono）：
+  // 自動化工具於答案端點（/au、/cag、/ask、/capacity）帶
+  // `Authorization: Bearer <token>` 且與此 secret 相符時，略過限流、黑名單與
+  // 全域生成預算。同屬機敏資訊，務必用 `wrangler secret put AUDREYT_TRANSCRIPT_TOKEN`
+  // 設定，切勿寫入此檔案或提交至版本控制。未設定時所有請求一律走原本的限流／黑名單路徑。
+  //
+  // AUDREYT_TRANSCRIPT_TOKEN (trusted-caller token, mirroring the sibling
+  // sayit-hono project): when automated tooling calls the answer endpoints
+  // (/au, /cag, /ask, /capacity) with `Authorization: Bearer <token>` matching
+  // this secret, it bypasses rate limiting, the blacklist, and the global
+  // generation budget. It is sensitive — set it via
+  // `wrangler secret put AUDREYT_TRANSCRIPT_TOKEN`, never in this file or in
+  // version control. When unset, every request follows the normal
+  // rate-limit / blacklist path.
 
   "vars": {
     // 可在此放置非機敏的環境變數
@@ -29,7 +44,10 @@
     // 超量／過長請求，自動寫入黑名單，之後在任何限流記帳之前直接擋下。
     // 視窗設 "0" = 不限視窗、全期間累計。
     "ABUSE_BLACKLIST_THRESHOLD": "3",
-    "ABUSE_COUNT_WINDOW_HOURS": "24"
+    "ABUSE_COUNT_WINDOW_HOURS": "24",
+    // /au 預設模型：GLM-5.2（風格更貼近 Audrey 的對話式、重新框架口吻）。
+    // 程式碼 fallback 仍為 Gemma-4；若此值未設或被移除，會自動回退 Gemma。
+    "AUDREY_MODEL": "@cf/zai-org/glm-5.2"
   },
 
   // CPU 上限：避免單次請求異常消耗 Worker CPU；AI/網路等待不計入 CPU time。
@@ -89,6 +107,11 @@
       "binding": "ABUSE_DB",
       "database_name": "askit-abuse-log",
       "database_id": "d87861ce-46d5-4053-afdf-abf5c4a9f61c"
+    },
+    {
+      "binding": "SAYIT_DB",
+      "database_name": "sayit-database",
+      "database_id": "309347b7-de29-4d0f-b755-55d2638defc9"
     }
   ],
   // KV：CAG 檢索來源快取（1h TTL）。R2 ASK_CACHE 仍負責完整答案快取（7 天）。

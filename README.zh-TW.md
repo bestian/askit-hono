@@ -42,7 +42,10 @@
   per-key Durable Object 冷卻）、全域生成預算（每分鐘 30 次、每日 1000
   次）、30 秒 CPU 上限、嚴格 CSP 與安全標頭。觸發限流或問題過長會寫入
   D1 異常請求 log，累犯自動進黑名單（預設 24 小時內 3 次 → `403`）；
-  未綁 `ABUSE_DB` 時優雅降級（不寫 log、黑名單視為空）。LINE 事件若無可
+  共用基礎設施網段（Cloudflare／WARP 出口、loopback、私有網段）只記錄、
+  不進黑名單，避免誤封同出口的無辜使用者或走 WARP 的開發者自己（issue
+  #49／#50；即時限流與全域預算仍照常生效）。未綁 `ABUSE_DB` 時優雅降級
+  （不寫 log、黑名單視為空）。LINE 事件若無可
   識別的個別身分（1:1 個人未提供 `userId`，無從限流、也無從加黑名單）一律
   ack 後丟棄；群組／房間有 `groupId`／`roomId` 可識別，正常回應。
 - **品質** — 離線 eval harness（`npm run eval:cag`、
@@ -194,6 +197,35 @@ curl -X POST https://YOUR-WORKER-URL/webhook \
 
 </details>
 
+### 受信任呼叫端 token（略過限流與濫用檢查）
+
+答案端點（`/au`、`/cag`、`/ask`、`/capacity`）受到以 IP 為單位的限流、D1
+黑名單與全域生成預算保護。以非瀏覽器 User-Agent 呼叫的自動化工具，可能被限流
+（`429`）或擋下（`403`）。若要讓受信任的呼叫端略過這三道閘門，請帶上與
+`AUDREYT_TRANSCRIPT_TOKEN` secret 相符的 bearer token（此機制鏡像姊妹專案
+**sayit-hono**：相同的環境變數名稱、相同的 `Authorization: Bearer <token>`
+標頭、相同的 constant-time SHA-256 比對）。
+
+| 名稱 | 用途 |
+| --- | --- |
+| `AUDREYT_TRANSCRIPT_TOKEN` | 受信任呼叫端 bearer token；相符的請求略過限流、黑名單與全域生成預算 |
+
+此為機敏資訊，**不可**寫入 `wrangler.jsonc` 或提交至版本控制。請上傳到
+Cloudflare 帳號：
+
+```bash
+npx wrangler secret put AUDREYT_TRANSCRIPT_TOKEN
+```
+
+受信任的呼叫端即可帶 bearer 標頭呼叫答案端點：
+
+```bash
+curl https://ask.archive.tw/au/$(python3 -c "import urllib.parse;print(urllib.parse.quote('你怎麼看開放政府'))") \
+  -H "Authorization: Bearer $AUDREYT_TRANSCRIPT_TOKEN"
+```
+
+未設定此 secret 時，所有請求一律走原本的限流／黑名單路徑，此標頭不生效。
+
 ### 6. 部署
 
 ```bash
@@ -284,6 +316,29 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 | `npm run abuse:report` | 分析異常請求 log → `build/abuse-report.html`（`LOCAL=1` 讀本機 D1） |
 | `npm run abuse:unban -- <key>` | 解除封鎖（同時清掉該 key 的舊 log 紀錄） |
 | `npm run tail` | 即時看 Worker log |
+| `npm run skill:mine` | 從 D1 採礦 Audrey 的語音指標 → `skill/outputs/voice-metrics.json`（詳見 [Audrey Tang skill](#audrey-tang-skill)） |
+
+## Audrey Tang skill
+
+`skill/` 目錄是一個可攜式 persona skill（入口在 [`skill/SKILL.md`](skill/SKILL.md)），
+讓 AI 助理能以 Audrey 的對話式、重新框架、樂觀的風格回答問題，並以她的
+[archive.tw](https://archive.tw) 逐字稿為依據，每個實質論述都引註回原出處段落。
+此 skill **將檢索委派給現有的 `/cag` + archive.tw + Vectorize 架構**——不新建索引、
+不改動已部署的 Worker。
+
+`skill/outputs/voice-metrics.json` 裡的語音指標（簽名片語計數、開場、結語、類比）
+由 `scripts/mine-audrey-voice.ts` 從 D1 的 `sections` 表採礦而來。當 archive 增長時
+重新產生：
+
+```bash
+npm run skill:mine
+```
+
+選填的環境變數（`SPEAKER_LIKE` / `SPEAKER_LIKE_EN` 對應華語／英文講者篩選條件、
+`TOP_N`、`SAMPLE`、`OUT`、`LOCAL=1`）與 `npm run build:index` 一致。採礦器遇到
+空語料庫會拒絕寫入，任一語言分支為空時會明顯警告（通常是講者篩選條件不符）。
+Skill 檔案（`skill/SKILL.md` 與 `skill/references/*.md`）是從採礦證據手工策展
+而來——維護流程見 [`skill/references/sources.md`](skill/references/sources.md)。
 
 ## 專案結構
 
@@ -304,8 +359,9 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 │       └── askIndexFormat.ts      # 共用的索引型別與設定
 ├── public/                        # 靜態資源 + Vue 前端（app.js）
 ├── db/                            # 異常請求 log + 黑名單的 D1 schema
-├── scripts/                       # build-ask-index / vectorize-sync / evals / abuse 維運
+├── scripts/                       # build-ask-index / vectorize-sync / evals / abuse 維運 / skill:mine
 ├── test/                          # node --test 測試
+├── skill/                         # 可攜式 Audrey Tang persona skill（SKILL.md + references/）
 ├── design/                        # 架構筆記 + 系統圖
 ├── config/                        # R2 lifecycle 規則
 └── wrangler.jsonc                 # Workers 設定（R2、KV、Vectorize、AI、DO）

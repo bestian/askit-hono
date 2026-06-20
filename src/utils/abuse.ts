@@ -13,7 +13,7 @@
 // 黑名單視為未命中、寫 log 靜默略過，絕不讓追蹤機制阻斷正常請求。
 
 export type AbuseKind = 'rate_limit' | 'question_too_long'
-export type AbusePath = 'ask' | 'cag' | 'webhook'
+export type AbusePath = 'ask' | 'cag' | 'au' | 'webhook'
 
 export type AbuseLogEntry = {
   /** 正規化身分 key（ip:…／ip6:…／line:…），與限流 key 同一套，方便比對。 */
@@ -47,6 +47,9 @@ export function truncateQuestionForLog(question: string): string {
   if (chars.length <= MAX_LOGGED_QUESTION_CHARS) return chars.join('')
   return `${chars.slice(0, MAX_LOGGED_QUESTION_CHARS).join('')}…`
 }
+const blacklistCache = new Map<string, { value: boolean; expires: number }>()
+const CACHE_TTL_MS = 60 * 1000 // 1 minute
+
 
 // 黑名單比對。每個請求一次 point read；查詢失敗時 fail-open（視為未在黑名單），
 // 寧可放過也不誤擋。
@@ -55,45 +58,71 @@ export async function isBlacklisted(
   key: string,
 ): Promise<boolean> {
   if (!db) return false
+  const now = Date.now()
+  const cached = blacklistCache.get(key)
+  if (cached && cached.expires > now) {
+    return cached.value
+  }
   try {
     const row = await db
       .prepare('SELECT key FROM blacklist WHERE key = ?1')
       .bind(key)
       .first()
-    return row !== null
+    const isBanned = row !== null
+    blacklistCache.set(key, { value: isBanned, expires: now + CACHE_TTL_MS })
+    return isBanned
   } catch (e) {
     console.error('黑名單查詢失敗，視為未在黑名單:', e)
     return false
   }
 }
 
+export type RecordAbuseExtra = {
+  /**
+   * 略過自動黑名單寫入（仍寫 abuse_log 供分析）。共用基礎設施網段
+   * （Cloudflare／WARP 出口、loopback、私有網段）設 true：這些 IP 一個背後是
+   * 海量使用者、永久封鎖會誤傷無辜，故只記錄不封鎖（判斷見 src/utils/trustedRanges.ts；
+   * 套用於 src/index.ts 的 reportAbuse）。
+   */
+  skipBlacklist?: boolean
+}
+
 // 寫入一筆異常紀錄，並在同一個 batch 交易內檢查門檻、自動寫入黑名單。
 // 第二句 INSERT…SELECT 的計數包含第一句剛插入的那筆；ON CONFLICT DO NOTHING
 // 讓已在黑名單的 key 重跑安全（理論上不會發生：黑名單成員在更上游就被擋下）。
+// skipBlacklist=true 時只寫 abuse_log、不寫黑名單（共用網段豁免，見 RecordAbuseExtra）。
 export async function recordAbuse(
   db: D1Database | undefined,
   entry: AbuseLogEntry,
   options: AbuseThresholdOptions,
+  extra: RecordAbuseExtra = {},
 ): Promise<void> {
   if (!db) return
+  blacklistCache.delete(entry.key)
   const now = Date.now()
   const windowStart = options.windowMs > 0 ? now - options.windowMs : 0
   try {
+    const logStatement = db
+      .prepare(
+        'INSERT INTO abuse_log (key, kind, path, question, ip, line_id, created_at) ' +
+          'VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)',
+      )
+      .bind(
+        entry.key,
+        entry.kind,
+        entry.path,
+        truncateQuestionForLog(entry.question),
+        entry.ip ?? null,
+        entry.lineId ?? null,
+        now,
+      )
+    if (extra.skipBlacklist) {
+      // 共用基礎設施網段：只留 log（供分析「哪個網段在製造異常」），不進黑名單。
+      await logStatement.run()
+      return
+    }
     await db.batch([
-      db
-        .prepare(
-          'INSERT INTO abuse_log (key, kind, path, question, ip, line_id, created_at) ' +
-            'VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)',
-        )
-        .bind(
-          entry.key,
-          entry.kind,
-          entry.path,
-          truncateQuestionForLog(entry.question),
-          entry.ip ?? null,
-          entry.lineId ?? null,
-          now,
-        ),
+      logStatement,
       // 子查詢先算出視窗內次數，外層 WHERE 過門檻才插入。
       // （SQLite 的 upsert 文法要求 INSERT…SELECT 帶 WHERE 子句以消除與 join 的歧義。）
       db
@@ -106,6 +135,7 @@ export async function recordAbuse(
         )
         .bind(entry.key, entry.kind, now, windowStart, options.threshold),
     ])
+    blacklistCache.delete(entry.key)
   } catch (e) {
     console.error('異常請求 log 寫入失敗，略過:', e)
   }

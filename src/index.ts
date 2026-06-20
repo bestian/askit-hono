@@ -32,6 +32,13 @@ import {
   streamCagAnswer,
 } from './utils/cag'
 import {
+  audreySkillCitationFootnotes,
+  buildAudreySkillAnswerInstruction,
+  resolveAudreySkillModel,
+} from './utils/audreySkill'
+import { isAuthorizedFromHeader } from './utils/auth'
+import { isBlacklistExemptIp } from './utils/trustedRanges'
+import {
   buildCacheKey,
   getCachedResponse,
   putCachedResponse,
@@ -66,6 +73,8 @@ type Bindings = {
   // 未設定時預設 'vectorize'；無 VECTORIZE binding 時自動回退 archive。
   CAG_RETRIEVER?: string
   CAG_VECTORIZE_MIN_SCORE?: string
+  /** Model used by /au (Gemma by default; @cf/zai-org/glm-5.2 allowed). */
+  AUDREY_MODEL?: string
   GLOBAL_GENERATION_LIMIT_PER_MINUTE?: string
   GLOBAL_GENERATION_LIMIT_PER_DAY?: string
   ASK_INDEX: R2Bucket
@@ -87,11 +96,22 @@ type Bindings = {
   // 超量／異常請求追蹤 log 與黑名單（issue #27）。未綁時優雅降級：
   // 不寫 log、黑名單視為空，請求照常處理。
   ABUSE_DB?: D1Database
+  // sayit-database D1：當 Vectorize 和 archive.tw 搜尋都找不到時，
+ // 用 section_content LIKE 做內容全文檢索（如「萌典」這類罕用專名）。
+  // 未綁時優雅降級——回到既有行為（空來源 → 404）。
+  SAYIT_DB?: D1Database
   ABUSE_BLACKLIST_THRESHOLD?: string
   ABUSE_COUNT_WINDOW_HOURS?: string
+  // 受信任呼叫端 token（鏡像 sayit-hono 的 AUDREYT_TRANSCRIPT_TOKEN）。
+  // 自動化工具帶 `Authorization: Bearer <token>` 且與此 secret 相符時，
+  // 略過限流、黑名單與全域生成預算（見 isTrustedCaller）。應透過
+  // `wrangler secret put AUDREYT_TRANSCRIPT_TOKEN` 設定，勿寫入 wrangler.jsonc。
+  AUDREYT_TRANSCRIPT_TOKEN?: string
 }
 
 const DEFAULT_CAG_RETRIEVER: CagRetriever = 'vectorize'
+// /au 的預設 max_completion_tokens；GLM-5.2 較冗長，500 會截斷回答，1024 確保完整。
+const AUDREY_MAX_COMPLETION_TOKENS = 1024
 
 function resolveCagRetriever(
   ...values: (string | undefined)[]
@@ -251,6 +271,7 @@ const ROBOTS_TXT = `User-agent: *
 Disallow: /ask/
 Disallow: /cag/
 Disallow: /capacity
+Disallow: /au/
 Disallow: /webhook
 `
 
@@ -346,7 +367,7 @@ const maxApiBodySize: MiddlewareHandler = async (c, next) => {
   })
   await next()
 }
-
+app.use('/au', maxApiBodySize)
 app.use('/webhook', maxApiBodySize)
 
 function decodeRouteParam(value: string): string {
@@ -562,6 +583,21 @@ async function isCapacityRateLimited(c: Context<{ Bindings: Bindings }>): Promis
   )
 }
 
+// 受信任呼叫端（鏡像 sayit-hono 的 Bearer token 機制）：自動化工具帶
+// `Authorization: Bearer <AUDREYT_TRANSCRIPT_TOKEN>` 且與 secret 相符時，
+// 答案端點（/ask、/cag、/au、/capacity）略過限流、黑名單與全域生成預算，
+// 讓非瀏覽器 User-Agent 也能正常呼叫，不會被 403/429 擋下。
+// 比對走 src/utils/auth.ts 的 constant-time SHA-256（與 sayit-hono 同一套）；
+// secret 未設定（dev/測試未帶）時恆為 false——一律走原本的限流／黑名單路徑。
+async function isTrustedCaller(c: Context<{ Bindings: Bindings }>): Promise<boolean> {
+  // c.env 在某些測試呼叫（app.request 未帶 env）會是 undefined；以 ?. 優雅降級，
+  // 與專案「未綁定即略過」的慣例一致——secret 取不到時 isAuthorizedFromHeader 回 false。
+  return isAuthorizedFromHeader(
+    c.req.header('Authorization'),
+    c.env?.AUDREYT_TRANSCRIPT_TOKEN,
+  )
+}
+
 // ── 異常請求追蹤與黑名單（issue #27）────────────────────────────────────────
 // 「單一 IP/Id 超量」或「問題字串過長」時寫入 abuse_log；同一 key 在視窗內
 // 累積達門檻次數即自動進黑名單。黑名單比對放在「任何 DO/KV 限流記帳之前」，
@@ -594,8 +630,13 @@ function reportAbuse(
 ): void {
   const { key, ...rest } = entry
   if (!key) return
+  // 共用基礎設施網段（Cloudflare／WARP 出口、loopback、私有網段）只記錄不進黑名單：
+  // 永久封鎖會誤傷同出口的無辜使用者（issue #49/#50）。即時限流與全域預算不受影響。
+  const skipBlacklist = rest.ip ? isBlacklistExemptIp(rest.ip) : false
   c.executionCtx.waitUntil(
-    recordAbuse(c.env.ABUSE_DB, { key, ...rest }, resolveAbuseOptions(c.env)),
+    recordAbuse(c.env.ABUSE_DB, { key, ...rest }, resolveAbuseOptions(c.env), {
+      skipBlacklist,
+    }),
   )
 }
 
@@ -613,6 +654,10 @@ async function checkHttpBlacklist(
   const ip = c.req.header('cf-connecting-ip')
   const key = ip ? ipRateLimitKeyFromIp(ip) : null
   if (!key) return { ip, key, blocked: false }
+  // 共用基礎設施網段（Cloudflare／WARP 出口、loopback、私有網段）豁免永久黑名單比對：
+  // 這些位址一個背後是海量使用者，封鎖會誤傷無辜、也鎖住走 WARP 的開發者
+  // （npm run preview 首頁 403，issue #49/#50）。即時限流與全域預算仍照常生效。
+  if (ip && isBlacklistExemptIp(ip)) return { ip, key, blocked: false }
   return { ip, key, blocked: await isBlacklisted(c.env.ABUSE_DB, key) }
 }
 
@@ -1052,19 +1097,21 @@ app.get('/robots.txt', (c) => {
 app.get('/ask/:question', async (c) => {
   const startedAt = Date.now()
   const question = decodeRouteParam(c.req.param('question'))
+  // 受信任呼叫端（帶有效 AUDREYT_TRANSCRIPT_TOKEN）略過限流、黑名單與全域預算。
+  const trusted = await isTrustedCaller(c)
   // 黑名單比對在任何 DO/KV 限流記帳之前（issue #27）。
-  const abuse = await checkHttpBlacklist(c)
-  if (abuse.blocked) {
+  const abuse = trusted ? null : await checkHttpBlacklist(c)
+  if (abuse?.blocked) {
     return c.text(BLACKLISTED_HTTP_MESSAGE, 403)
   }
-  if (await isIpRateLimited(c)) {
-    reportAbuse(c, { key: abuse.key, kind: 'rate_limit', path: 'ask', question, ip: abuse.ip })
+  if (!trusted && await isIpRateLimited(c)) {
+    reportAbuse(c, { key: abuse?.key ?? null, kind: 'rate_limit', path: 'ask', question, ip: abuse?.ip })
     return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
       'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
     })
   }
   if (isQuestionTooLong(question)) {
-    reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'ask', question, ip: abuse.ip })
+    reportAbuse(c, { key: abuse?.key ?? null, kind: 'question_too_long', path: 'ask', question, ip: abuse?.ip })
     return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
   }
   // 相同問題 7 天內直接取用快取。
@@ -1078,7 +1125,7 @@ app.get('/ask/:question', async (c) => {
     }
   }
 
-  const budget = await checkGlobalGenerationBudget(c.env)
+  const budget = trusted ? { allowed: true } : await checkGlobalGenerationBudget(c.env)
   if (!budget.allowed) {
     return c.text(GLOBAL_BUDGET_HTTP_MESSAGE, 429, {
       'Retry-After': retryAfterForBudget(budget),
@@ -1109,6 +1156,239 @@ app.get('/ask/:question', async (c) => {
   }
 })
 
+app.get('/au/status', (c) => {
+  const model = resolveAudreySkillModel(c.env.AUDREY_MODEL)
+  return c.json({
+    ...getCagStatus({
+      archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
+      retriever: resolveCagRetriever(c.req.query('retriever'), c.env.CAG_RETRIEVER),
+      vectorizeBound: Boolean(c.env.VECTORIZE),
+      sourceCacheBound: Boolean(c.env.CAG_CACHE),
+      vectorizeMinScore: resolveVectorizeMinScore(
+        c.req.query('min_score') ?? c.req.query('minScore'),
+        c.env.CAG_VECTORIZE_MIN_SCORE,
+      ),
+      model,
+    }),
+    mode: 'audrey-skill',
+  })
+})
+
+app.get('/au/:question', async (c) => {
+  const lang = resolveWebLang(c.req.query('lang'))
+  const messages = WEB_MESSAGES[lang]
+  const question = decodeRouteParam(c.req.param('question'))
+  // 受信任呼叫端（帶有效 AUDREYT_TRANSCRIPT_TOKEN）略過限流、黑名單與全域預算。
+  const trusted = await isTrustedCaller(c)
+  const abuse = trusted ? null : await checkHttpBlacklist(c)
+  if (abuse?.blocked) {
+    return c.text(messages.blacklisted, 403)
+  }
+  if (!trusted && await isIpRateLimited(c)) {
+    reportAbuse(c, { key: abuse?.key ?? null, kind: 'rate_limit', path: 'au', question, ip: abuse?.ip })
+    return c.text(messages.rateLimited, 429, {
+      'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
+    })
+  }
+  if (isQuestionTooLong(question)) {
+    reportAbuse(c, { key: abuse?.key ?? null, kind: 'question_too_long', path: 'au', question, ip: abuse?.ip })
+    return c.text(messages.tooLong, 400)
+  }
+
+  const bypassCache = shouldBypassCaches(c.req.query('refresh'))
+  const topK = parsePositiveInteger(c.req.query('top_k') ?? c.req.query('topK'), DEFAULT_TOP_K)
+  const citableTopK = parseOptionalPositiveInteger(
+    c.req.query('cite_top_k') ?? c.req.query('citeTopK'),
+  )
+  const maxCompletionTokens = parsePositiveInteger(
+    c.req.query('max_tokens') ?? c.req.query('maxTokens'),
+    AUDREY_MAX_COMPLETION_TOKENS,
+  )
+  const retriever = resolveCagRetriever(c.req.query('retriever'), c.env.CAG_RETRIEVER)
+  const vectorizeMinScore = resolveVectorizeMinScore(
+    c.req.query('min_score') ?? c.req.query('minScore'),
+    c.env.CAG_VECTORIZE_MIN_SCORE,
+  )
+  const model = resolveAudreySkillModel(c.env.AUDREY_MODEL)
+  const answerLanguage = lang === 'en' ? 'en' : undefined
+  const cagOptions = normalizeCagOptions({
+    archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
+    topK,
+    citableTopK,
+    maxCompletionTokens,
+    model,
+    answerInstruction: buildAudreySkillAnswerInstruction(answerLanguage),
+    retriever,
+    vectorize: c.env.VECTORIZE,
+    vectorizeMinScore,
+    cagCache: c.env.CAG_CACHE,
+    skipSourceCache: bypassCache,
+    answerLanguage,
+    citationTransform: audreySkillCitationFootnotes,
+    sayitDb: c.env.SAYIT_DB,
+  })
+  const cacheKey = await buildCacheKey('au', question, {
+    archiveBaseUrl: cagOptions.archiveBaseUrl,
+    model: cagOptions.model,
+    topK: cagOptions.topK,
+    citableTopK: cagOptions.citableTopK,
+    maxCompletionTokens: cagOptions.maxCompletionTokens,
+    retriever: cagOptions.retriever,
+    vectorizeMinScore: cagOptions.vectorizeMinScore,
+    ...(answerLanguage === 'en' ? { answerLanguage: 'en' } : {}),
+  })
+  if (!bypassCache) {
+    const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
+    if (cached) {
+      c.executionCtx.waitUntil(refreshCachedResponse(c.env.ASK_CACHE, cacheKey, cached))
+      return respondFromCache(cached.body, cached.contentType)
+    }
+  }
+
+  const budget = trusted ? { allowed: true } : await checkGlobalGenerationBudget(c.env)
+  if (!budget.allowed) {
+    return c.text(messages.budget, 429, {
+      'Retry-After': retryAfterForBudget(budget),
+    })
+  }
+
+  const response = await streamCagAnswer(c.env.AI, question, cagOptions)
+  if (response.status === 404 && lang === 'en') {
+    await response.body?.cancel()
+    return new Response(NOT_FOUND_REPLY_HTML_EN, {
+      status: 404,
+      headers: response.headers,
+    })
+  }
+  return cacheCagResponse(c, bypassCache ? null : cacheKey, response)
+})
+
+app.post('/au', async (c) => {
+  // 受信任呼叫端（帶有效 AUDREYT_TRANSCRIPT_TOKEN）略過限流、黑名單與全域預算。
+  const trusted = await isTrustedCaller(c)
+  const abuse = trusted ? null : await checkHttpBlacklist(c)
+  if (abuse?.blocked) {
+    return c.text(BLACKLISTED_HTTP_MESSAGE, 403)
+  }
+  if (!trusted && await isIpRateLimited(c)) {
+    let loggedQuestion = ''
+    try {
+      const body = (await c.req.json()) as { question?: unknown }
+      if (typeof body.question === 'string') loggedQuestion = body.question
+    } catch {
+      // 解析失敗就記空問題。
+    }
+    reportAbuse(c, {
+      key: abuse?.key ?? null,
+      kind: 'rate_limit',
+      path: 'au',
+      question: loggedQuestion,
+      ip: abuse?.ip,
+    })
+    return c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
+      'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
+    })
+  }
+
+  let payload: { question?: unknown; topK?: unknown; top_k?: unknown; citableTopK?: unknown; cite_top_k?: unknown; maxTokens?: unknown; max_tokens?: unknown; retriever?: unknown; minScore?: unknown; min_score?: unknown; refresh?: unknown }
+  try {
+    payload = await c.req.json()
+  } catch {
+    return c.text('Invalid JSON payload', 400)
+  }
+
+  const question = typeof payload.question === 'string' ? payload.question : ''
+  if (question.trim() === '') {
+    return c.text('question is required', 400)
+  }
+  if (isQuestionTooLong(question)) {
+    reportAbuse(c, { key: abuse?.key ?? null, kind: 'question_too_long', path: 'au', question, ip: abuse?.ip })
+    return c.text(QUESTION_TOO_LONG_MESSAGE, 400)
+  }
+
+  const bypassCache = typeof payload.refresh === 'boolean'
+    ? payload.refresh
+    : typeof payload.refresh === 'string'
+      ? shouldBypassCaches(payload.refresh)
+      : false
+  const topK = typeof payload.topK === 'number'
+    ? payload.topK
+    : typeof payload.top_k === 'number'
+      ? payload.top_k
+      : DEFAULT_TOP_K
+  const maxCompletionTokens = typeof payload.maxTokens === 'number'
+    ? payload.maxTokens
+    : typeof payload.max_tokens === 'number'
+      ? payload.max_tokens
+      : AUDREY_MAX_COMPLETION_TOKENS
+  const citableTopK = typeof payload.citableTopK === 'number'
+    ? payload.citableTopK
+    : typeof payload.cite_top_k === 'number'
+      ? payload.cite_top_k
+      : undefined
+  const vectorizeMinScore = typeof payload.minScore === 'number'
+    ? payload.minScore
+    : typeof payload.min_score === 'number'
+      ? payload.min_score
+      : resolveVectorizeMinScore(c.env.CAG_VECTORIZE_MIN_SCORE)
+  const retriever = resolveCagRetriever(
+    typeof payload.retriever === 'string' ? payload.retriever : undefined,
+    c.env.CAG_RETRIEVER,
+  )
+  const answerLanguage = detectCagAnswerLanguage(question)
+  const model = resolveAudreySkillModel(c.env.AUDREY_MODEL)
+  const cagOptions = normalizeCagOptions({
+    archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
+    topK,
+    citableTopK,
+    maxCompletionTokens,
+    model,
+    answerInstruction: buildAudreySkillAnswerInstruction(answerLanguage),
+    retriever,
+    vectorize: c.env.VECTORIZE,
+    vectorizeMinScore,
+    cagCache: c.env.CAG_CACHE,
+    skipSourceCache: bypassCache,
+    answerLanguage,
+    citationTransform: audreySkillCitationFootnotes,
+    sayitDb: c.env.SAYIT_DB,
+  })
+  const cacheKey = await buildCacheKey('au', question, {
+    archiveBaseUrl: cagOptions.archiveBaseUrl,
+    model: cagOptions.model,
+    topK: cagOptions.topK,
+    citableTopK: cagOptions.citableTopK,
+    maxCompletionTokens: cagOptions.maxCompletionTokens,
+    retriever: cagOptions.retriever,
+    vectorizeMinScore: cagOptions.vectorizeMinScore,
+    ...(answerLanguage === 'en' ? { answerLanguage: 'en' } : {}),
+  })
+  if (!bypassCache) {
+    const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
+    if (cached) {
+      c.executionCtx.waitUntil(refreshCachedResponse(c.env.ASK_CACHE, cacheKey, cached))
+      return respondFromCache(cached.body, cached.contentType)
+    }
+  }
+
+  const budget = trusted ? { allowed: true } : await checkGlobalGenerationBudget(c.env)
+  if (!budget.allowed) {
+    return c.text(GLOBAL_BUDGET_HTTP_MESSAGE, 429, {
+      'Retry-After': retryAfterForBudget(budget),
+    })
+  }
+
+  const response = await streamCagAnswer(c.env.AI, question, cagOptions)
+  if (response.status === 404 && answerLanguage === 'en') {
+    await response.body?.cancel()
+    return new Response(NOT_FOUND_REPLY_HTML_EN, {
+      status: 404,
+      headers: response.headers,
+    })
+  }
+  return cacheCagResponse(c, bypassCache ? null : cacheKey, response)
+})
+
 app.get('/cag/status', (c) => {
   return c.json(getCagStatus({
     archiveBaseUrl: c.env.ASK_ARCHIVE_BASE_URL,
@@ -1128,11 +1408,13 @@ app.options('/cag/:question', askCorsPreflight)
 // 任何人都能查目前 AI 生成狀態（issue #40）：機器人由 robots.txt 擋，
 // 惡意 IP 仍走黑名單與獨立 IP 限流；唯讀查 DO、不消耗額度。
 app.get('/capacity', async (c) => {
-  const abuse = await checkHttpBlacklist(c)
-  if (abuse.blocked) {
+  // 受信任呼叫端（帶有效 AUDREYT_TRANSCRIPT_TOKEN）略過限流與黑名單。
+  const trusted = await isTrustedCaller(c)
+  const abuse = trusted ? null : await checkHttpBlacklist(c)
+  if (abuse?.blocked) {
     return applyAskCors(c, c.text(BLACKLISTED_HTTP_MESSAGE, 403))
   }
-  if (await isCapacityRateLimited(c)) {
+  if (!trusted && await isCapacityRateLimited(c)) {
     return applyAskCors(c, c.text(RATE_LIMIT_HTTP_MESSAGE, 429, {
       'Retry-After': String(CAPACITY_RATE_LIMIT_RETRY_AFTER_SECONDS),
     }))
@@ -1148,19 +1430,21 @@ app.get('/cag/:question', async (c) => {
   const lang = resolveWebLang(c.req.query('lang'))
   const messages = WEB_MESSAGES[lang]
   const question = decodeRouteParam(c.req.param('question'))
+  // 受信任呼叫端（帶有效 AUDREYT_TRANSCRIPT_TOKEN）略過限流、黑名單與全域預算。
+  const trusted = await isTrustedCaller(c)
   // 黑名單比對在任何 DO/KV 限流記帳之前（issue #27）。
-  const abuse = await checkHttpBlacklist(c)
-  if (abuse.blocked) {
+  const abuse = trusted ? null : await checkHttpBlacklist(c)
+  if (abuse?.blocked) {
     return applyAskCors(c, c.text(messages.blacklisted, 403))
   }
-  if (await isIpRateLimited(c)) {
-    reportAbuse(c, { key: abuse.key, kind: 'rate_limit', path: 'cag', question, ip: abuse.ip })
+  if (!trusted && await isIpRateLimited(c)) {
+    reportAbuse(c, { key: abuse?.key ?? null, kind: 'rate_limit', path: 'cag', question, ip: abuse?.ip })
     return applyAskCors(c, c.text(messages.rateLimited, 429, {
       'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
     }))
   }
   if (isQuestionTooLong(question)) {
-    reportAbuse(c, { key: abuse.key, kind: 'question_too_long', path: 'cag', question, ip: abuse.ip })
+    reportAbuse(c, { key: abuse?.key ?? null, kind: 'question_too_long', path: 'cag', question, ip: abuse?.ip })
     return applyAskCors(c, c.text(messages.tooLong, 400))
   }
   const bypassCache = shouldBypassCaches(c.req.query('refresh'))
@@ -1188,6 +1472,7 @@ app.get('/cag/:question', async (c) => {
     cagCache: c.env.CAG_CACHE,
     skipSourceCache: bypassCache,
     answerLanguage: lang === 'en' ? 'en' : undefined,
+    sayitDb: c.env.SAYIT_DB,
   })
 
   // 快取 key 納入實際生效的參數（含 clamp/default 後的值），避免用超大參數繞過快取。
@@ -1210,7 +1495,7 @@ app.get('/cag/:question', async (c) => {
     }
   }
 
-  const budget = await checkGlobalGenerationBudget(c.env)
+  const budget = trusted ? { allowed: true } : await checkGlobalGenerationBudget(c.env)
   if (!budget.allowed) {
     return applyAskCors(c, c.text(messages.budget, 429, {
       'Retry-After': retryAfterForBudget(budget),

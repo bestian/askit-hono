@@ -46,8 +46,12 @@ Also available as a LINE bot.
   per key, then a per-key Durable Object cooldown), a global generation
   budget (30/min, 1000/day), 30 s CPU cap, strict CSP and security headers.
   Rate-limit hits and over-long questions are logged to a D1 abuse log, and
-  repeat offenders are auto-blacklisted (default: 3 events in 24 h → `403`);
-  unbind `ABUSE_DB` and it degrades gracefully (no log, empty blacklist).
+  repeat offenders are auto-blacklisted (default: 3 events in 24 h → `403`).
+  Shared-infrastructure ranges (Cloudflare/WARP egress, loopback, private
+  networks) are logged but never blacklisted, so a single shared egress IP
+  can't get innocent users — or a developer on WARP — locked out (issues
+  #49/#50; real-time rate limiting and the global budget still apply).
+  Unbind `ABUSE_DB` and it degrades gracefully (no log, empty blacklist).
   LINE events with no per-source identity (a 1:1 user who didn't share a
   `userId`, so they can't be rate-limited or blacklisted) are acked and
   dropped; groups/rooms keep their `groupId`/`roomId` and respond normally.
@@ -204,6 +208,38 @@ LINE app.
 
 </details>
 
+### Trusted-caller token (bypass rate limiting & abuse checks)
+
+The answer endpoints (`/au`, `/cag`, `/ask`, and `/capacity`) are protected by
+per-IP rate limiting, a D1 blacklist, and a global generation budget. Automated
+tooling that calls them from a non-browser User-Agent can be throttled (`429`)
+or blocked (`403`). To let a trusted caller bypass all three, present a bearer
+token that matches the `AUDREYT_TRANSCRIPT_TOKEN` secret (this mirrors the
+sibling **sayit-hono** project, which uses the same env var name, the same
+`Authorization: Bearer <token>` header, and the same constant-time SHA-256
+comparison).
+
+| Name | Purpose |
+| --- | --- |
+| `AUDREYT_TRANSCRIPT_TOKEN` | Trusted-caller bearer token; a matching request skips rate limiting, the blacklist, and the global generation budget |
+
+It is sensitive — **do not** put it in `wrangler.jsonc` or commit it. Upload it
+to your Cloudflare account:
+
+```bash
+npx wrangler secret put AUDREYT_TRANSCRIPT_TOKEN
+```
+
+Then a trusted client calls the answer endpoints with the bearer header:
+
+```bash
+curl https://ask.archive.tw/au/$(python3 -c "import urllib.parse;print(urllib.parse.quote('你怎麼看開放政府'))") \
+  -H "Authorization: Bearer $AUDREYT_TRANSCRIPT_TOKEN"
+```
+
+When the secret is unset, every request follows the normal rate-limit /
+blacklist path; the header has no effect.
+
 ### 6. Deploy
 
 ```bash
@@ -298,6 +334,35 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 | `npm run abuse:report` | Analyse the abuse log into `build/abuse-report.html` (`LOCAL=1` for local D1) |
 | `npm run abuse:unban -- <key>` | Remove a key from the blacklist (also clears its old log entries) |
 | `npm run tail` | Live-tail Worker logs |
+| `npm run skill:mine` | Mine Audrey's voice metrics from D1 into `skill/outputs/voice-metrics.json` (see [Audrey Tang skill](#audrey-tang-skill)) |
+
+## Audrey Tang skill
+
+A standalone, portable persona skill lives in [`skill/`](skill/SKILL.md) —
+it lets an AI assistant answer questions in Audrey's conversational,
+reframing, optimistic style, grounded in her
+[archive.tw](https://archive.tw) transcript archive with every substantive
+claim cited back to a source section. The skill **delegates retrieval to
+the existing `/cag` + archive.tw + Vectorize stack** — it builds no new
+index and changes nothing in the deployed Worker.
+
+The voice metrics in `skill/outputs/voice-metrics.json` (signature-phrase
+counts, openings, closings, analogies) are mined from the D1 `sections`
+table by `scripts/mine-audrey-voice.ts`. Regenerate them when the archive
+grows:
+
+```bash
+npm run skill:mine
+```
+
+Optional env vars (`SPEAKER_LIKE` / `SPEAKER_LIKE_EN` for the 華語 / English
+speaker filters, `TOP_N`, `SAMPLE`, `OUT`, `LOCAL=1`) mirror
+`npm run build:index`. The miner refuses to write an empty corpus and warns
+loudly if either language branch comes back empty (likely a speaker-filter
+mismatch). The skill files (`skill/SKILL.md` and `skill/references/*.md`)
+are hand-curated from the mined evidence — see
+[`skill/references/sources.md`](skill/references/sources.md) for the
+maintenance workflow.
 
 ## Project structure
 
@@ -318,8 +383,9 @@ curl -N 'https://YOUR-WORKER-URL/cag/%E7%94%A8%20%23zh-tw%20%E5%9B%9E%E7%AD%94%E
 │       └── askIndexFormat.ts      # Shared index types/options
 ├── public/                        # Static assets + Vue front-end (app.js)
 ├── db/                            # D1 schema for the abuse log + blacklist
-├── scripts/                       # build-ask-index / vectorize-sync / evals / abuse ops
+├── scripts/                       # build-ask-index / vectorize-sync / evals / abuse ops / skill:mine
 ├── test/                          # node --test suites
+├── skill/                         # Portable Audrey Tang persona skill (SKILL.md + references/)
 ├── design/                        # Architecture notes + system diagram
 ├── config/                        # R2 lifecycle rules
 └── wrangler.jsonc                 # Workers config (R2, KV, Vectorize, AI, DO)

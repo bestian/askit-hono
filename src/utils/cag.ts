@@ -18,6 +18,7 @@ import {
   type VectorizeBinding,
 } from './vectorize'
 import { NOT_FOUND_REPLY_HTML } from './notFoundReply'
+import { extractIndexKeys } from './bigramKeys'
 
 type WorkersAiBinding = {
   run: (model: string, input: Record<string, unknown>) => Promise<unknown>
@@ -40,6 +41,8 @@ export type CagOptions = {
    */
   citableTopK?: number
   maxCompletionTokens?: number
+  /** Workers AI chat model. Omitted by /cag so it stays on DEFAULT_CAG_MODEL. */
+  model?: string
   archiveBaseUrl?: string
   answerInstruction?: string
   /** 檢索器，預設 'archive'；'vectorize' 需一併提供 vectorize binding。 */
@@ -54,6 +57,10 @@ export type CagOptions = {
   skipSourceCache?: boolean
   /** 'en' 時明確要求以英文作答（/en 介面經 ?lang=en 帶入）。 */
   answerLanguage?: 'en'
+  /** Optional stream citation renderer; /au uses a stricter sanitizer. */
+  citationTransform?: (sources: CagSource[]) => TransformStream<string, string>
+  /** D1 sayit-database binding for content LIKE fallback. */
+  sayitDb?: D1Database
 }
 
 export { CAG_MODEL_GEMMA } from './cagEval'
@@ -124,12 +131,15 @@ export type NormalizedCagOptions = {
   topK: number
   citableTopK: number
   maxCompletionTokens: number
+  model: string
   archiveBaseUrl: string
   answerInstruction?: string
   retriever: CagRetriever
   vectorize?: VectorizeBinding
   vectorizeMinScore: number
   answerLanguage?: 'en'
+  citationTransform?: (sources: CagSource[]) => TransformStream<string, string>
+  sayitDb?: D1Database
 }
 
 function clampInteger(value: number, min: number, max: number): number {
@@ -150,12 +160,15 @@ export function normalizeCagOptions(options?: CagOptions): NormalizedCagOptions 
       1,
       4_096,
     ),
+    model: options?.model ?? DEFAULT_CAG_MODEL,
     archiveBaseUrl: normalizeArchiveBaseUrl(options?.archiveBaseUrl),
     answerInstruction: options?.answerInstruction,
     retriever: options?.retriever ?? 'archive',
     vectorize: options?.vectorize,
     vectorizeMinScore: options?.vectorizeMinScore ?? DEFAULT_VECTORIZE_MIN_COSINE_SCORE,
     answerLanguage: options?.answerLanguage,
+    citationTransform: options?.citationTransform,
+    sayitDb: options?.sayitDb,
   }
 }
 
@@ -502,6 +515,32 @@ async function hydrateArchiveSection(
   return { content, href, label, sectionId }
 }
 
+/**
+ * When archive.tw search returns many hits from the same talk filename
+ * (e.g. searching "萌典" floods results with sections from "萌典松前記者會"),
+ * cap the number of hits per filename so sections from other talks surface.
+ */
+function deduplicateByFilename(
+  hits: ArchiveSearchResult[],
+  maxPerFilename: number,
+): ArchiveSearchResult[] {
+  const counts = new Map<string, number>()
+  const result: ArchiveSearchResult[] = []
+  for (const hit of hits) {
+    const url = hit.url ?? ''
+    const filename = url.split('#')[0]!.replace(/^\//, '')
+    if (!filename) {
+      result.push(hit)
+      continue
+    }
+    const count = counts.get(filename) ?? 0
+    if (count >= maxPerFilename) continue
+    counts.set(filename, count + 1)
+    result.push(hit)
+  }
+  return result
+}
+
 export async function retrieveCagSources(
   question: string,
   options?: { topK?: number; archiveBaseUrl?: string },
@@ -509,7 +548,7 @@ export async function retrieveCagSources(
   const topK = clampInteger(options?.topK ?? DEFAULT_TOP_K, 1, MAX_TOP_K)
   const baseUrl = normalizeArchiveBaseUrl(options?.archiveBaseUrl)
   const { primary, fallback } = buildCagRetrievalQueries(question)
-  const perQueryLimit = Math.max(topK * 2, 8)
+  const perQueryLimit = Math.max(topK * 2, 100)
   const seen = new Set<string>()
 
   let hits = mergeArchiveHits(
@@ -531,6 +570,11 @@ export async function retrieveCagSources(
     )
   }
 
+  // Deduplicate filename-flooded results: when many hits come from the same
+  // talk filename (e.g. "萌典松前記者會" flooding a search for "萌典"),
+  // cap at 2 per filename so sections from other talks can surface.
+  hits = deduplicateByFilename(hits, 2)
+
   const hydrated = await Promise.all(
     hits.slice(0, topK * 2).map((hit) => hydrateArchiveSection(baseUrl, hit)),
   )
@@ -538,14 +582,89 @@ export async function retrieveCagSources(
 }
 
 /**
- * 依設定挑選檢索器。retriever='vectorize' 時先查 Vectorize；
- * 無 binding 時優雅回退 archive.tw 檢索；若 Vectorize 已綁定但低於相關度門檻，
- * 則保留空集合，讓上層能誠實回覆「您的問題超出了資料庫的範圍，逐字稿網站連結如下：https://archive.tw'」。
- * 例外：拉丁文字（無漢字）問題查無向量時改走 archive.tw 全文檢索——
- * Vectorize 索引只涵蓋「唐鳳」掛名的繁中段落，對英文問題回空反映的是
- * 索引涵蓋率而非語料範圍，誠實回空反而誤導。
+ * D1 內容搜尋回退：當 archive.tw 搜尋也查不到有意義的結果時，
+ * 用 CJK bigram 倒排索引 `askit_bigram_index` 找到真正提及該詞的段落 ID，
+ * 再透過 archive.tw `/api/section/<id>` 取全文。speaker 篩已內建於索引
+ * （建表只收 `name LIKE '唐鳳%'` 的段落）。
+ *
+ * 取代舊的 `section_content LIKE '%term%'` 全表掃描（~168K rows，D1 按
+ * examined rows 計費，且長查詢會拋 `LIKE or GLOB pattern too complex`）：
+ * runtime 把查詢詞拆成 2-char keys 查 `WHERE bigram IN (...)`，受建表
+ * DF 上限約束；hydration 後再以子字串驗證去除散落 bigram 假陽性。
  */
-async function resolveCagSources(
+async function searchSectionsByContent(
+  sayitDb: D1Database,
+  archiveBaseUrl: string | undefined,
+  query: string,
+  topK: number,
+): Promise<CagSource[]> {
+  const baseUrl = normalizeArchiveBaseUrl(archiveBaseUrl)
+  // 查詢詞 → bigram keys（漢字 2-gram / 拉丁全詞小寫），查 askit_bigram_index
+  // `WHERE bigram IN (...)`。有界（受建表 BIGRAM_DF_MAX 約束），取代全表 LIKE。
+  const keys = [...extractIndexKeys(stripQuestionDirectives(query))].slice(0, 64)
+  if (keys.length === 0) return []
+
+  // 子字串驗證用「全詞」變體（不是 buildCagQueryVariants 拆出的 2-gram——
+  // 那些與索引 keys 同源，命中段落必含其一，.some() 形同虛設）。
+  // 用 cleaned / withoutQuestionWords 全詞，與 needsD1Rescue 觸發條件
+  // （s.content.includes(cleanedPhrase)）、舊 LIKE '%phrase%' 語意一致；
+  // 萌典 2-char 查詢 cleaned===萌典，全文含「萌典」才納入。
+  const cleanedPhrase = stripQuestionDirectives(query)
+    .replace(/[?？!！。.,，;；:：()[\]{}「」『』"""'']/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const withoutQuestionWordsPhrase = cleanedPhrase
+    .replace(/(如何|怎麼|怎么|為何|爲何|什麼|什么|請問|請|回答|說明|解釋)/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^[^\p{L}\p{N}]+/u, '')
+    .replace(/[^\p{L}\p{N}]+$/u, '')
+  const verifyVariants = [cleanedPhrase, withoutQuestionWordsPhrase]
+    .filter((v, i, arr) => v.length >= 2 && arr.indexOf(v) === i)
+
+  const placeholders = keys.map(() => '?').join(',')
+  const stmt = sayitDb
+    .prepare(
+      `SELECT section_id, COUNT(*) AS hits FROM askit_bigram_index
+       WHERE bigram IN (${placeholders})
+       GROUP BY section_id ORDER BY hits DESC LIMIT ?`,
+    )
+    .bind(...keys, topK * 3)
+
+  try {
+    const result = await stmt.all<{ section_id: number; hits: number }>()
+    if (!result.success || result.results.length === 0) return []
+
+    // 命中越多 bigram 的段落在前；只 hydrate 前 topK*2 筆（上限保險），再以子字串驗證。
+    const sectionIds = result.results
+      .map((row) => row.section_id)
+      .slice(0, Math.min(result.results.length, topK * 2))
+    const sources = await Promise.all(
+      sectionIds.map(async (sectionId): Promise<CagSource | null> => {
+        const url = new URL(`/api/section/${sectionId}`, baseUrl)
+        const section = await fetchArchiveJson<ArchiveSectionResponse>(url)
+        if (!section) return null
+        const content = buildHydratedSectionContent(section, '')
+        if (content.trim() === '') return null
+        const displayName = section.display_name?.trim() || section.filename || `section ${sectionId}`
+        const speaker = section.name?.trim() || '唐鳳'
+        const filename = section.filename ?? ''
+        const href = `https://archive.tw/${encodeURIComponent(filename)}#s${sectionId}`
+        return { content, href, label: `${displayName} — ${speaker}`, sectionId }
+      }),
+    )
+    // 子字串驗證：取回全文須真正含某查詢變體才納入；verifyVariants 為空時（理論上
+    // 不會發生——keys>0 必伴隨 ≥2 字元變體）保留全部，避免誤丟。
+    const verified = sources
+      .filter((source): source is CagSource => source !== null)
+      .filter((s) => verifyVariants.length === 0 || verifyVariants.some((v) => s.content.includes(v)))
+    return verified.slice(0, topK)
+  } catch (e) {
+    console.error('D1 內容搜尋回退失敗，視為查無結果:', e)
+    return []
+  }
+}
+export async function resolveCagSources(
   ai: WorkersAiBinding,
   question: string,
   options: {
@@ -556,6 +675,7 @@ async function resolveCagSources(
     vectorizeMinScore?: number
     cagCache?: KVNamespace
     skipSourceCache?: boolean
+    sayitDb?: D1Database
   },
 ): Promise<CagSource[]> {
   const retriever = options.retriever ?? 'archive'
@@ -587,19 +707,44 @@ async function resolveCagSources(
     )
     if (thin.length > 0) {
       sources = await hydrateCagSourcesFromArchive(baseUrl, thin)
-    } else if (!HAN_PATTERN.test(question)) {
+    } else {
       sources = await retrieveCagSources(question, {
         topK: options.topK,
         archiveBaseUrl: options.archiveBaseUrl,
       })
-    } else {
-      sources = []
     }
   } else {
     sources = await retrieveCagSources(question, {
       topK: options.topK,
       archiveBaseUrl: options.archiveBaseUrl,
     })
+  }
+
+  // D1 bigram 索引補強：只在 Vectorize/archive 回了結果但內容裡找不到全詞時才跑，
+  // 而非每個請求都跑（省 CF 預算）。典型 rescued case：「萌典」的 Vectorize hits
+  // 是「萌典松前記者會」title-match 段落，section_content 不含「萌典」；
+  // 走 askit_bigram_index `WHERE bigram IN (...)` 有界查找（取代舊的全表 LIKE）。
+  const { sayitDb } = options
+  const cleanedPhrase = stripQuestionDirectives(question)
+    .replace(/[?？!！。.,，;；:：()[\]{}「」『』"""'']/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const needsD1Rescue = Boolean(sayitDb)
+    && cleanedPhrase.length >= 2
+    && (sources.length === 0
+      || !sources.some((s) => s.content.includes(cleanedPhrase)))
+  if (needsD1Rescue && sayitDb) {
+    const d1Sources = await searchSectionsByContent(
+      sayitDb,
+      options.archiveBaseUrl,
+      question,
+      options.topK,
+    )
+    if (d1Sources.length > 0) {
+      const seenIds = new Set(d1Sources.map((s) => s.sectionId))
+      const existing = sources.filter((s) => !seenIds.has(s.sectionId))
+      sources = [...d1Sources, ...existing].slice(0, options.topK)
+    }
   }
 
   if (cacheKey && sources.length > 0) {
@@ -614,17 +759,19 @@ export function getCagStatus(options?: {
   vectorizeBound?: boolean
   sourceCacheBound?: boolean
   vectorizeMinScore?: number
+  model?: string
 }): CagStatus {
+  const model = options?.model ?? DEFAULT_CAG_MODEL
   return {
     retriever: options?.retriever ?? 'archive',
     vectorizeBound: options?.vectorizeBound ?? false,
     sourceCacheBound: options?.sourceCacheBound ?? false,
     archiveBaseUrl: normalizeArchiveBaseUrl(options?.archiveBaseUrl),
-    model: DEFAULT_CAG_MODEL,
+    model,
     vectorizeMinScore: options?.vectorizeMinScore ?? DEFAULT_VECTORIZE_MIN_COSINE_SCORE,
     maxTopK: MAX_TOP_K,
     maxContextSectionChars: MAX_CONTEXT_SECTION_CHARS,
-    estimatedCostPerRequestUsd: estimateCagRequestCostUsd(DEFAULT_CAG_MODEL),
+    estimatedCostPerRequestUsd: estimateCagRequestCostUsd(model),
     typicalTokenProfile: {
       inputTokens: CAG_TYPICAL_INPUT_TOKENS,
       outputTokens: CAG_TYPICAL_OUTPUT_TOKENS,
@@ -872,12 +1019,13 @@ function buildCagAiRunInput(
 
 async function runCagCompletion(
   ai: WorkersAiBinding,
+  model: string,
   messages: ChatMessage[],
   maxCompletionTokens: number | undefined,
   stream: boolean,
 ): Promise<unknown> {
   return ai.run(
-    DEFAULT_CAG_MODEL,
+    model,
     buildCagAiRunInput(messages, maxCompletionTokens, stream),
   )
 }
@@ -887,10 +1035,12 @@ export async function completeCagAnswer(
   messages: ChatMessage[],
   options?: {
     maxCompletionTokens?: number
+    model?: string
   },
 ): Promise<string> {
   const result = await runCagCompletion(
     ai,
+    options?.model ?? DEFAULT_CAG_MODEL,
     messages,
     options?.maxCompletionTokens,
     false,
@@ -925,6 +1075,7 @@ export async function generateCagAnswer(
     vectorizeMinScore: normalized.vectorizeMinScore,
     cagCache: options?.cagCache,
     skipSourceCache: options?.skipSourceCache,
+    sayitDb: normalized.sayitDb,
   })
   if (sources.length === 0) return null
 
@@ -938,6 +1089,7 @@ export async function generateCagAnswer(
   )
   const result = await runCagCompletion(
     ai,
+    normalized.model,
     messages,
     normalized.maxCompletionTokens,
     false,
@@ -961,6 +1113,7 @@ export async function streamCagAnswer(
     vectorizeMinScore: normalized.vectorizeMinScore,
     cagCache: options?.cagCache,
     skipSourceCache: options?.skipSourceCache,
+    sayitDb: normalized.sayitDb,
   })
   if (sources.length === 0) {
     return new Response(NOT_FOUND_REPLY_HTML, {
@@ -979,14 +1132,18 @@ export async function streamCagAnswer(
   )
   const stream = await runCagCompletion(
     ai,
+    normalized.model,
     messages,
     normalized.maxCompletionTokens,
     true,
   )
 
+  const citationTransform = normalized.citationTransform
+    ? normalized.citationTransform(cited)
+    : markdownCitationFootnotes(cited.map(footnoteForSource))
   const body = aiResultToStream(stream)
     .pipeThrough(workersAiEventStreamToText())
-    .pipeThrough(markdownCitationFootnotes(cited.map(footnoteForSource)))
+    .pipeThrough(citationTransform)
     .pipeThrough(new TextEncoderStream())
 
   return new Response(body, {

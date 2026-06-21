@@ -202,7 +202,7 @@
 
   function readQuestionsAsked() {
     try {
-      const n = Number(localStorage.getItem(QUESTIONS_ASKED_KEY))
+      const n = Number(sessionStorage.getItem(QUESTIONS_ASKED_KEY))
       return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
     } catch {
       return 0
@@ -211,7 +211,7 @@
 
   function persistQuestionsAsked(count) {
     try {
-      localStorage.setItem(QUESTIONS_ASKED_KEY, String(count))
+      sessionStorage.setItem(QUESTIONS_ASKED_KEY, String(count))
     } catch {
       // ignore
     }

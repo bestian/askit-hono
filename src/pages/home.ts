@@ -106,12 +106,55 @@ export function renderHomePage(lang: PageLang = 'zh-Hant'): string {
       text-align: center;
     }
     .hero { display: grid; place-items: center; }
+    .logo-wrap { display: grid; place-items: center; margin-top: 24px; }
     img.logo {
       width: clamp(112px, 28vw, 176px);
       height: auto;
       border-radius: 24px;
-      margin-bottom: 20px;
+      cursor: not-allowed;
+      transition: transform 0.2s ease;
     }
+    img.logo.interactive { cursor: pointer; }
+    img.logo.interactive:hover { transform: scale(1.03); }
+    img.logo.interactive:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+    img.logo.qr { background: #ffffff; padding: 8px; }
+    /* 點擊提示：logo 下方一個彈跳的箭頭，再下面用 cursive 字體寫 Click Me */
+    .click-hint {
+      display: grid;
+      place-items: center;
+      gap: 2px;
+      margin: 8px 0 20px;
+    }
+    .click-hint .arrow {
+      font-size: 1.7rem;
+      line-height: 1;
+      color: var(--accent);
+      animation: bounce 1.2s ease-in-out infinite;
+    }
+    @keyframes bounce {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-7px); }
+    }
+    .click-hint .click-me {
+      font-family: "Brush Script MT", "Segoe Script", "Snell Roundhand", cursive;
+      font-size: 1.6rem;
+      color: var(--accent);
+    }
+    /* 顯示 QR code 時，提供可點擊的 LINE 加好友連結 */
+    .line-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 10px 0 20px;
+      padding: 8px 18px;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #ffffff;
+      background: #06c755;
+      border-radius: 999px;
+      text-decoration: none;
+    }
+    .line-link:hover { filter: brightness(0.95); }
     h1 {
       margin: 0;
       font-size: clamp(2.5rem, 11vw, 5.5rem);

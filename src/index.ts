@@ -36,6 +36,7 @@ import {
   buildAudreySkillAnswerInstruction,
   resolveAudreySkillModel,
 } from './utils/audreySkill'
+import { resolveAudreyGatewayResponses } from './utils/audreyGatewayBindings'
 import { isAuthorizedFromHeader } from './utils/auth'
 import { isBlacklistExemptIp } from './utils/trustedRanges'
 import {
@@ -73,8 +74,12 @@ type Bindings = {
   // 未設定時預設 'vectorize'；無 VECTORIZE binding 時自動回退 archive。
   CAG_RETRIEVER?: string
   CAG_VECTORIZE_MIN_SCORE?: string
-  /** Model used by /au (Gemma by default; @cf/zai-org/glm-5.2 allowed). */
+  /** Model used by /au (Gemma default; glm-5.2 or fugu via AI Gateway). */
   AUDREY_MODEL?: string
+  SAKANA_API_KEY?: string
+  CF_AIG_TOKEN?: string
+  CF_AI_GATEWAY_ACCOUNT_ID?: string
+  CF_AI_GATEWAY_ID?: string
   GLOBAL_GENERATION_LIMIT_PER_MINUTE?: string
   GLOBAL_GENERATION_LIMIT_PER_DAY?: string
   ASK_INDEX: R2Bucket
@@ -1236,6 +1241,7 @@ app.get('/au/:question', async (c) => {
     answerLanguage,
     citationTransform: audreySkillCitationFootnotes,
     sayitDb: c.env.SAYIT_DB,
+    gatewayResponses: resolveAudreyGatewayResponses(c.env),
   })
   const cacheKey = await buildCacheKey('au', question, {
     archiveBaseUrl: cagOptions.archiveBaseUrl,
@@ -1362,6 +1368,7 @@ app.post('/au', async (c) => {
     answerLanguage,
     citationTransform: audreySkillCitationFootnotes,
     sayitDb: c.env.SAYIT_DB,
+    gatewayResponses: resolveAudreyGatewayResponses(c.env),
   })
   const cacheKey = await buildCacheKey('au', question, {
     archiveBaseUrl: cagOptions.archiveBaseUrl,

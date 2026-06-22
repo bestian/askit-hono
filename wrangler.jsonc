@@ -45,9 +45,9 @@
     // 視窗設 "0" = 不限視窗、全期間累計。
     "ABUSE_BLACKLIST_THRESHOLD": "3",
     "ABUSE_COUNT_WINDOW_HOURS": "24",
-    // /au 預設模型：GLM-5.2（風格更貼近 Audrey 的對話式、重新框架口吻）。
-    // 程式碼 fallback 仍為 Gemma-4；若此值未設或被移除，會自動回退 Gemma。
-    "AUDREY_MODEL": "@cf/zai-org/glm-5.2"
+    // /au 預設模型：Sakana Fugu（custom-sakana AI Gateway）。
+    // wrangler secret put SAKANA_API_KEY；可選 CF_AIG_TOKEN。
+    "AUDREY_MODEL": "fugu"
   },
 
   // CPU 上限：避免單次請求異常消耗 Worker CPU；AI/網路等待不計入 CPU time。

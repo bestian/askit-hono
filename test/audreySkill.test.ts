@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   AUDREY_SKILL_DEFAULT_MODEL,
+  AUDREY_SKILL_FUGU_MODEL,
   AUDREY_SKILL_GLM_52_MODEL,
   audreySkillCitationFootnotes,
   buildAudreySkillAnswerInstruction,
@@ -63,11 +64,12 @@ test('Audrey skill instruction has identity boundary, style contract, and citati
   assert.match(en, /only cite the numbered runtime sources/)
 })
 
-test('resolveAudreySkillModel only allows the two supported Workers AI models', () => {
+test('resolveAudreySkillModel only allows supported /au models including fugu', () => {
   assert.equal(resolveAudreySkillModel(undefined), AUDREY_SKILL_DEFAULT_MODEL)
   assert.equal(resolveAudreySkillModel(''), AUDREY_SKILL_DEFAULT_MODEL)
   assert.equal(resolveAudreySkillModel(AUDREY_SKILL_DEFAULT_MODEL), AUDREY_SKILL_DEFAULT_MODEL)
   assert.equal(resolveAudreySkillModel(AUDREY_SKILL_GLM_52_MODEL), AUDREY_SKILL_GLM_52_MODEL)
+  assert.equal(resolveAudreySkillModel(AUDREY_SKILL_FUGU_MODEL), AUDREY_SKILL_FUGU_MODEL)
   assert.equal(resolveAudreySkillModel('@cf/attacker/expensive-model'), AUDREY_SKILL_DEFAULT_MODEL)
 })
 

@@ -22,6 +22,8 @@
  *   TABLE            目標表名（預設 askit_bigram_index，必須 askit_ 前綴）
  *   BIGRAM_DF_MAX    rare-key 文件頻率上限（預設 200，env 可調）
  *   INSERT_CHUNK     每條 INSERT 的列數（預設 500）
+ *   IMPORT_FILE_MAX_BYTES  每個遠端匯入分檔的位元組上限（預設 5MB；避免單一匯入 session 逾時）
+ *   IMPORT_RETRIES   單一分檔匯入失敗時的重試次數（預設 4，指數退避）
  *   LOCAL=1          對 D1 下 --local
  *   DRY_RUN=1        不建表 / 不寫 D1，只報告 sizing
  *   WRANGLER_USE_API_TOKEN=1  wrangler 子行程強制使用 CLOUDFLARE_API_TOKEN（CI 自動啟用）
@@ -33,6 +35,7 @@ import { execSync } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { extractIndexKeys } from '../src/utils/bigramKeys'
+import { splitSqlIntoImportFiles } from './build-bigram-index-split'
 import { buildWranglerEnv } from './wranglerEnv'
 
 const WRANGLER_ENV = buildWranglerEnv()
@@ -43,6 +46,15 @@ const BIGRAM_DF_MAX = Number(process.env.BIGRAM_DF_MAX ?? '200')
 const INSERT_CHUNK = Math.max(1, Number(process.env.INSERT_CHUNK ?? '500'))
 const D1_FLAG = process.env.LOCAL === '1' ? '--local' : '--remote'
 const DRY_RUN = process.env.DRY_RUN === '1'
+// 遠端 D1 匯入是「單一伺服器端 session」：單檔過大（本表 ~33MB / ~2M rows）會逾時，
+// wrangler 隨後輪詢時伺服器已無進行中的匯入，回報「Not currently importing anything.」。
+// 對策：把 INSERT 切成多個小檔（各 <= IMPORT_FILE_MAX_BYTES）依序匯入，每個 session 都短而可靠。
+const IMPORT_FILE_MAX_BYTES = Math.max(
+  64 * 1024,
+  Number(process.env.IMPORT_FILE_MAX_BYTES ?? String(5 * 1024 * 1024)),
+)
+// 對暫時性匯入失敗的重試次數（指數退避）。失敗的匯入會被 D1 回滾，重試是安全的。
+const IMPORT_RETRIES = Math.max(0, Number(process.env.IMPORT_RETRIES ?? '4'))
 
 // 護欄常數（與 vectorize-sync 的 ensureProgressTable 同形）
 const REQUIRED_COLUMNS = ['bigram', 'section_id']
@@ -117,6 +129,32 @@ function d1ExecFile(filePath: string): void {
     `npx wrangler d1 execute ${shellQuote(D1_DATABASE)} ${D1_FLAG} ` +
     `--file ${shellQuote(filePath)} --yes`
   execSync(cmd, { stdio: 'inherit', env: WRANGLER_ENV })
+}
+
+// 同步等待（本腳本為一次性批次工具，可阻塞主執行緒）。跨平台、不需 sleep 子行程。
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+// 匯入單一分檔，失敗時以指數退避重試。失敗的遠端匯入會被 D1 回滾
+//（wrangler：「if the execution fails to complete, your DB will return to its original state」），
+// 加上 INSERT OR IGNORE，重試同一分檔是冪等且安全的。
+function d1ExecFileWithRetry(filePath: string): void {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      d1ExecFile(filePath)
+      return
+    } catch (err) {
+      if (attempt >= IMPORT_RETRIES) throw err
+      const waitMs = 2000 * 2 ** attempt
+      const reason = (err instanceof Error ? err.message : String(err)).split('\n')[0]
+      console.warn(
+        `[build-bigram-index] 匯入 ${path.basename(filePath)} 失敗（第 ${attempt + 1}/${IMPORT_RETRIES} 次重試前），` +
+          `${waitMs}ms 後重試：${reason}`,
+      )
+      sleepSync(waitMs)
+    }
+  }
 }
 
 // ── 安全護欄：絕不蓋過任何已存在的 table ─────────────────────────────────────
@@ -246,24 +284,40 @@ async function main(): Promise<void> {
     console.log('[build-bigram-index] No rare keys to index; 仍會 DELETE 清空既有表。')
   }
 
-  // 重建 SQL：整檔 DELETE + 分批 multi-row INSERT，冪等全量替換我們自己的表。
-  const sqlPath = path.join(outDir, 'bigram-index.sql')
-  let file = `DELETE FROM ${TABLE};\n`
-  let statements = 1
+  // 重建 SQL：整表 DELETE + 分批 multi-row INSERT，冪等全量替換我們自己的表。
+  // INSERT OR IGNORE：碰上 (bigram, section_id) 主鍵衝突就略過，讓「重試同一分檔」安全冪等。
+  const header = `DELETE FROM ${TABLE};\n`
+  const inserts: string[] = []
   for (let i = 0; i < postings.length; i += INSERT_CHUNK) {
     const chunk = postings.slice(i, i + INSERT_CHUNK)
     const values = chunk
       .map(([k, id]) => `(${sqlString(k)},${id})`)
       .join(',')
-    file += `INSERT INTO ${TABLE} (bigram, section_id) VALUES ${values};\n`
-    statements++
+    inserts.push(`INSERT OR IGNORE INTO ${TABLE} (bigram, section_id) VALUES ${values};\n`)
   }
-  await writeFile(sqlPath, file)
+
+  // 關鍵修正：不再把整批塞進「單一」遠端匯入（會逾時 → Not currently importing anything），
+  // 而是把 DELETE + INSERT 切成多個小檔（各 <= IMPORT_FILE_MAX_BYTES）依序匯入。
+  // DELETE 放在第一個分檔開頭：任何一檔失敗整體即失敗、CI 報錯，下次重跑會先 DELETE 清空，仍冪等。
+  const fileBodies = splitSqlIntoImportFiles(header, inserts, IMPORT_FILE_MAX_BYTES)
+
+  const totalParts = fileBodies.length
   console.log(
-    `[build-bigram-index] Wrote ${sqlPath} (${statements} statements, ${postings.length} rows)`,
+    `[build-bigram-index] ${postings.length} rows → ${inserts.length} INSERT(s) → ` +
+      `${totalParts} import 分檔（每檔 <= ${(IMPORT_FILE_MAX_BYTES / 1024 / 1024).toFixed(1)} MB）`,
   )
-  d1ExecFile(sqlPath)
-  console.log(`[build-bigram-index] Applied ${sqlPath} to ${D1_DATABASE} (${D1_FLAG}).`)
+  for (let i = 0; i < totalParts; i++) {
+    const partPath = path.join(outDir, `bigram-index.part${String(i + 1).padStart(3, '0')}.sql`)
+    await writeFile(partPath, fileBodies[i])
+    const mb = (Buffer.byteLength(fileBodies[i], 'utf-8') / 1024 / 1024).toFixed(2)
+    console.log(
+      `[build-bigram-index] Importing ${path.basename(partPath)} (${i + 1}/${totalParts}, ${mb} MB)...`,
+    )
+    d1ExecFileWithRetry(partPath)
+  }
+  console.log(
+    `[build-bigram-index] Applied ${totalParts} 分檔到 ${D1_DATABASE} (${D1_FLAG}).`,
+  )
   console.log('[build-bigram-index] Done.')
 }
 

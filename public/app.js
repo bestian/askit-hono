@@ -2,6 +2,9 @@
   const { createApp, ref, computed, h, watch } = Vue
 
   const COOLDOWN_SECONDS = 3
+  const LINE_FRIEND_URL = 'https://lin.ee/rCehs3j'
+  const CLICK_HINT_MIN_QUESTIONS = 3
+  const QUESTIONS_ASKED_KEY = 'askit-questions-asked'
   const DOC_LANG = (typeof document !== 'undefined' && document.documentElement)
     ? document.documentElement.lang
     : ''
@@ -17,6 +20,11 @@
       privacyLabel: '隱私權政策',
       termsHref: '/terms',
       termsLabel: '使用條款',
+      logoQrAlt: '加入鳳問 LINE 好友的 QR code',
+      logoToggleAlt: '鳳問 logo（點我顯示 LINE 加好友 QR code）',
+      lineFriendLabel: '加入 LINE 好友 →',
+      clickHintArrow: '↑',
+      clickHintText: '按我加 LINE 好友',
       placeholderReady: '輸入你的問題，例如：什麼是仁工智慧？',
       placeholderConsent: '請先同意隱私權政策和使用條款，才能發問',
       capacityFull: '目前全域用量已滿，請稍候或隔天再試。',
@@ -49,6 +57,11 @@
       privacyLabel: 'Privacy Policy',
       termsHref: '/en/terms',
       termsLabel: 'Terms of Use',
+      logoQrAlt: 'QR code to add Ask Audrey Anything on LINE',
+      logoToggleAlt: 'Ask Audrey Anything logo (click to show the LINE friend QR code)',
+      lineFriendLabel: 'Add LINE friend →',
+      clickHintArrow: '↑',
+      clickHintText: 'Click me to add LINE friend',
       placeholderReady: 'Type your question, e.g. “What is Plurality?”',
       placeholderConsent: 'Please agree to the Privacy Policy and Terms of Use first',
       capacityFull: 'The service is at full capacity right now. Please wait a moment or try again tomorrow.',
@@ -187,6 +200,23 @@
     return message ? sanitizeHtml(message) : ''
   }
 
+  function readQuestionsAsked() {
+    try {
+      const n = Number(sessionStorage.getItem(QUESTIONS_ASKED_KEY))
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+    } catch {
+      return 0
+    }
+  }
+
+  function persistQuestionsAsked(count) {
+    try {
+      sessionStorage.setItem(QUESTIONS_ASKED_KEY, String(count))
+    } catch {
+      // ignore
+    }
+  }
+
   async function copyMarkdownText(text, navigatorObject, documentObject) {
     if (!text) return false
 
@@ -242,6 +272,8 @@
       const error = ref('')
       const consentAccepted = ref(false)
       const cooldown = ref(0)
+      const showQr = ref(false)
+      const questionsAsked = ref(readQuestionsAsked())
       const capacityFull = ref(false)
       const copyState = ref('idle')
       let cooldownTimer = null
@@ -257,6 +289,19 @@
         } else if (error.value === T.tooLong) {
           error.value = ''
         }
+      })
+
+      const logoInteractive = computed(() =>
+        consentAccepted.value && questionsAsked.value >= CLICK_HINT_MIN_QUESTIONS,
+      )
+
+      function toggleQr() {
+        if (!logoInteractive.value) return
+        showQr.value = !showQr.value
+      }
+
+      watch(logoInteractive, (interactive) => {
+        if (!interactive) showQr.value = false
       })
 
       // 提問前先打自己的 /capacity（issue #43）：額度滿時擋下發問並提示。
@@ -299,11 +344,12 @@
       const canAskSample = computed(() =>
         consentAccepted.value && !loading.value && cooldown.value <= 0 && !capacityFull.value,
       )
-
       async function run(q) {
         const query = q.trim()
         if (!query || !consentAccepted.value || loading.value || cooldown.value > 0 || capacityFull.value) return
         question.value = query
+        questionsAsked.value += 1
+        persistQuestionsAsked(questionsAsked.value)
         loading.value = true
         answered.value = true
         error.value = ''
@@ -382,9 +428,42 @@
 
       return () => h('div', [
         h('div', { class: 'hero' }, [
-          h('img', { class: 'logo', src: '/logo.png', alt: T.logoAlt }),
           h('h1', T.heading),
           h('p', { class: 'tagline' }, T.tagline),
+          h('div', { class: 'logo-wrap' }, [
+            h('img', {
+              class: ['logo', { qr: showQr.value, interactive: logoInteractive.value }],
+              src: showQr.value ? '/Askit_M_gainfriends_2dbarcodes_GW.png' : '/logo.png',
+              alt: showQr.value
+                ? T.logoQrAlt
+                : (logoInteractive.value ? T.logoToggleAlt : T.logoAlt),
+              ...(logoInteractive.value ? {
+                role: 'button',
+                tabindex: '0',
+                'aria-pressed': String(showQr.value),
+                onClick: toggleQr,
+                onKeydown: (event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    toggleQr()
+                  }
+                },
+              } : {}),
+            }),
+            showQr.value
+              ? h('a', {
+                class: 'line-link',
+                href: LINE_FRIEND_URL,
+                target: '_blank',
+                rel: 'noopener noreferrer',
+              }, T.lineFriendLabel)
+              : logoInteractive.value
+                ? h('div', { class: 'click-hint' }, [
+                  h('div', { class: 'arrow' }, T.clickHintArrow),
+                  h('div', { class: 'click-me' }, T.clickHintText),
+                ])
+                : null,
+          ]),
         ]),
         h('label', { class: 'consent' }, [
           h('input', {

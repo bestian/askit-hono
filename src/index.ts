@@ -1174,6 +1174,8 @@ app.get('/au/status', (c) => {
   })
 })
 
+app.options('/au/:question', askCorsPreflight)
+
 app.get('/au/:question', async (c) => {
   const lang = resolveWebLang(c.req.query('lang'))
   const messages = WEB_MESSAGES[lang]
@@ -1182,17 +1184,17 @@ app.get('/au/:question', async (c) => {
   const trusted = await isTrustedCaller(c)
   const abuse = trusted ? null : await checkHttpBlacklist(c)
   if (abuse?.blocked) {
-    return c.text(messages.blacklisted, 403)
+    return applyAskCors(c, c.text(messages.blacklisted, 403))
   }
   if (!trusted && await isIpRateLimited(c)) {
     reportAbuse(c, { key: abuse?.key ?? null, kind: 'rate_limit', path: 'au', question, ip: abuse?.ip })
-    return c.text(messages.rateLimited, 429, {
+    return applyAskCors(c, c.text(messages.rateLimited, 429, {
       'Retry-After': String(RATE_LIMIT_RETRY_AFTER_SECONDS),
-    })
+    }))
   }
   if (isQuestionTooLong(question)) {
     reportAbuse(c, { key: abuse?.key ?? null, kind: 'question_too_long', path: 'au', question, ip: abuse?.ip })
-    return c.text(messages.tooLong, 400)
+    return applyAskCors(c, c.text(messages.tooLong, 400))
   }
 
   const bypassCache = shouldBypassCaches(c.req.query('refresh'))
@@ -1241,26 +1243,26 @@ app.get('/au/:question', async (c) => {
     const cached = await getCachedResponse(c.env.ASK_CACHE, cacheKey)
     if (cached) {
       c.executionCtx.waitUntil(refreshCachedResponse(c.env.ASK_CACHE, cacheKey, cached))
-      return respondFromCache(cached.body, cached.contentType)
+      return applyAskCors(c, respondFromCache(cached.body, cached.contentType))
     }
   }
 
   const budget = trusted ? { allowed: true } : await checkGlobalGenerationBudget(c.env)
   if (!budget.allowed) {
-    return c.text(messages.budget, 429, {
+    return applyAskCors(c, c.text(messages.budget, 429, {
       'Retry-After': retryAfterForBudget(budget),
-    })
+    }))
   }
 
   const response = await streamCagAnswer(c.env.AI, question, cagOptions)
   if (response.status === 404 && lang === 'en') {
     await response.body?.cancel()
-    return new Response(NOT_FOUND_REPLY_HTML_EN, {
+    return applyAskCors(c, new Response(NOT_FOUND_REPLY_HTML_EN, {
       status: 404,
       headers: response.headers,
-    })
+    }))
   }
-  return cacheCagResponse(c, bypassCache ? null : cacheKey, response)
+  return applyAskCors(c, cacheCagResponse(c, bypassCache ? null : cacheKey, response))
 })
 
 app.post('/au', async (c) => {

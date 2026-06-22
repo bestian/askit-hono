@@ -163,14 +163,15 @@ const WEBHOOK_CAG_CITE_TOP_K = 4
 const WEBHOOK_CAG_MAX_COMPLETION_TOKENS = 240
 // LINE 載入動畫秒數需為 5～60 的 5 倍數，且僅 1:1 聊天有效。
 const WEBHOOK_LOADING_SECONDS = 30
-// 要求模型在 token 預算內「把話講完」，避免回答被 max_completion_tokens 從中截斷。
-const WEBHOOK_CAG_ANSWER_INSTRUCTION =
-  '請以繁體中文用 3～5 句話簡潔作答，全文控制在約 200 字內並完整收尾，' +
-  '於陳述具體事實時標註 [1]、[2] 等來源編號。'
-// 偵測到全英文提問（issue #37）時改用此英文指示，與 answerLanguage:'en' 一致，避免中英衝突。
-const WEBHOOK_CAG_ANSWER_INSTRUCTION_EN =
-  'Answer in English in 3–5 concise sentences, keep the whole reply within about 100 words ' +
-  'and finish cleanly, and cite source numbers like [1], [2] when stating concrete facts.'
+// webhook 的回答生成對齊 /au（唐鳳公開溝通風格、Audrey skill 模型、SayIt 來源救援），
+// 僅在 buildAudreySkillAnswerInstruction 之後再追加這段「長度上限」：把答案壓在 LINE 對話框
+// 適讀的長度，並要求模型在 token 預算內把話講完，避免被 max_completion_tokens 從中截斷。
+// 引註規則（標註 [1]、[2]）已由 Audrey skill 指示涵蓋，這裡不重述。
+const WEBHOOK_CAG_LENGTH_INSTRUCTION =
+  '請用 3～5 句話簡潔作答，全文控制在約 200 字內並完整收尾。'
+// 偵測到全英文提問（issue #37）時改用此英文版，與 answerLanguage:'en' 一致，避免中英衝突。
+const WEBHOOK_CAG_LENGTH_INSTRUCTION_EN =
+  'Keep the whole reply within about 100 words across 3–5 concise sentences and finish cleanly.'
 // 限流冷卻視窗：同一使用者於此毫秒數內最多 1 次（對齊首頁送出鈕冷卻）。
 const RATE_LIMIT_WINDOW_MS = 3_000
 const NOT_FOUND_REPLY_MIN_DELAY_MS = RATE_LIMIT_WINDOW_MS
@@ -982,11 +983,13 @@ async function replyWithCag(
   // 全英文提問（issue #37）：以英文生成並回覆固定訊息；含中文則沿用預設繁中。
   const answerLanguage = detectCagAnswerLanguage(question)
   const lang: WebMessageLang = answerLanguage === 'en' ? 'en' : 'zh-Hant'
+  // 回答生成對齊 /au：用 Audrey skill 模型（AUDREY_MODEL 未設時與 DEFAULT_CAG_MODEL 同為 Gemma）。
+  const model = resolveAudreySkillModel(env.AUDREY_MODEL)
   // 快取：相同問題（retriever／model／語言相同）7 天內直接用快取的答案與來源回覆，不跑檢索與 AI。
   // answerLanguage 由問題字元決定，故同一問題語言固定；en 入 key 避免沿用舊的繁中快取項。
   const cacheKey = await buildCacheKey('webhook', question, {
     retriever,
-    model: DEFAULT_CAG_MODEL,
+    model,
     answerLanguage,
   })
   const cached = await getCachedResponse(env.ASK_CACHE, cacheKey)
@@ -1021,15 +1024,20 @@ async function replyWithCag(
       topK: WEBHOOK_CAG_TOP_K,
       citableTopK: WEBHOOK_CAG_CITE_TOP_K,
       maxCompletionTokens: WEBHOOK_CAG_MAX_COMPLETION_TOKENS,
+      model,
+      // 對齊 /au 的唐鳳風格回答指示，再追加 LINE 對話框適讀的長度上限。
       answerInstruction:
-        answerLanguage === 'en'
-          ? WEBHOOK_CAG_ANSWER_INSTRUCTION_EN
-          : WEBHOOK_CAG_ANSWER_INSTRUCTION,
+        buildAudreySkillAnswerInstruction(answerLanguage) +
+        ' ' +
+        (answerLanguage === 'en'
+          ? WEBHOOK_CAG_LENGTH_INSTRUCTION_EN
+          : WEBHOOK_CAG_LENGTH_INSTRUCTION),
       answerLanguage,
       retriever,
       vectorize: env.VECTORIZE,
       vectorizeMinScore: resolveVectorizeMinScore(env.CAG_VECTORIZE_MIN_SCORE),
       cagCache: env.CAG_CACHE,
+      sayitDb: env.SAYIT_DB,
     })
   } catch (e) {
     cagFailed = true

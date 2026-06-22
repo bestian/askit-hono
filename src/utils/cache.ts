@@ -12,8 +12,10 @@
 /** 快取範圍，對應 issue 要求區分的三條路徑。 */
 export type CacheScope = 'ask' | 'cag' | 'au' | 'webhook'
 /** 快取版本：bump 讓所有舊快取 orphaned（新 key prefix，舊 key 自然 7 天過期）。
-    v2: 修正 D1 fallback table/columns + gate 到 archive fallback only。 */
-export const CACHE_VERSION = 'v8'
+    v2: 修正 D1 fallback table/columns + gate 到 archive fallback only。
+    v9: Fugu /au OpenAI Responses SSE parser — 不再重複輸出 done/item 全文。
+    v10: 忽略 reasoning_summary_text.delta，只串流 output_text。 */
+export const CACHE_VERSION = 'v10'
 
 
 /** 快取壽命：7 天。 */

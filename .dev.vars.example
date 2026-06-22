@@ -35,3 +35,7 @@ CAG_RETRIEVER=vectorize
 # shadow OAuth and break d1 / vectorize. The token is only for vectorize:sync
 # REST embedding. GitHub Actions has no OAuth and passes the token to wrangler.
 # To force wrangler to use the token locally: WRANGLER_USE_API_TOKEN=1
+# /au Fugu
+# AUDREY_MODEL=fugu
+# SAKANA_API_KEY=
+# CF_AIG_TOKEN=

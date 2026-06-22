@@ -27,7 +27,8 @@
     "abuse:unban": "tsx --tsconfig scripts/tsconfig.json scripts/abuse-unban.ts",
     "eval:cag": "tsx --tsconfig scripts/tsconfig.json scripts/eval-cag-models.ts",
     "eval:cag:depth": "tsx --tsconfig scripts/tsconfig.json scripts/eval-cag-depth.ts",
-    "skill:mine": "tsx --tsconfig scripts/tsconfig.json scripts/mine-audrey-voice.ts"
+    "skill:mine": "tsx --tsconfig scripts/tsconfig.json scripts/mine-audrey-voice.ts",
+    "cf:fugu-provider": "tsx --tsconfig scripts/tsconfig.json scripts/setup-fugu-cloudflare-provider.ts"
   },
   "dependencies": {
     "fuse.js": "^7.3.0",

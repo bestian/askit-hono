@@ -26,6 +26,7 @@ import {
   resolveCagSources,
 } from '../src/utils/cag'
 import {
+  AUDREY_SKILL_FUGU_MODEL,
   AUDREY_SKILL_GLM_52_MODEL,
 } from '../src/utils/audreySkill'
 import { NOT_FOUND_REPLY_HTML } from '../src/utils/notFoundReply'
@@ -831,6 +832,7 @@ test('public CAG endpoint always uses fixed Gemma model', async () => {
 })
 test('/au uses Audrey skill prompt, selected safe model, strict citations, and separate cache namespace', async () => {
   const aiCalls: { model: string; input: Record<string, unknown> }[] = []
+  const gatewayBodies: string[] = []
   const cacheGets: string[] = []
   const cachePuts: string[] = []
   const ai = {
@@ -842,6 +844,20 @@ test('/au uses Audrey skill prompt, selected safe model, strict citations, and s
           '仁工智慧提升公民肌力 [1]。越界 [9]。假章節 [63852758]。原始網址 https://archive.tw/2026-05-28-demo#s63852758。',
       }
     },
+  }
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    if (url.includes('custom-sakana/v1/responses')) {
+      gatewayBodies.push(String(init?.body ?? ''))
+      const sse =
+        'data: {"type":"response.output_text.delta","delta":"仁工智慧提升公民肌力 [1]。越界 [9]。假章節 [63852758]。原始網址 https://archive.tw/2026-05-28-demo#s63852758。"}\n\n'
+      return new Response(sse, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      })
+    }
+    return originalFetch(input, init)
   }
   const vectorize: VectorizeBinding = {
     query: async () => ({
@@ -864,7 +880,9 @@ test('/au uses Audrey skill prompt, selected safe model, strict citations, and s
     AI: ai,
     VECTORIZE: vectorize,
     CAG_RETRIEVER: 'vectorize',
-    AUDREY_MODEL: AUDREY_SKILL_GLM_52_MODEL,
+    AUDREY_MODEL: AUDREY_SKILL_FUGU_MODEL,
+    SAKANA_API_KEY: 'test-sakana',
+    CF_AIG_TOKEN: 'test-cfut',
     ASK_CACHE: {
       async get(key: string) {
         cacheGets.push(key)
@@ -883,21 +901,27 @@ test('/au uses Audrey skill prompt, selected safe model, strict citations, and s
     props: {},
   }
 
-  const response = await app.request(
-    '/au/%E4%BB%80%E9%BA%BC%E6%98%AF%E4%BB%81%E5%B7%A5%E6%99%BA%E6%85%A7?model=@cf/attacker/expensive-model',
-    undefined,
-    env,
-    executionCtx,
-  )
+  let response: Response
+  try {
+    response = await app.request(
+      '/au/%E4%BB%80%E9%BA%BC%E6%98%AF%E4%BB%81%E5%B7%A5%E6%99%BA%E6%85%A7?model=@cf/attacker/expensive-model',
+      undefined,
+      env,
+      executionCtx,
+    )
+  } finally {
+    globalThis.fetch = originalFetch
+  }
   assert.equal(response.status, 200)
   const body = await response.text()
   await Promise.all(waitUntilPromises)
 
-  const chatCall = aiCalls.find(({ input }) => Array.isArray(input.messages))
-  assert.ok(chatCall)
-  assert.equal(chatCall.model, AUDREY_SKILL_GLM_52_MODEL)
-  const messages = chatCall.input.messages as Array<{ role: string; content: string }>
-  const promptText = messages.map((message) => message.content).join('\n')
+  assert.equal(aiCalls.filter(({ input }) => Array.isArray(input.messages)).length, 0)
+  assert.ok(gatewayBodies.length >= 1)
+  assert.match(gatewayBodies[0], /"model":"fugu"/)
+  assert.match(gatewayBodies[0], /"max_output_tokens":8192/)
+  assert.match(gatewayBodies[0], /仁工智慧/)
+  const promptText = gatewayBodies[0]
   assert.match(promptText, /不要聲稱自己是 Audrey Tang|不要聲稱自己是唐鳳/)
   assert.match(promptText, /重新框架/)
 
@@ -908,8 +932,8 @@ test('/au uses Audrey skill prompt, selected safe model, strict citations, and s
   assert.doesNotMatch(answerBody, /https:\/\/archive\.tw\/2026-05-28-demo#s63852758/)
   assert.match(body, /\[\^1\]: \[[^\]]+ — 唐鳳\]\(https:\/\/archive\.tw\/2026-05-28-demo#s63852758\)/)
 
-  assert.ok(cacheGets.every((key) => key.startsWith('cache/v8/au/')))
-  assert.ok(cachePuts.every((key) => key.startsWith('cache/v8/au/')))
+  assert.ok(cacheGets.every((key) => key.startsWith('cache/v10/au/')))
+  assert.ok(cachePuts.every((key) => key.startsWith('cache/v10/au/')))
   assert.ok(cacheGets.length >= 1)
   assert.ok(cachePuts.length >= 1)
 })
@@ -962,8 +986,11 @@ test('/au cache key varies by the selected Audrey model', async () => {
 
   const gemmaKey = await makeRequest(DEFAULT_CAG_MODEL)
   const glmKey = await makeRequest(AUDREY_SKILL_GLM_52_MODEL)
-  assert.ok(gemmaKey?.startsWith('cache/v8/au/'))
-  assert.ok(glmKey?.startsWith('cache/v8/au/'))
+  const fuguKey = await makeRequest(AUDREY_SKILL_FUGU_MODEL)
+  assert.ok(gemmaKey?.startsWith('cache/v10/au/'))
+  assert.ok(glmKey?.startsWith('cache/v10/au/'))
+  assert.ok(fuguKey?.startsWith('cache/v10/au/'))
+  assert.notEqual(glmKey, fuguKey)
 })
 
 test('question endpoints reject questions over 100 characters before retrieval or AI', async () => {

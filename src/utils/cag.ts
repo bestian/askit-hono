@@ -19,6 +19,12 @@ import {
 } from './vectorize'
 import { NOT_FOUND_REPLY_HTML } from './notFoundReply'
 import { extractIndexKeys } from './bigramKeys'
+import {
+  type GatewayResponsesConfig,
+  openAiResponsesEventStreamToText,
+  completeViaGatewayResponses,
+  streamViaGatewayResponses,
+} from './fuguGateway'
 
 type WorkersAiBinding = {
   run: (model: string, input: Record<string, unknown>) => Promise<unknown>
@@ -61,6 +67,8 @@ export type CagOptions = {
   citationTransform?: (sources: CagSource[]) => TransformStream<string, string>
   /** D1 sayit-database binding for content LIKE fallback. */
   sayitDb?: D1Database
+  /** Sakana Fugu via Cloudflare AI Gateway (OpenAI Responses); skips Workers AI. */
+  gatewayResponses?: GatewayResponsesConfig
 }
 
 export { CAG_MODEL_GEMMA } from './cagEval'
@@ -140,6 +148,7 @@ export type NormalizedCagOptions = {
   answerLanguage?: 'en'
   citationTransform?: (sources: CagSource[]) => TransformStream<string, string>
   sayitDb?: D1Database
+  gatewayResponses?: GatewayResponsesConfig
 }
 
 function clampInteger(value: number, min: number, max: number): number {
@@ -169,6 +178,7 @@ export function normalizeCagOptions(options?: CagOptions): NormalizedCagOptions 
     answerLanguage: options?.answerLanguage,
     citationTransform: options?.citationTransform,
     sayitDb: options?.sayitDb,
+    gatewayResponses: options?.gatewayResponses,
   }
 }
 
@@ -1017,13 +1027,36 @@ function buildCagAiRunInput(
   }
 }
 
+async function runGatewayResponsesCompletion(
+  config: GatewayResponsesConfig,
+  messages: ChatMessage[],
+  maxCompletionTokens: number | undefined,
+  stream: boolean,
+): Promise<unknown> {
+  if (stream) {
+    return streamViaGatewayResponses(config, messages, maxCompletionTokens)
+  }
+  const res = await completeViaGatewayResponses(config, messages, maxCompletionTokens, false)
+  const json = (await res.json()) as { response?: string }
+  return { response: json.response ?? '' }
+}
+
 async function runCagCompletion(
   ai: WorkersAiBinding,
   model: string,
   messages: ChatMessage[],
   maxCompletionTokens: number | undefined,
   stream: boolean,
+  gatewayResponses?: GatewayResponsesConfig,
 ): Promise<unknown> {
+  if (gatewayResponses) {
+    return runGatewayResponsesCompletion(
+      gatewayResponses,
+      messages,
+      maxCompletionTokens,
+      stream,
+    )
+  }
   return ai.run(
     model,
     buildCagAiRunInput(messages, maxCompletionTokens, stream),
@@ -1036,6 +1069,7 @@ export async function completeCagAnswer(
   options?: {
     maxCompletionTokens?: number
     model?: string
+    gatewayResponses?: GatewayResponsesConfig
   },
 ): Promise<string> {
   const result = await runCagCompletion(
@@ -1044,6 +1078,7 @@ export async function completeCagAnswer(
     messages,
     options?.maxCompletionTokens,
     false,
+    options?.gatewayResponses,
   )
   return extractAiResponseText(result).trim()
 }
@@ -1093,6 +1128,7 @@ export async function generateCagAnswer(
     messages,
     normalized.maxCompletionTokens,
     false,
+    options?.gatewayResponses,
   )
   const answer = (await aiResultToText(result)).trim()
   // 只回傳可引用來源，呼叫端據此顯示出處、引註編號 [1..K] 一一對應。
@@ -1136,13 +1172,17 @@ export async function streamCagAnswer(
     messages,
     normalized.maxCompletionTokens,
     true,
+    options?.gatewayResponses,
   )
 
   const citationTransform = normalized.citationTransform
     ? normalized.citationTransform(cited)
     : markdownCitationFootnotes(cited.map(footnoteForSource))
+  const textTransform = options?.gatewayResponses
+    ? openAiResponsesEventStreamToText()
+    : workersAiEventStreamToText()
   const body = aiResultToStream(stream)
-    .pipeThrough(workersAiEventStreamToText())
+    .pipeThrough(textTransform)
     .pipeThrough(citationTransform)
     .pipeThrough(new TextEncoderStream())
 

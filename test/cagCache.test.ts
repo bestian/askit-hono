@@ -24,7 +24,7 @@ test('buildCagSourceCacheKey is stable and parameter-order independent', async (
     question: '地神香火如何？',
   })
   assert.equal(a, b)
-  assert.match(a, /^v8:cag:src:[0-9a-f]{64}$/)
+  assert.match(a, /^v10:cag:src:[0-9a-f]{64}$/)
 })
 
 test('getCachedCagSources and putCachedCagSources round-trip sources', async () => {

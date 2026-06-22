@@ -35,6 +35,7 @@ import { execSync } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { extractIndexKeys } from '../src/utils/bigramKeys'
+import { splitSqlIntoImportFiles } from './build-bigram-index-split'
 import { buildWranglerEnv } from './wranglerEnv'
 
 const WRANGLER_ENV = buildWranglerEnv()
@@ -298,20 +299,7 @@ async function main(): Promise<void> {
   // 關鍵修正：不再把整批塞進「單一」遠端匯入（會逾時 → Not currently importing anything），
   // 而是把 DELETE + INSERT 切成多個小檔（各 <= IMPORT_FILE_MAX_BYTES）依序匯入。
   // DELETE 放在第一個分檔開頭：任何一檔失敗整體即失敗、CI 報錯，下次重跑會先 DELETE 清空，仍冪等。
-  const fileBodies: string[] = []
-  let body = header
-  for (const stmt of inserts) {
-    const bodyBytes = Buffer.byteLength(body, 'utf-8')
-    const stmtBytes = Buffer.byteLength(stmt, 'utf-8')
-    // 目前分檔非空、且再加一條會超標，就先收檔、開新檔（新檔不再帶 header）。
-    // 守住 body.length > 0：避免單一 INSERT 本身就大於上限時陷入空檔死迴圈。
-    if (body.length > 0 && bodyBytes + stmtBytes > IMPORT_FILE_MAX_BYTES) {
-      fileBodies.push(body)
-      body = ''
-    }
-    body += stmt
-  }
-  if (body.length > 0) fileBodies.push(body)
+  const fileBodies = splitSqlIntoImportFiles(header, inserts, IMPORT_FILE_MAX_BYTES)
 
   const totalParts = fileBodies.length
   console.log(

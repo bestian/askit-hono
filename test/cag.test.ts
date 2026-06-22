@@ -1425,11 +1425,13 @@ test('webhook answers all-English questions in English (issue #37)', async () =>
     await Promise.all(waitUntilPromises)
 
     // 模型收到的指示確實切到英文：system 要求英文作答，user 帶英文版回答指示。
+    // 回答生成對齊 /au：user 指示為唐鳳公開溝通風格，再追加 LINE 適讀的長度上限。
     assert.equal(completionMessages.length, 1)
     const [system, user] = completionMessages[0]
     assert.match(system.content, /Answer in English/)
     assert.doesNotMatch(system.content, /Use Traditional Chinese/)
-    assert.match(user.content, /Answer in English in 3–5 concise sentences/)
+    assert.match(user.content, /Answer in English in Audrey Tang's public communication style/)
+    assert.match(user.content, /within about 100 words across 3–5 concise sentences/)
 
     // 回覆確實送出英文答案。
     const replyCall = fetchCalls.find(

@@ -174,7 +174,7 @@ export const en_welcome = {
       },
       {
         "type": "text",
-        "text": "You can directly enter a topic you would like to ask about, such as \"the six pack of civic ai\", \"broad listening\", or \"open government\".",
+        "text": "You can directly enter a topic you would like to ask about, such as \"Civic AI\", \"broad listening\", or \"open government\".",
         "size": "sm",
         "wrap": true,
         "color": "#333333"

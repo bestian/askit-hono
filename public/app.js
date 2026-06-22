@@ -460,7 +460,13 @@
               : logoInteractive.value
                 ? h('div', { class: 'click-hint' }, [
                   h('div', { class: 'arrow' }, T.clickHintArrow),
-                  h('div', { class: 'click-me' }, T.clickHintText),
+                  h('div', { class: 'click-me' }, [
+                    h('a', {
+                      href: LINE_FRIEND_URL,
+                      target: '_blank',
+                      rel: 'noopener noreferrer',
+                    }, T.clickHintText),
+                  ]),
                 ])
                 : null,
           ]),

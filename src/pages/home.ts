@@ -140,6 +140,10 @@ export function renderHomePage(lang: PageLang = 'zh-Hant'): string {
       font-size: 1.6rem;
       color: var(--accent);
     }
+    .click-hint .click-me a {
+      color: inherit;
+      text-decoration: none;
+    }
     /* 顯示 QR code 時，提供可點擊的 LINE 加好友連結 */
     .line-link {
       display: inline-flex;

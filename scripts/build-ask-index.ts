@@ -12,7 +12,7 @@
  *   R2_MANIFEST_KEY  上傳 sidecar manifest 的 key（預設 ask-index/audrey-tang.manifest.json）
  *   MAX_SECTION_CHARS  段落純文字字數上限（預設 175）
  *   YEARS_BACK    只保留最近幾年的內容（預設 2，以 filename 開頭日期判斷）
- *   CHUNK_MONTHS  把查詢依日期切割成幾個月一段（預設 1），避免單一大查詢把 D1 拖垮
+ *   CHUNK_MONTHS  把查詢依日期切割成幾個月一段（預設 3），避免單一大查詢把 D1 拖垮
  *   D1_MAX_RETRIES     單段查詢遇到 D1 過載（code 7429）等暫時性錯誤時的重試次數（預設 5）
  *   D1_RETRY_BASE_MS   重試的指數退避基準毫秒數（預設 2000）
  *   LOCAL=1       對 D1 下 --local（預設用 --remote 對線上資料庫查詢）
@@ -45,7 +45,7 @@ const R2_MANIFEST_KEY =
   process.env.R2_MANIFEST_KEY ?? manifestKeyForIndexKey(R2_KEY)
 const MAX_SECTION_CHARS = Number(process.env.MAX_SECTION_CHARS ?? '175')
 const YEARS_BACK = Number(process.env.YEARS_BACK ?? '2')
-const CHUNK_MONTHS = Math.max(1, Number(process.env.CHUNK_MONTHS ?? '1'))
+const CHUNK_MONTHS = Math.max(1, Number(process.env.CHUNK_MONTHS ?? '3'))
 const D1_MAX_RETRIES = Math.max(0, Number(process.env.D1_MAX_RETRIES ?? '5'))
 const D1_RETRY_BASE_MS = Math.max(100, Number(process.env.D1_RETRY_BASE_MS ?? '2000'))
 const SKIP_UPLOAD = process.env.SKIP_UPLOAD === '1'

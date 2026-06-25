@@ -35,7 +35,11 @@ CAG_RETRIEVER=vectorize
 # shadow OAuth and break d1 / vectorize. The token is only for vectorize:sync
 # REST embedding. GitHub Actions has no OAuth and passes the token to wrangler.
 # To force wrangler to use the token locally: WRANGLER_USE_API_TOKEN=1
-# /au Fugu
+# /au Baseten Nemotron Ultra (Cloudflare AI Gateway baseten provider)
+# AUDREY_MODEL=nemotron-ultra
+# BASETEN_API_KEY=
+# BASETEN_MODEL=nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B
+# CF_AIG_TOKEN=   # AI Gateway Run token (required for gateway route; already on worker for Fugu)
+# /au Fugu (custom-sakana provider) — optional alternative
 # AUDREY_MODEL=fugu
 # SAKANA_API_KEY=
-# CF_AIG_TOKEN=

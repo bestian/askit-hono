@@ -2,6 +2,11 @@
  * Sakana Fugu via Cloudflare AI Gateway custom-sakana (OpenAI Responses API).
  */
 
+import {
+  DEFAULT_CF_AI_GATEWAY_ACCOUNT_ID,
+  DEFAULT_CF_AI_GATEWAY_ID,
+} from './aiGatewayDefaults'
+
 export type GatewayResponsesConfig = {
   responsesUrl: string
   upstreamAuthorization: string
@@ -13,12 +18,9 @@ export type GatewayResponsesConfig = {
 /** /au Fugu: reasoning eats budget; never send Workers-default 1024 alone. */
 export const DEFAULT_FUGU_MAX_OUTPUT_TOKENS = 8192
 
-const DEFAULT_ACCOUNT_ID = '99984e3c707dd2518f73dfa9da3fc887'
-const DEFAULT_GATEWAY_ID = 'kami'
-
 export function buildCustomSakanaResponsesUrl(
-  accountId = DEFAULT_ACCOUNT_ID,
-  gatewayId = DEFAULT_GATEWAY_ID,
+  accountId = DEFAULT_CF_AI_GATEWAY_ACCOUNT_ID,
+  gatewayId = DEFAULT_CF_AI_GATEWAY_ID,
 ): string {
   return `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/custom-sakana/v1/responses`
 }

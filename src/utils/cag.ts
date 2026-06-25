@@ -19,8 +19,13 @@ import {
 } from './vectorize'
 import { NOT_FOUND_REPLY_HTML } from './notFoundReply'
 import { extractIndexKeys } from './bigramKeys'
+import type { AudreyAiGatewayConfig } from './audreyAiGateway'
 import {
-  type GatewayResponsesConfig,
+  completeViaGatewayChatCompletions,
+  openAiChatCompletionsEventStreamToText,
+  streamViaGatewayChatCompletions,
+} from './basetenGateway'
+import {
   openAiResponsesEventStreamToText,
   completeViaGatewayResponses,
   streamViaGatewayResponses,
@@ -67,8 +72,8 @@ export type CagOptions = {
   citationTransform?: (sources: CagSource[]) => TransformStream<string, string>
   /** D1 sayit-database binding for content LIKE fallback. */
   sayitDb?: D1Database
-  /** Sakana Fugu via Cloudflare AI Gateway (OpenAI Responses); skips Workers AI. */
-  gatewayResponses?: GatewayResponsesConfig
+  /** External LLM via Cloudflare AI Gateway (Fugu Responses or Baseten chat); skips Workers AI. */
+  aiGateway?: AudreyAiGatewayConfig
 }
 
 export { CAG_MODEL_GEMMA } from './cagEval'
@@ -148,7 +153,7 @@ export type NormalizedCagOptions = {
   answerLanguage?: 'en'
   citationTransform?: (sources: CagSource[]) => TransformStream<string, string>
   sayitDb?: D1Database
-  gatewayResponses?: GatewayResponsesConfig
+  aiGateway?: AudreyAiGatewayConfig
 }
 
 function clampInteger(value: number, min: number, max: number): number {
@@ -178,7 +183,7 @@ export function normalizeCagOptions(options?: CagOptions): NormalizedCagOptions 
     answerLanguage: options?.answerLanguage,
     citationTransform: options?.citationTransform,
     sayitDb: options?.sayitDb,
-    gatewayResponses: options?.gatewayResponses,
+    aiGateway: options?.aiGateway,
   }
 }
 
@@ -1027,18 +1032,54 @@ function buildCagAiRunInput(
   }
 }
 
-async function runGatewayResponsesCompletion(
-  config: GatewayResponsesConfig,
+
+async function runGatewayChatCompletion(
+  gateway: AudreyAiGatewayConfig,
   messages: ChatMessage[],
   maxCompletionTokens: number | undefined,
   stream: boolean,
 ): Promise<unknown> {
-  if (stream) {
-    return streamViaGatewayResponses(config, messages, maxCompletionTokens)
+  if (gateway.kind === 'responses') {
+    if (stream) {
+      return streamViaGatewayResponses(
+        gateway.config,
+        messages,
+        maxCompletionTokens,
+      )
+    }
+    const res = await completeViaGatewayResponses(
+      gateway.config,
+      messages,
+      maxCompletionTokens,
+      false,
+    )
+    const json = (await res.json()) as { response?: string }
+    return { response: json.response ?? '' }
   }
-  const res = await completeViaGatewayResponses(config, messages, maxCompletionTokens, false)
+  if (stream) {
+    return streamViaGatewayChatCompletions(
+      gateway.config,
+      messages,
+      maxCompletionTokens,
+    )
+  }
+  const res = await completeViaGatewayChatCompletions(
+    gateway.config,
+    messages,
+    maxCompletionTokens,
+    false,
+  )
   const json = (await res.json()) as { response?: string }
   return { response: json.response ?? '' }
+}
+
+function gatewayEventStreamToText(
+  gateway: AudreyAiGatewayConfig | undefined,
+): TransformStream<Uint8Array, string> {
+  if (!gateway) return workersAiEventStreamToText()
+  return gateway.kind === 'responses'
+    ? openAiResponsesEventStreamToText()
+    : openAiChatCompletionsEventStreamToText()
 }
 
 async function runCagCompletion(
@@ -1047,11 +1088,11 @@ async function runCagCompletion(
   messages: ChatMessage[],
   maxCompletionTokens: number | undefined,
   stream: boolean,
-  gatewayResponses?: GatewayResponsesConfig,
+  aiGateway?: AudreyAiGatewayConfig,
 ): Promise<unknown> {
-  if (gatewayResponses) {
-    return runGatewayResponsesCompletion(
-      gatewayResponses,
+  if (aiGateway) {
+    return runGatewayChatCompletion(
+      aiGateway,
       messages,
       maxCompletionTokens,
       stream,
@@ -1069,7 +1110,7 @@ export async function completeCagAnswer(
   options?: {
     maxCompletionTokens?: number
     model?: string
-    gatewayResponses?: GatewayResponsesConfig
+    aiGateway?: AudreyAiGatewayConfig
   },
 ): Promise<string> {
   const result = await runCagCompletion(
@@ -1078,7 +1119,7 @@ export async function completeCagAnswer(
     messages,
     options?.maxCompletionTokens,
     false,
-    options?.gatewayResponses,
+    options?.aiGateway,
   )
   return extractAiResponseText(result).trim()
 }
@@ -1128,7 +1169,7 @@ export async function generateCagAnswer(
     messages,
     normalized.maxCompletionTokens,
     false,
-    options?.gatewayResponses,
+    options?.aiGateway,
   )
   const answer = (await aiResultToText(result)).trim()
   // 只回傳可引用來源，呼叫端據此顯示出處、引註編號 [1..K] 一一對應。
@@ -1172,15 +1213,13 @@ export async function streamCagAnswer(
     messages,
     normalized.maxCompletionTokens,
     true,
-    options?.gatewayResponses,
+    options?.aiGateway,
   )
 
   const citationTransform = normalized.citationTransform
     ? normalized.citationTransform(cited)
     : markdownCitationFootnotes(cited.map(footnoteForSource))
-  const textTransform = options?.gatewayResponses
-    ? openAiResponsesEventStreamToText()
-    : workersAiEventStreamToText()
+  const textTransform = gatewayEventStreamToText(options?.aiGateway)
   const body = aiResultToStream(stream)
     .pipeThrough(textTransform)
     .pipeThrough(citationTransform)

@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   AUDREY_SKILL_DEFAULT_MODEL,
   AUDREY_SKILL_FUGU_MODEL,
+  AUDREY_SKILL_NEMOTRON_ULTRA_MODEL,
   AUDREY_SKILL_GLM_52_MODEL,
   audreySkillCitationFootnotes,
   buildAudreySkillAnswerInstruction,

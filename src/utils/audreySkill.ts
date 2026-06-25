@@ -4,11 +4,13 @@ import type { CagSource } from './cag'
 export const AUDREY_SKILL_DEFAULT_MODEL = CAG_MODEL_GEMMA
 export const AUDREY_SKILL_GLM_52_MODEL = '@cf/zai-org/glm-5.2'
 export const AUDREY_SKILL_FUGU_MODEL = 'fugu'
+export const AUDREY_SKILL_NEMOTRON_ULTRA_MODEL = 'nemotron-ultra'
 
 const ALLOWED_AUDREY_MODELS: Record<string, true> = {
   [AUDREY_SKILL_DEFAULT_MODEL]: true,
   [AUDREY_SKILL_GLM_52_MODEL]: true,
   [AUDREY_SKILL_FUGU_MODEL]: true,
+  [AUDREY_SKILL_NEMOTRON_ULTRA_MODEL]: true,
 }
 
 export function resolveAudreySkillModel(value: string | undefined): string {

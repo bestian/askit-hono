@@ -45,9 +45,9 @@
     // 視窗設 "0" = 不限視窗、全期間累計。
     "ABUSE_BLACKLIST_THRESHOLD": "3",
     "ABUSE_COUNT_WINDOW_HOURS": "24",
-    // /au 預設模型：Sakana Fugu（custom-sakana AI Gateway）。
-    // wrangler secret put SAKANA_API_KEY；可選 CF_AIG_TOKEN。
-    "AUDREY_MODEL": "fugu"
+    // /au 預設模型：nemotron-ultra（Baseten via AI Gateway `baseten` provider）。
+    // wrangler secret put BASETEN_API_KEY；可選 CF_AIG_TOKEN、BASETEN_MODEL。
+    "AUDREY_MODEL": "nemotron-ultra"
   },
 
   // CPU 上限：避免單次請求異常消耗 Worker CPU；AI/網路等待不計入 CPU time。

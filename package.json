@@ -32,7 +32,7 @@
     "eval:cag:depth": "tsx --tsconfig scripts/tsconfig.json scripts/eval-cag-depth.ts",
     "skill:mine": "tsx --tsconfig scripts/tsconfig.json scripts/mine-audrey-voice.ts",
     "cf:fugu-provider": "tsx --tsconfig scripts/tsconfig.json scripts/setup-fugu-cloudflare-provider.ts",
-    "cf:baseten-verify": "tsx --tsconfig scripts/tsconfig.json scripts/verify-baseten-nemotron-gateway.ts"
+    "cf:baseten-verify": "tsx --tsconfig packages/cf-ai-gateway/tsconfig.json packages/cf-ai-gateway/scripts/verify-baseten.ts"
   },
   "dependencies": {
     "@audreyt/cf-ai-gateway": "workspace:*",

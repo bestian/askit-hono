@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { resolveAudreyAiGateway } from '../src/utils/audreyGatewayBindings'
-import { DEFAULT_NEMOTRON_ULTRA_BASETEN_MODEL } from '../src/utils/basetenGateway'
+import { DEFAULT_NEMOTRON_ULTRA_BASETEN_MODEL } from '../src/baseten'
+import { resolveAudreyAiGateway } from '../src/resolveGateway'
 
 test('resolveAudreyAiGateway returns Baseten chat config for nemotron-ultra', () => {
   const gw = resolveAudreyAiGateway({

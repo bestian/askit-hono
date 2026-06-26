@@ -38,9 +38,8 @@ askit-hono (ask.archive.tw) — unchanged product scope
 
 **Location (v1):** `packages/cf-ai-gateway/` inside `askit-hono` repo.
 
-**Cross-repo consumption (plurality.net):** vendored npm pack tarball at
-`worker/vendor/audreyt-cf-ai-gateway-0.1.0.tgz` (`file:` dependency). Refresh via
-`npm run pack:gateway` in askit-hono. No submodule or sibling-path `file:` directory.
+**Cross-repo consumption (plurality.net):** `npm install @audreyt/cf-ai-gateway` (public npm).
+Pin semver in `plurality-ask` `package.json`. Optional vendored `.tgz` only for pre-release pins.
 
 **Exports:**
 

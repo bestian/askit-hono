@@ -1,38 +1,32 @@
-# Consuming `@audreyt/cf-ai-gateway`
+# Consuming `@au/cf-ai-gateway`
 
-## npm (recommended)
-
-**Publish:** scoped package requires npm org **`@audreyt`** (or your user in that org). If `npm publish` returns **404 on PUT**, create the org at npmjs.com/org/create or use `npm org add audreyt <user>`.
+## npm
 
 ```bash
-npm install @audreyt/cf-ai-gateway
-# or: bun add @audreyt/cf-ai-gateway
+npm install @au/cf-ai-gateway
+# or: bun add @au/cf-ai-gateway
 ```
 
-Published package includes prebuilt `dist/`. No askit-hono checkout required.
+Published tarball includes prebuilt `dist/` only (no runtime dependencies).
 
-**plurality-ask worker:** pin semver in `package.json`, e.g. `"@audreyt/cf-ai-gateway": "^0.1.0"`.
+**plurality-ask:** `"@au/cf-ai-gateway": "^0.1.0"`
 
 ## Maintainers (askit-hono)
 
 ```bash
-npm run build -w @audreyt/cf-ai-gateway
-npm run publish:gateway   # requires npm login + 2FA OTP if enabled
+npm run build -w @au/cf-ai-gateway
+npm run publish:gateway
 ```
 
 Bump `version` in `packages/cf-ai-gateway/package.json` before publish.
 
-## Optional: vendored tarball
-
-For air-gapped or pre-release pins:
+## Vendored tarball (optional)
 
 ```bash
 npm run pack:gateway
-# audreyt-cf-ai-gateway-<version>.tgz → plurality.net/worker/vendor/
+# → plurality.net/worker/vendor/au-cf-ai-gateway-<version>.tgz
 ```
-
-`file:vendor/audreyt-cf-ai-gateway-0.1.0.tgz` — prefer npm once published.
 
 ## Inside askit-hono
 
-`workspace:*` in root `package.json` (develop against `src/`).
+`workspace:*` on `@au/cf-ai-gateway`.

@@ -28,18 +28,18 @@ plurality.net (GH Pages)
   search.js ──CORS──► plurality-ask Worker (CF)
                          ├─ Vectorize: plurality-book
                          ├─ RAG + book prompts
-                         └─ @audreyt/cf-ai-gateway → gateway kami / baseten
+                         └─ @au/cf-ai-gateway → gateway kami / baseten
 
 askit-hono (ask.archive.tw) — unchanged product scope
-  /au transcripts ──► same @audreyt/cf-ai-gateway package
+  /au transcripts ──► same @au/cf-ai-gateway package
 ```
 
-## Shared package: `@audreyt/cf-ai-gateway`
+## Shared package: `@au/cf-ai-gateway`
 
 **Location (v1):** `packages/cf-ai-gateway/` inside `askit-hono` repo.
 
-**Cross-repo consumption (plurality.net):** `npm install @audreyt/cf-ai-gateway` (public npm).
-Pin semver in `plurality-ask` `package.json`. Optional vendored `.tgz` only for pre-release pins.
+**Cross-repo consumption (plurality.net):** `npm install @au/cf-ai-gateway` (public npm, scope `@au`).
+Pin semver in `plurality-ask` `package.json`. Optional vendored `au-cf-ai-gateway-*.tgz` for pre-release pins.
 
 **Exports:**
 

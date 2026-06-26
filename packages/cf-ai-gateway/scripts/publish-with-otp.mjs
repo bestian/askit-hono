@@ -11,10 +11,26 @@ import path from 'node:path'
 
 const pkgRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 
+function base32Decode(s) {
+  const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+  let bits = 0
+  let val = 0
+  const out = []
+  for (const c of s.replace(/[=\s]/g, '').toUpperCase()) {
+    const i = A.indexOf(c)
+    if (i < 0) continue
+    val = (val << 5) | i
+    bits += 5
+    if (bits >= 8) {
+      out.push((val >>> (bits - 8)) & 0xff)
+      bits -= 8
+    }
+  }
+  return Buffer.from(out)
+}
+
 function totp(secretB32) {
-  const s = secretB32.replace(/\s+/g, '').toUpperCase()
-  const pad = (-s.length) % 8
-  const key = Buffer.from(s + '='.repeat(pad), 'base64')
+  const key = base32Decode(secretB32)
   const counter = Math.floor(Date.now() / 1000 / 30)
   const msg = Buffer.alloc(8)
   msg.writeBigUInt64BE(BigInt(counter))

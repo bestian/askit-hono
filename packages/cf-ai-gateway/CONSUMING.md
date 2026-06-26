@@ -1,43 +1,36 @@
-# Consuming `@audreyt/cf-ai-gateway` outside askit-hono
+# Consuming `@audreyt/cf-ai-gateway`
 
-**Mechanism (v1):** commit a prebuilt **npm pack tarball** in `plurality.net/worker/vendor/`.
-
-The tarball includes only `dist/` (`files: ["dist"]` in package.json). No git submodule, no sibling `file:` path, no install-time build.
-
-**Tarball filename:** `npm pack` emits `audreyt-cf-ai-gateway-<version>.tgz` (scope `@` → `audreyt-`). Do not use `cf-ai-gateway-….tgz` in `file:` paths.
-
-## Refresh tarball (askit-hono maintainers)
-
-From askit-hono repo root (requires `plurality.net` as sibling for default output path):
+## npm (recommended)
 
 ```bash
-npm run pack:gateway
-# writes ../plurality.net/worker/vendor/audreyt-cf-ai-gateway-0.1.0.tgz
+npm install @audreyt/cf-ai-gateway
+# or: bun add @audreyt/cf-ai-gateway
 ```
 
-Or from the package:
+Published package includes prebuilt `dist/`. No askit-hono checkout required.
+
+**plurality-ask worker:** pin semver in `package.json`, e.g. `"@audreyt/cf-ai-gateway": "^0.1.0"`.
+
+## Maintainers (askit-hono)
 
 ```bash
 npm run build -w @audreyt/cf-ai-gateway
-cd packages/cf-ai-gateway && npm pack --pack-destination /path/to/plurality.net/worker/vendor
+npm run publish:gateway   # requires npm login + 2FA OTP if enabled
 ```
 
-Commit the updated `.tgz` in plurality.net when gateway APIs change.
+Bump `version` in `packages/cf-ai-gateway/package.json` before publish.
 
-## plurality-ask worker
+## Optional: vendored tarball
 
-`worker/package.json`:
+For air-gapped or pre-release pins:
 
-```json
-"@audreyt/cf-ai-gateway": "file:vendor/audreyt-cf-ai-gateway-0.1.0.tgz"
+```bash
+npm run pack:gateway
+# audreyt-cf-ai-gateway-<version>.tgz → plurality.net/worker/vendor/
 ```
 
-Clone / CI: `cd worker && bun install` — no askit-hono checkout required.
+`file:vendor/audreyt-cf-ai-gateway-0.1.0.tgz` — prefer npm once published.
 
 ## Inside askit-hono
 
-`workspace:*` in root `package.json` (source `src/`, not tarball).
-
-## Future
-
-Publish to GitHub Packages / npm when `private: false`.
+`workspace:*` in root `package.json` (develop against `src/`).

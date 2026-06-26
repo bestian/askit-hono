@@ -1,12 +1,21 @@
 {
   "name": "@audreyt/cf-ai-gateway",
   "version": "0.1.0",
-  "private": true,
+  "description": "CF AI Gateway helpers for Baseten Nemotron and Sakana Fugu (Workers)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bestian/askit-hono.git",
+    "directory": "packages/cf-ai-gateway"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "dependencies": {
     "@types/node": "^25.6.0"
   },
-  "files": ["dist"],
+  "files": ["dist", "README.md"],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -19,6 +28,7 @@
   },
   "scripts": {
     "build": "npx -p typescript@5.7.2 tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build",
     "pack:tarball": "npm run build && npm pack --pack-destination ../../../plurality.net/worker/vendor",
     "test": "node --import tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit"

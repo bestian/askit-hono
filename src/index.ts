@@ -1,5 +1,6 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono'
 import { secureHeaders } from 'hono/secure-headers'
+import { createAskCors } from '@audreyt/cf-ai-gateway'
 
 import { renderHomePage } from './pages/home'
 import { renderPrivacyPolicyPage } from './pages/privacy'
@@ -187,10 +188,13 @@ const RATE_LIMIT_RETRY_AFTER_SECONDS = Math.ceil(RATE_LIMIT_WINDOW_MS / 1000)
 const CAPACITY_RATE_LIMIT_WINDOW_MS = 5_000
 const CAPACITY_RATE_LIMIT_RETRY_AFTER_SECONDS = Math.ceil(CAPACITY_RATE_LIMIT_WINDOW_MS / 1000)
 const CAPACITY_CACHE_CONTROL = 'public, max-age=5, s-maxage=5'
-const ASK_CORS_ALLOWED_ORIGINS = new Set(['https://archive.tw', 'https://ask.archive.tw','http://localhost:8787'])
-const ASK_CORS_ALLOWED_METHODS = 'GET, OPTIONS'
-const ASK_CORS_ALLOWED_HEADERS = 'Content-Type'
-const ASK_CORS_MAX_AGE_SECONDS = '600'
+const askCors = createAskCors({
+  allowedOrigins: new Set([
+    'https://archive.tw',
+    'https://ask.archive.tw',
+    'http://localhost:8787',
+  ]),
+})
 
 // 網頁串流路由（GET /cag/:question）使用者可見訊息的雙語表：?lang=en 取英文、其餘繁中。
 // zh-Hant 字串須與既有字面值逐字相同；LINE webhook 與其他路由沿用 zh-Hant 這一份。
@@ -226,38 +230,12 @@ function resolveWebLang(lang: string | undefined): WebMessageLang {
   return lang === 'en' ? 'en' : 'zh-Hant'
 }
 
-function appendVary(headers: Headers, value: string): void {
-  const existing = headers.get('Vary')
-  if (!existing) {
-    headers.set('Vary', value)
-    return
-  }
-  const values = existing.split(',').map((item) => item.trim().toLowerCase())
-  if (!values.includes(value.toLowerCase())) {
-    headers.set('Vary', `${existing}, ${value}`)
-  }
-}
-
 function applyAskCors(c: Context<{ Bindings: Bindings }>, response: Response): Response {
-  const origin = c.req.header('Origin')
-  if (!origin || !ASK_CORS_ALLOWED_ORIGINS.has(origin)) return response
-
-  const headers = new Headers(response.headers)
-  headers.set('Access-Control-Allow-Origin', origin)
-  headers.set('Access-Control-Allow-Methods', ASK_CORS_ALLOWED_METHODS)
-  headers.set('Access-Control-Allow-Headers', ASK_CORS_ALLOWED_HEADERS)
-  headers.set('Access-Control-Max-Age', ASK_CORS_MAX_AGE_SECONDS)
-  appendVary(headers, 'Origin')
-
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  })
+  return askCors.apply(c.req.raw, response)
 }
 
 function askCorsPreflight(c: Context<{ Bindings: Bindings }>): Response {
-  return applyAskCors(c, new Response(null, { status: 204 }))
+  return askCors.preflight(c.req.raw)
 }
 
 const NOT_FOUND_REPLY = WEB_MESSAGES['zh-Hant'].notFound

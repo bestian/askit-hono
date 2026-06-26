@@ -36,8 +36,11 @@ askit-hono (ask.archive.tw) — unchanged product scope
 
 ## Shared package: `@audreyt/cf-ai-gateway`
 
-**Location (v1):** `packages/cf-ai-gateway/` inside `askit-hono` repo; consumed via
-`"workspace:*"` or `"file:packages/cf-ai-gateway"`.
+**Location (v1):** `packages/cf-ai-gateway/` inside `askit-hono` repo.
+
+**Cross-repo consumption (plurality.net):** git submodule `vendor/askit-hono` →
+`file:../vendor/askit-hono/packages/cf-ai-gateway`; package builds `dist/` on install (`prepare`).
+Do **not** use sibling `../../askit-hono` or `workspace:*` from another repo. See `CONSUMING.md`.
 
 **Exports:**
 

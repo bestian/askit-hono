@@ -3,12 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "files": ["dist"],
   "exports": {
-    ".": "./src/index.ts",
-    "./loadDevVars": "./src/loadDevVars.ts",
-    "./verify-baseten": "./scripts/verify-baseten.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./loadDevVars": {
+      "types": "./dist/loadDevVars.d.ts",
+      "import": "./dist/loadDevVars.js"
+    }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
     "test": "node --import tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },

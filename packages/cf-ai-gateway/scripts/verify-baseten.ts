@@ -8,9 +8,9 @@
  *   npm run cf:baseten-verify
  */
 
-import { loadDevVars } from './loadDevVars'
-import { resolveAudreyAiGateway } from '../src/utils/audreyGatewayBindings'
-import { completeViaGatewayChatCompletions } from '../src/utils/basetenGateway'
+import { completeViaGatewayChatCompletions } from '../src/baseten'
+import { loadDevVars } from '../src/loadDevVars'
+import { resolveAudreyAiGateway } from '../src/resolveGateway'
 
 loadDevVars()
 

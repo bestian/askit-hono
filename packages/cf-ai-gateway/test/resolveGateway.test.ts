@@ -29,3 +29,22 @@ test('resolveAudreyAiGateway returns Sakana responses for fugu', () => {
   if (gw.kind !== 'responses') return
   assert.match(gw.config.responsesUrl, /custom-sakana\/v1\/responses$/)
 })
+
+test('resolveAudreyAiGateway returns undefined when AUDREY_MODEL unset (even with BASETEN_API_KEY)', () => {
+  const gw = resolveAudreyAiGateway({
+    BASETEN_API_KEY: 'test-key',
+    CF_AIG_TOKEN: 'cf',
+  })
+  assert.equal(gw, undefined)
+})
+
+test('resolveAudreyAiGateway returns undefined for gemma/glm (Workers AI path)', () => {
+  for (const audreyModel of [undefined, '', '@cf/google/gemma-4-26b-a4b-it', '@cf/zai-org/glm-5.2']) {
+    const gw = resolveAudreyAiGateway({
+      AUDREY_MODEL: audreyModel,
+      BASETEN_API_KEY: 'test-key',
+      SAKANA_API_KEY: 'sk',
+    })
+    assert.equal(gw, undefined, `expected undefined for AUDREY_MODEL=${String(audreyModel)}`)
+  }
+})

@@ -7,7 +7,7 @@ import { buildCustomSakanaResponsesUrl, type GatewayResponsesConfig } from './fu
 import {
   GATEWAY_MODEL_FUGU,
   GATEWAY_MODEL_NEMOTRON_ULTRA,
-  normalizeGatewayModel,
+  resolveGatewayModelId,
 } from './modelIds'
 import type { AudreyAiGatewayConfig } from './types'
 
@@ -74,10 +74,8 @@ function resolveNemotronGateway(
 export function resolveAudreyAiGateway(
   env: AudreyGatewayEnv,
 ): AudreyAiGatewayConfig | undefined {
-  const model = normalizeGatewayModel(
-    env.AUDREY_MODEL,
-    GATEWAY_MODEL_NEMOTRON_ULTRA,
-  )
+  const model = resolveGatewayModelId(env.AUDREY_MODEL)
+  if (!model) return undefined
   if (model === GATEWAY_MODEL_FUGU) return resolveFuguGateway(env)
   if (model === GATEWAY_MODEL_NEMOTRON_ULTRA) {
     return resolveNemotronGateway(env)

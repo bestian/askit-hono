@@ -12,9 +12,6 @@
     "access": "public"
   },
   "type": "module",
-  "dependencies": {
-    "@types/node": "^25.6.0"
-  },
   "files": ["dist", "README.md"],
   "exports": {
     ".": {
@@ -36,6 +33,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/node": "^25.6.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.2"
   }

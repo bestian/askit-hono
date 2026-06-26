@@ -19,7 +19,6 @@
   },
   "scripts": {
     "build": "npx -p typescript@5.7.2 tsc -p tsconfig.build.json",
-    "prepare": "npm run build",
     "test": "node --import tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },

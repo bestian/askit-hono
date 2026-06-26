@@ -1,7 +1,7 @@
 # Consuming `@audreyt/cf-ai-gateway` outside askit-hono
 
-The package is **private** (not on public npm in v1). It ships **built** `dist/` via `npm run build` (`prepare` runs on install).
-
+The package is **private** (not on public npm in v1). **`dist/` is committed** in askit-hono so `file:` installs work without a build step in CI.
+After changing `src/`, run `npm run build -w @audreyt/cf-ai-gateway` and commit `dist/`.
 ## Recommended: git submodule in `plurality.net`
 
 ```bash

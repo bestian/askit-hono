@@ -118,8 +118,8 @@ type Bindings = {
 }
 
 const DEFAULT_CAG_RETRIEVER: CagRetriever = 'vectorize'
-// /au 的預設 max_completion_tokens；GLM-5.2 較冗長，500 會截斷回答，1024 確保完整。
-const AUDREY_MAX_COMPLETION_TOKENS = 1024
+// /au default max_completion_tokens (Nemotron/Fugu/Workers AI).
+const AUDREY_MAX_COMPLETION_TOKENS = 8192
 
 function resolveCagRetriever(
   ...values: (string | undefined)[]

@@ -273,7 +273,7 @@ async function evalCaseArm(
   )
   const answer = await completeCagAnswer(ai, messages as ChatMessage[], {
     model: generateOptions.model,
-    maxCompletionTokens: 1024,
+    maxCompletionTokens: 8192,
   })
   const generateMs = performance.now() - generateStarted
 

@@ -2,6 +2,8 @@
 
 ## npm (recommended)
 
+**Publish:** scoped package requires npm org **`@audreyt`** (or your user in that org). If `npm publish` returns **404 on PUT**, create the org at npmjs.com/org/create or use `npm org add audreyt <user>`.
+
 ```bash
 npm install @audreyt/cf-ai-gateway
 # or: bun add @audreyt/cf-ai-gateway

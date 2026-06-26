@@ -1,6 +1,6 @@
 {
   "name": "@au/cf-ai-gateway",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "CF AI Gateway helpers for Baseten Nemotron and Sakana Fugu (Workers)",
   "license": "MIT",
   "repository": {
@@ -28,7 +28,7 @@
   "scripts": {
     "build": "npx -p typescript@5.7.2 tsc -p tsconfig.build.json",
     "prepublishOnly": "npm run build",
-    "pack:tarball": "npm run build && npm pack --pack-destination ../../../plurality.net/worker/vendor",
+    "publish:otp": "node scripts/publish-with-otp.mjs",
     "test": "node --import tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },

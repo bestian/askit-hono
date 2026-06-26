@@ -765,7 +765,7 @@ test('normalizeCagOptions returns effective parameters used by CAG', () => {
   })
   assert.equal(options.topK, 8)
   assert.equal(options.citableTopK, 8)
-  assert.equal(options.maxCompletionTokens, 4096)
+  assert.equal(options.maxCompletionTokens, 8192)
   assert.equal(options.archiveBaseUrl, 'https://archive.tw')
   assert.equal(options.retriever, 'vectorize')
   assert.equal(options.vectorizeMinScore, 2)

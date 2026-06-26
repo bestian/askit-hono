@@ -1,6 +1,6 @@
 {
   "name": "@au/cf-ai-gateway",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CF AI Gateway helpers for Baseten Nemotron and Sakana Fugu (Workers)",
   "license": "MIT",
   "repository": {

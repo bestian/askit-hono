@@ -82,7 +82,7 @@ export const DEFAULT_CAG_MODEL = CAG_MODEL_GEMMA
 export const DEFAULT_ARCHIVE_BASE_URL = 'https://archive.tw'
 export const DEFAULT_TOP_K = 4
 const MAX_TOP_K = 8
-export const DEFAULT_MAX_COMPLETION_TOKENS = 500
+export const DEFAULT_MAX_COMPLETION_TOKENS = 8192
 export const MAX_CONTEXT_SECTION_CHARS = 1_200
 const MAX_SEARCH_VARIANTS = 6
 export const MIN_ARCHIVE_HITS_BEFORE_FALLBACK = 3
@@ -172,7 +172,7 @@ export function normalizeCagOptions(options?: CagOptions): NormalizedCagOptions 
     maxCompletionTokens: clampInteger(
       options?.maxCompletionTokens ?? DEFAULT_MAX_COMPLETION_TOKENS,
       1,
-      4_096,
+      8_192,
     ),
     model: options?.model ?? DEFAULT_CAG_MODEL,
     archiveBaseUrl: normalizeArchiveBaseUrl(options?.archiveBaseUrl),
@@ -1024,7 +1024,7 @@ function buildCagAiRunInput(
     max_completion_tokens: clampInteger(
       maxCompletionTokens ?? DEFAULT_MAX_COMPLETION_TOKENS,
       1,
-      4_096,
+      8_192,
     ),
     temperature: 0.2,
     reasoning_effort: 'none',

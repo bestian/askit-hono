@@ -16,6 +16,7 @@
     "tail": "npx wrangler tail",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
+    "test:gateway-package": "npm test -w @audreyt/cf-ai-gateway",
     "build:index": "tsx --tsconfig scripts/tsconfig.json scripts/build-ask-index.ts",
     "r2:lifecycle:cache": "wrangler r2 bucket lifecycle set askit-answer-cache --file config/r2-answer-cache-lifecycle.json --force",
     "r2:lifecycle:cache:preview": "wrangler r2 bucket lifecycle set askit-answer-cache-preview --file config/r2-answer-cache-lifecycle.json --force",

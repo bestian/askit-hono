@@ -1,5 +1,5 @@
 {
-  "name": "@audreyt/cf-ai-gateway",
+  "name": "@au/cf-ai-gateway",
   "version": "0.1.0",
   "description": "CF AI Gateway helpers for Baseten Nemotron and Sakana Fugu (Workers)",
   "license": "MIT",

@@ -16,9 +16,9 @@
     "tail": "npx wrangler tail",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
-    "test:gateway-package": "npm test -w @audreyt/cf-ai-gateway",
-    "pack:gateway": "npm run pack:tarball -w @audreyt/cf-ai-gateway",
-    "publish:gateway": "npm publish -w @audreyt/cf-ai-gateway --access public",
+    "test:gateway-package": "npm test -w @au/cf-ai-gateway",
+    "pack:gateway": "npm run pack:tarball -w @au/cf-ai-gateway",
+    "publish:gateway": "npm publish -w @au/cf-ai-gateway --access public",
     "build:index": "tsx --tsconfig scripts/tsconfig.json scripts/build-ask-index.ts",
     "r2:lifecycle:cache": "wrangler r2 bucket lifecycle set askit-answer-cache --file config/r2-answer-cache-lifecycle.json --force",
     "r2:lifecycle:cache:preview": "wrangler r2 bucket lifecycle set askit-answer-cache-preview --file config/r2-answer-cache-lifecycle.json --force",
@@ -38,7 +38,7 @@
     "cf:baseten-verify": "tsx --tsconfig packages/cf-ai-gateway/tsconfig.json packages/cf-ai-gateway/scripts/verify-baseten.ts"
   },
   "dependencies": {
-    "@audreyt/cf-ai-gateway": "workspace:*",
+    "@au/cf-ai-gateway": "workspace:*",
     "fuse.js": "^7.3.0",
     "hono": "^4.6.14"
   },

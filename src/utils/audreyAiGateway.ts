@@ -1,1 +1,1 @@
-export * from '@audreyt/cf-ai-gateway'
+export * from '@au/cf-ai-gateway'

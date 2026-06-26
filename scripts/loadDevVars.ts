@@ -1,1 +1,1 @@
-export { loadDevVars } from '@audreyt/cf-ai-gateway/loadDevVars'
+export { loadDevVars } from '@au/cf-ai-gateway/loadDevVars'

@@ -1,6 +1,6 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono'
 import { secureHeaders } from 'hono/secure-headers'
-import { createAskCors } from '@audreyt/cf-ai-gateway'
+import { createAskCors } from '@au/cf-ai-gateway'
 
 import { renderHomePage } from './pages/home'
 import { renderPrivacyPolicyPage } from './pages/privacy'

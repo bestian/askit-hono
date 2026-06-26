@@ -4,6 +4,8 @@
 
 The tarball includes only `dist/` (`files: ["dist"]` in package.json). No git submodule, no sibling `file:` path, no install-time build.
 
+**Tarball filename:** `npm pack` emits `audreyt-cf-ai-gateway-<version>.tgz` (scope `@` → `audreyt-`). Do not use `cf-ai-gateway-….tgz` in `file:` paths.
+
 ## Refresh tarball (askit-hono maintainers)
 
 From askit-hono repo root (requires `plurality.net` as sibling for default output path):

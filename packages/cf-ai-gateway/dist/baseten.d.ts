@@ -21,5 +21,6 @@ export declare function buildBasetenChatCompletionsUrl(accountId?: string, gatew
 export declare function openAiChatCompletionsEventStreamToText(): TransformStream<Uint8Array, string>;
 export declare function completeViaGatewayChatCompletions(config: GatewayChatCompletionsConfig, messages: ChatMessage[], maxCompletionTokens: number | undefined, stream: boolean): Promise<Response>;
 export declare function streamViaGatewayChatCompletions(config: GatewayChatCompletionsConfig, messages: ChatMessage[], maxCompletionTokens: number | undefined): Promise<ReadableStream<Uint8Array>>;
+export declare function streamViaDirectBasetenChatCompletions(apiKey: string, model: string, messages: ChatMessage[], maxCompletionTokens: number | undefined): Promise<ReadableStream<Uint8Array>>;
 export {};
 //# sourceMappingURL=baseten.d.ts.map

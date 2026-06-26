@@ -125,3 +125,26 @@ export async function streamViaGatewayChatCompletions(config, messages, maxCompl
         throw new Error('Baseten gateway stream missing body');
     return res.body;
 }
+export async function streamViaDirectBasetenChatCompletions(apiKey, model, messages, maxCompletionTokens) {
+    const res = await fetch('https://inference.baseten.co/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+            Authorization: `Api-Key ${apiKey}`,
+            'Content-Type': 'application/json',
+            Accept: 'text/event-stream',
+        },
+        body: JSON.stringify({
+            model,
+            messages,
+            max_tokens: clampMaxTokens(maxCompletionTokens),
+            stream: true,
+        }),
+    });
+    if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Direct Baseten HTTP ${res.status}: ${errText.slice(0, 500)}`);
+    }
+    if (!res.body)
+        throw new Error('Direct Baseten stream missing body');
+    return res.body;
+}

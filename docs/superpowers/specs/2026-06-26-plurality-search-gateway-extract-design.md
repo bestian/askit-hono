@@ -19,7 +19,7 @@
 
 - Routing Plurality book questions through default `ask.archive.tw/au` (transcript corpus).
 - Moving LINE webhook, Audrey skill mining, or sayit D1 retrieval into the shared package.
-- Publishing the package to public npm in v1 (workspace / `file:` dependency is fine).
+- Keeping `@au/cf-ai-gateway` off public npm (superseded: published as `@au/cf-ai-gateway@0.1.0`).
 
 ## Architecture
 

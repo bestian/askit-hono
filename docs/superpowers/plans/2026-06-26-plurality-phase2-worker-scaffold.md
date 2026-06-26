@@ -5,10 +5,10 @@
 
 ## Delivered
 
-- Hono worker: `GET /au/:question?lang=`, `GET /capacity`, OPTIONS + CORS via `@audreyt/cf-ai-gateway`
+- Hono worker: `GET /au/:question?lang=`, `GET /capacity`, OPTIONS + CORS via `@au/cf-ai-gateway`
 - Stub RAG markdown in `stubAnswer.ts` (Phase 3 replaces)
 - `resolveQueryLang` for en/zh/ja/de/th/el
-- Dependency: `file:../../askit-hono/packages/cf-ai-gateway`
+- Dependency: `file:vendor/au-cf-ai-gateway-0.1.0.tgz` (or `^0.1.0` from npm `@au/cf-ai-gateway`)
 - wrangler dev port **8788** (askit 8787)
 
 ## Next (Phase 3)

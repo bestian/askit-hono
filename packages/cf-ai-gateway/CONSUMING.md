@@ -9,7 +9,7 @@ npm install @au/cf-ai-gateway
 
 Published tarball includes prebuilt `dist/` only (no runtime dependencies).
 
-**plurality-ask:** `"@au/cf-ai-gateway": "^0.1.0"`
+**plurality-ask:** default `file:vendor/au-cf-ai-gateway-0.1.0.tgz` (committed for CI). After `npm view @au/cf-ai-gateway version` succeeds, may use `"^0.1.0"`.
 
 ## Maintainers (askit-hono)
 

@@ -442,10 +442,10 @@ function cacheCagResponse(
   if (response.status !== 200 || !response.body) return response
   const [toClient, toCache] = response.body.tee()
   const headers = new Headers(response.headers)
+  headers.set('Cache-Control', 'private, no-store')
   if (cacheKey) {
     const contentType =
       response.headers.get('Content-Type') || 'text/markdown; charset=UTF-8'
-    headers.set('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400')
     c.executionCtx.waitUntil(
       readStreamToString(toCache)
         .then((text) => {
@@ -456,7 +456,6 @@ function cacheCagResponse(
     )
   } else {
     toCache.cancel().catch(() => {})
-    headers.set('Cache-Control', 'private, no-store')
   }
   return new Response(toClient, {
     status: response.status,

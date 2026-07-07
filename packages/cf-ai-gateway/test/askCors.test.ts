@@ -37,7 +37,7 @@ test('apply adds CORS headers for allowed origin', () => {
   assert.match(response.headers.get('Vary') ?? '', /Origin/i)
 })
 
-test('apply leaves response unchanged for denied origin', () => {
+test('apply adds Vary: Origin but no CORS for denied origin', () => {
   const request = new Request('https://example.test/au/hello', {
     headers: { Origin: DENIED },
   })
@@ -45,6 +45,15 @@ test('apply leaves response unchanged for denied origin', () => {
   const response = askCors.apply(request, inner)
   assert.equal(response.headers.get('Access-Control-Allow-Origin'), null)
   assert.equal(response.headers.get('X-Test'), '1')
+  assert.match(response.headers.get('Vary') ?? '', /Origin/i)
+})
+
+test('apply adds Vary: Origin for missing origin', () => {
+  const request = new Request('https://example.test/au/hello')
+  const inner = new Response('ok', { status: 200 })
+  const response = askCors.apply(request, inner)
+  assert.equal(response.headers.get('Access-Control-Allow-Origin'), null)
+  assert.match(response.headers.get('Vary') ?? '', /Origin/i)
 })
 
 test('preflight returns 204 with CORS for allowed origin', () => {

@@ -44,14 +44,21 @@ export function createAskCors(options: AskCorsOptions): {
 
   function apply(request: Request, response: Response): Response {
     const origin = request.headers.get('Origin') ?? undefined
-    if (!isAllowedOrigin(origin)) return response
-
     const headers = new Headers(response.headers)
+    appendVary(headers, 'Origin')
+
+    if (!isAllowedOrigin(origin)) {
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      })
+    }
+
     headers.set('Access-Control-Allow-Origin', origin!)
     headers.set('Access-Control-Allow-Methods', allowedMethods)
     headers.set('Access-Control-Allow-Headers', allowedHeaders)
     headers.set('Access-Control-Max-Age', maxAgeSeconds)
-    appendVary(headers, 'Origin')
 
     return new Response(response.body, {
       status: response.status,

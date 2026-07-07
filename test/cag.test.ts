@@ -328,6 +328,7 @@ test('security headers apply to manual responses, cache hits, and CAG streams', 
   )
   assert.equal(cachedResponse.status, 200)
   assert.equal(cachedResponse.headers.get('X-Cache'), 'HIT')
+  assert.equal(cachedResponse.headers.get('Cache-Control'), 'public, max-age=3600, stale-while-revalidate=86400')
   assertSecurityHeaders(cachedResponse)
   assert.equal(await cachedResponse.text(), '<!doctype html><p>cached</p>')
 
@@ -362,6 +363,7 @@ test('security headers apply to manual responses, cache hits, and CAG streams', 
     executionCtx,
   )
   assert.equal(streamResponse.status, 200)
+  assert.equal(streamResponse.headers.get('Cache-Control'), 'private, no-store')
   assertSecurityHeaders(streamResponse)
   assert.match(await streamResponse.text(), /這是串流回答/)
   await Promise.all(waitUntilPromises)
@@ -387,6 +389,7 @@ test('public CAG allows archive.tw to read cached stream responses across origin
 
   assert.equal(response.status, 200)
   assert.equal(response.headers.get('X-Cache'), 'HIT')
+  assert.equal(response.headers.get('Cache-Control'), 'public, max-age=3600, stale-while-revalidate=86400')
   assert.equal(response.headers.get('Access-Control-Allow-Origin'), 'https://archive.tw')
   assert.equal(response.headers.get('Access-Control-Allow-Methods'), 'GET, OPTIONS')
   assert.equal(response.headers.get('Access-Control-Allow-Headers'), 'Content-Type')
@@ -1170,6 +1173,7 @@ test('public CAG does not cache blank, short, or known-bad streamed answers', as
     const response = await resolveAfterCooldown(responsePromise, t)
 
     assert.equal(response.status, 200)
+    assert.equal(response.headers.get('Cache-Control'), 'private, no-store')
     await response.text()
     await Promise.all(waitUntilPromises)
     assert.deepEqual(cachedBodies, [])

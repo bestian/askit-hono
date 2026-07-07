@@ -30,17 +30,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
         with:
-          node-version: "24"
-          cache: npm
+          bun-version: latest
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Typecheck
-        run: npm run typecheck
+        run: bun run typecheck
 
       - name: Refresh R2 index
         env:
@@ -48,28 +47,28 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           R2_BUCKET: askit-fuse-index-cache
           R2_KEY: ask-index/audrey-tang.json
-        run: npm run build:index
+        run: bun run build:index
 
       - name: Sync vector index
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npm run vectorize:sync
+        run: bun run vectorize:sync
       - name: Build bigram index
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npm run index:bigram
+        run: bun run index:bigram
 
       - name: Validate Worker bundle
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler deploy --dry-run --outdir /tmp/askit-hono-dry-run
+        run: bunx wrangler deploy --dry-run --outdir /tmp/askit-hono-dry-run
 
       - name: Deploy Worker to refresh runtime cache
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npm run deploy
+        run: bun run deploy

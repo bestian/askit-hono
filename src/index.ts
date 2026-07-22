@@ -1029,6 +1029,7 @@ async function replyWithCag(
       vectorizeMinScore: resolveVectorizeMinScore(env.CAG_VECTORIZE_MIN_SCORE),
       cagCache: env.CAG_CACHE,
       sayitDb: env.SAYIT_DB,
+      aiGateway: resolveAudreyAiGateway(env),
     })
   } catch (e) {
     cagFailed = true

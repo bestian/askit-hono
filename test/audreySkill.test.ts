@@ -135,6 +135,23 @@ test('audreySkillCitationFootnotes handles adversarial chunk boundaries like a s
   }
 })
 
+test('audreySkillCitationFootnotes handles citations immediately after h', async () => {
+  const input = 'Taiwan civic tech[1] builds on research[2].'
+  const output = await renderStrictChunks([...input])
+
+  assert.match(output, /tech\[\^1\]/)
+  assert.match(output, /research\[\^2\]/)
+  assert.doesNotMatch(output, /tech\[1\]|research\[2\]/)
+  assert.match(output, /\[\^1\]:/)
+  assert.match(output, /\[\^2\]:/)
+})
+
+test('audreySkillCitationFootnotes strips archive URLs after a non-URL h', async () => {
+  const input = 'Prefix hhttps://archive.tw/2026-05-28-demo#s63852758。'
+
+  assert.equal(await renderStrictChunks([...input]), 'Prefix h。')
+})
+
 test('audreySkillCitationFootnotes drops unfinished citations and URLs on flush', async () => {
   assert.equal(await renderStrictChunks(['開頭 [638527']), '開頭 ')
   assert.equal(await renderStrictChunks(['原始 https://archi']), '原始 ')

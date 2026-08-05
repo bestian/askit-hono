@@ -1,0 +1,17 @@
+// /au 本機端到端驗證用設定，搭配 test/e2e-worker.ts（見該檔說明）。
+// 用法：npx wrangler dev --config test/e2e-wrangler.jsonc --port 8788 --ip 127.0.0.1
+{
+  "name": "askit-hono-e2e",
+  "main": "e2e-worker.ts",
+  "compatibility_date": "2026-07-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "LINE_CHANNEL_ACCESS_TOKEN": "e2e-dummy-token",
+    "LINE_CHANNEL_SECRET": "e2e-dummy-secret",
+    "CAG_RETRIEVER": "archive",
+    "ASK_ARCHIVE_BASE_URL": "https://archive.tw"
+  },
+  "r2_buckets": [
+    { "binding": "ASK_INDEX", "bucket_name": "askit-index-e2e" }
+  ]
+}

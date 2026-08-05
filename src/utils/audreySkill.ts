@@ -145,10 +145,11 @@ export function audreySkillCitationFootnotes(
       }
       return
     }
-    controller.enqueue(next)
+    controller.enqueue(urlCandidate)
     state = 'text'
     urlCandidate = ''
     droppedNumericCitation = false
+    emitTextChar(controller, char)
   }
 
   function consumeArchiveUrl(

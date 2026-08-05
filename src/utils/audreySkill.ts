@@ -55,24 +55,23 @@ const ARCHIVE_URL_PREFIX = 'https://archive.tw/'
 const ARCHIVE_URL_PREFIX_PATTERN = ARCHIVE_URL_PREFIX.replace(/\./g, '\\.')
 const CITATION_BODY_MAX = 64
 const URL_BODY_MAX = 512
-// Bounds repeated rescans when deletions expose another citation or URL opener.
-const MAX_CARRY = 256
 
 const CITATION_RE = new RegExp(`\\[([^\\][]{0,${CITATION_BODY_MAX}})\\]`, 'y')
 const ARCHIVE_LINK_TAIL_RE = new RegExp(
   `\\(${ARCHIVE_URL_PREFIX_PATTERN}[^\\s)]{0,${URL_BODY_MAX}}\\)`,
-  'y',
+  'iy',
 )
 const ARCHIVE_RAW_URL_RE = new RegExp(
   `${ARCHIVE_URL_PREFIX_PATTERN}[^\\s)[\\]，。,.；;！？!?]{0,${URL_BODY_MAX}}`,
-  'y',
+  'iy',
 )
-const ARCHIVE_RAW_URL_GLOBAL_RE = new RegExp(ARCHIVE_RAW_URL_RE.source, 'g')
+const ARCHIVE_RAW_URL_GLOBAL_RE = new RegExp(ARCHIVE_RAW_URL_RE.source, 'ig')
 const NUMERIC_CITATION = /^\d+(?:\s*,\s*\d+)*$/
 const LINK_OPEN_RE = new RegExp(`\\[[^\\][]{0,${CITATION_BODY_MAX}}\\]\\(([^)]*)$`)
 const LINK_LOOKBEHIND = CITATION_BODY_MAX + URL_BODY_MAX + ARCHIVE_URL_PREFIX.length + 4
 
 const OPEN_BRACKET = 0x5b
+const UPPER_H = 0x48
 const LOWER_H = 0x68
 
 type CitationConstruct =
@@ -117,10 +116,11 @@ function renderCitation(
 }
 
 function archiveLinkTailOpen(input: string, at: number): boolean {
+  const candidate = input.slice(at).toLowerCase()
   if (input.length - at < ARCHIVE_URL_PREFIX.length) {
-    return ARCHIVE_URL_PREFIX.startsWith(input.slice(at))
+    return ARCHIVE_URL_PREFIX.startsWith(candidate)
   }
-  if (!input.startsWith(ARCHIVE_URL_PREFIX, at)) return false
+  if (!candidate.startsWith(ARCHIVE_URL_PREFIX)) return false
   const body = input.slice(at + ARCHIVE_URL_PREFIX.length)
   return body.length <= URL_BODY_MAX && !/[\s)]/.test(body)
 }
@@ -156,7 +156,7 @@ function matchArchiveUrl(input: string, at: number): CitationMatch {
   if (!ARCHIVE_RAW_URL_RE.exec(input)) {
     return (
       input.length - at < ARCHIVE_URL_PREFIX.length &&
-      ARCHIVE_URL_PREFIX.startsWith(input.slice(at))
+      ARCHIVE_URL_PREFIX.startsWith(input.slice(at).toLowerCase())
     )
       ? 'partial'
       : null
@@ -192,7 +192,7 @@ function openableSuffix(output: string): string {
 
   const urlFrom = Math.max(0, output.length - ARCHIVE_URL_PREFIX.length + 1)
   for (let index = urlFrom; index < start; index += 1) {
-    if (ARCHIVE_URL_PREFIX.startsWith(output.slice(index))) {
+    if (ARCHIVE_URL_PREFIX.startsWith(output.slice(index).toLowerCase())) {
       start = index
       break
     }
@@ -204,7 +204,7 @@ function openableSuffix(output: string): string {
 function nextCitationOpener(input: string, from: number): number {
   for (let index = from; index < input.length; index += 1) {
     const code = input.charCodeAt(index)
-    if (code === OPEN_BRACKET || code === LOWER_H) return index
+    if (code === OPEN_BRACKET || code === UPPER_H || code === LOWER_H) return index
   }
   return -1
 }
@@ -249,7 +249,7 @@ function scanAudreySkillCitations(
 
   function takeOpenableSuffix(): string {
     let carry = ''
-    while (carry.length < MAX_CARRY) {
+    while (output) {
       const next = openableSuffix(output)
       if (!next) break
       carry = next + carry

@@ -191,8 +191,23 @@ test('Audrey citation streaming is chunk-independent for malformed combinations'
     return seed / 0x1_0000_0000
   }
   const fragments = [
-    '[', ']', '(', ')', '1', '2', '9', '63852758', ',',
-    'h', 'https://archive.tw/', 'a-talk#s1', 'tech', '文字', ' ', '。'
+    '[',
+    ']',
+    '(',
+    ')',
+    '1',
+    '2',
+    '9',
+    '63852758',
+    ',',
+    'h',
+    'https://archive.tw/',
+    'HTTPS://ARCHIVE.TW/',
+    'a-talk#s1',
+    'tech',
+    '文字',
+    ' ',
+    '。',
   ]
 
   for (let iteration = 0; iteration < 500; iteration += 1) {
@@ -218,7 +233,39 @@ test('Audrey citation streaming is chunk-independent for malformed combinations'
   }
 })
 
+test('Audrey citation scanner preserves non-archive links and enforces bounds', async () => {
+  const body64 = 'x'.repeat(64)
+  const body65 = 'y'.repeat(65)
+  const input = [
+    `[${body64}]`,
+    `[${body65}]`,
+    '[1](https://example.com/source)',
+    '[1, 9]',
+    'HTTPS://ARCHIVE.TW/a-talk#s1',
+    '[2](HTTPS://ARCHIVE.TW/a-talk#s2)',
+  ].join(' ')
+  const expectedBody = [
+    `[${body64}]`,
+    `[${body65}]`,
+    '[^1](https://example.com/source)',
+    '[^1]',
+    '',
+    '[^2]',
+  ].join(' ')
+
+  const rendered = renderAudreySkillMarkdown(input, sources)
+  const streamed = await renderStrictChunks([...input])
+
+  assert.equal(rendered.split('\n\n[^')[0], expectedBody.trim())
+  assert.equal(streamed.split('\n\n[^')[0], expectedBody)
+  assert.doesNotMatch(rendered, /HTTPS:\/\/ARCHIVE\.TW\/a-talk/)
+  assert.doesNotMatch(streamed, /HTTPS:\/\/ARCHIVE\.TW\/a-talk/)
+  assert.match(streamed, /\[\^1\]:/)
+  assert.match(streamed, /\[\^2\]:/)
+})
+
 test('audreySkillCitationFootnotes drops unfinished citations and URLs on flush', async () => {
   assert.equal(await renderStrictChunks(['開頭 [638527']), '開頭 ')
   assert.equal(await renderStrictChunks(['原始 https://archi']), '原始 ')
+  assert.equal(await renderStrictChunks(['原始 HTTPS://ARCHI']), '原始 ')
 })

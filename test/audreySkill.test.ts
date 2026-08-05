@@ -152,6 +152,72 @@ test('audreySkillCitationFootnotes strips archive URLs after a non-URL h', async
   assert.equal(await renderStrictChunks([...input]), 'Prefix h。')
 })
 
+test('Audrey citation renderers handle redispatch and nested archive URL cases', async () => {
+  const longPrefix = 'x'.repeat(65)
+  const cases: Array<[input: string, expected: string]> = [
+    [`[${longPrefix}[1] 後續`, `[${longPrefix}[^1] 後續`],
+    ['見 https://archive.tw/a-talk#s1[1] 結束', '見 [^1] 結束'],
+    ['參見 [https://archive.tw/a-talk#s1] 這段', '參見 [] 這段'],
+    ['[參見 https://archive.tw/a-talk#s1 之後', '[參見  之後'],
+    ['前 [[63852758]1] 後', '前 [^1] 後'],
+    ['有效 [1](https://archive.tw/a-talk#s1) 結束', '有效 [^1] 結束'],
+  ]
+
+  for (const [input, expected] of cases) {
+    const renderedBody = renderAudreySkillMarkdown(input, sources).split('\n\n[^')[0]!
+
+    assert.equal(renderedBody, expected, `rendered: ${input}`)
+    assert.doesNotMatch(renderedBody, /https:\/\/archive\.tw\//)
+
+    const chunkings = [[input], [...input]]
+    for (let split = 1; split < input.length; split += 1) {
+      chunkings.push([input.slice(0, split), input.slice(split)])
+    }
+    for (const chunks of chunkings) {
+      const streamed = await renderStrictChunks(chunks)
+      const streamedBody = streamed.split('\n\n[^')[0]!
+
+      assert.equal(streamedBody, expected, `streamed ${JSON.stringify(chunks)}: ${input}`)
+      assert.doesNotMatch(streamedBody, /https:\/\/archive\.tw\//)
+      if (expected.includes('[^1]')) assert.match(streamed, /\n\n\[\^1\]:/)
+    }
+  }
+})
+
+test('Audrey citation streaming is chunk-independent for malformed combinations', async () => {
+  let seed = 63
+  const random = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+    return seed / 0x1_0000_0000
+  }
+  const fragments = [
+    '[', ']', '(', ')', '1', '2', '9', '63852758', ',',
+    'h', 'https://archive.tw/', 'a-talk#s1', 'tech', '文字', ' ', '。'
+  ]
+
+  for (let iteration = 0; iteration < 500; iteration += 1) {
+    const count = 1 + Math.floor(random() * 12)
+    let input = ''
+    for (let index = 0; index < count; index += 1) {
+      input += fragments[Math.floor(random() * fragments.length)]!
+    }
+
+    const expected = await renderStrictChunks([input])
+    const chunks: string[] = []
+    for (let at = 0; at < input.length;) {
+      const size = 1 + Math.floor(random() * 7)
+      chunks.push(input.slice(at, at + size))
+      at += size
+    }
+    const streamed = await renderStrictChunks(chunks)
+    const body = streamed.split('\n\n[^')[0]!
+
+    assert.equal(streamed, expected, `chunking changed output: ${JSON.stringify(input)}`)
+    assert.doesNotMatch(body, /https:\/\/archive\.tw\//)
+    assert.doesNotMatch(body, /\[(?:1|2)\]/)
+  }
+})
+
 test('audreySkillCitationFootnotes drops unfinished citations and URLs on flush', async () => {
   assert.equal(await renderStrictChunks(['開頭 [638527']), '開頭 ')
   assert.equal(await renderStrictChunks(['原始 https://archi']), '原始 ')

@@ -51,15 +51,34 @@ function footnoteForSource(source: CagSource): string {
   return `[${source.label}](${source.href})`
 }
 
-const ARCHIVE_MARKDOWN_LINK = /\[(\d+)\]\(https:\/\/archive\.tw\/[^)\s]+#s\d+\)/g
-const ARCHIVE_MARKDOWN_LINK_TEXT = /\[([^\]\d][^\]]*)\]\(https:\/\/archive\.tw\/[^)\s]+#s\d+\)/g
-const ARCHIVE_RAW_URL = /https:\/\/archive\.tw\/[^\s)]+#s\d+/g
-const CITATION_PATTERN = /\[(\d{1,9})\]/g
-
 const ARCHIVE_URL_PREFIX = 'https://archive.tw/'
-const ARCHIVE_URL_DELIMITER = /[\s)，。,.；;！？!?\]]/u
+const ARCHIVE_URL_PREFIX_PATTERN = ARCHIVE_URL_PREFIX.replace(/\./g, '\\.')
+const CITATION_BODY_MAX = 64
+const URL_BODY_MAX = 512
 
-type StrictCitationState = 'text' | 'citation' | 'urlCandidate' | 'archiveUrl'
+const CITATION_RE = new RegExp(`\\[([^\\][]{0,${CITATION_BODY_MAX}})\\]`, 'y')
+const ARCHIVE_LINK_TAIL_RE = new RegExp(
+  `\\(${ARCHIVE_URL_PREFIX_PATTERN}[^\\s)]{0,${URL_BODY_MAX}}\\)`,
+  'iy',
+)
+const ARCHIVE_RAW_URL_RE = new RegExp(
+  `${ARCHIVE_URL_PREFIX_PATTERN}[^\\s)[\\]，。,.；;！？!?]{0,${URL_BODY_MAX}}`,
+  'iy',
+)
+const ARCHIVE_RAW_URL_GLOBAL_RE = new RegExp(ARCHIVE_RAW_URL_RE.source, 'ig')
+const NUMERIC_CITATION = /^\d+(?:\s*,\s*\d+)*$/
+const LINK_OPEN_RE = new RegExp(`\\[[^\\][]{0,${CITATION_BODY_MAX}}\\]\\(([^)]*)$`)
+const LINK_LOOKBEHIND = CITATION_BODY_MAX + URL_BODY_MAX + ARCHIVE_URL_PREFIX.length + 4
+
+const OPEN_BRACKET = 0x5b
+const UPPER_H = 0x48
+const LOWER_H = 0x68
+
+type CitationConstruct =
+  | { kind: 'citation'; end: number; body: string; link: boolean }
+  | { kind: 'url'; end: number }
+
+type CitationMatch = CitationConstruct | 'partial' | null
 
 function appendFootnotes(
   controller: TransformStreamDefaultController<string>,
@@ -74,17 +93,15 @@ function appendFootnotes(
   }
 }
 
-function emitStrictCitation(
-  controller: TransformStreamDefaultController<string>,
-  raw: string,
+function renderCitation(
+  body: string,
+  link: boolean,
   used: Set<number>,
   sourceCount: number,
-): boolean {
-  const trimmed = raw.trim()
-  if (!/^\d+(?:\s*,\s*\d+)*$/.test(trimmed)) {
-    controller.enqueue(`[${raw}]`)
-    return false
-  }
+): string {
+  const safe = body.replace(ARCHIVE_RAW_URL_GLOBAL_RE, '')
+  const trimmed = safe.trim()
+  if (!NUMERIC_CITATION.test(trimmed)) return link ? safe : `[${safe}]`
 
   const valid: number[] = []
   for (const part of trimmed.split(',')) {
@@ -94,136 +111,237 @@ function emitStrictCitation(
       used.add(index)
     }
   }
-  if (valid.length === 0) return true
-  controller.enqueue(valid.map((index) => `[^${index}]`).join(', '))
-  return false
+  if (valid.length === 0) return ''
+  return valid.map((index) => `[^${index}]`).join(', ')
+}
+
+function archiveLinkTailOpen(input: string, at: number): boolean {
+  const candidate = input.slice(at).toLowerCase()
+  if (input.length - at < ARCHIVE_URL_PREFIX.length) {
+    return ARCHIVE_URL_PREFIX.startsWith(candidate)
+  }
+  if (!candidate.startsWith(ARCHIVE_URL_PREFIX)) return false
+  const body = input.slice(at + ARCHIVE_URL_PREFIX.length)
+  return body.length <= URL_BODY_MAX && !/[\s)]/.test(body)
+}
+
+function matchCitation(input: string, at: number): CitationMatch {
+  CITATION_RE.lastIndex = at
+  const matched = CITATION_RE.exec(input)
+  if (!matched) {
+    const bodyLength = input.length - at - 1
+    return bodyLength <= CITATION_BODY_MAX && input.indexOf(']', at + 1) < 0
+      ? 'partial'
+      : null
+  }
+
+  const body = matched[1]!
+  const end = CITATION_RE.lastIndex
+  if (end === input.length) return 'partial'
+  if (input.charCodeAt(end) !== 0x28) {
+    return { kind: 'citation', end, body, link: false }
+  }
+
+  ARCHIVE_LINK_TAIL_RE.lastIndex = end
+  if (ARCHIVE_LINK_TAIL_RE.exec(input)) {
+    return { kind: 'citation', end: ARCHIVE_LINK_TAIL_RE.lastIndex, body, link: true }
+  }
+  return archiveLinkTailOpen(input, end + 1)
+    ? 'partial'
+    : { kind: 'citation', end, body, link: false }
+}
+
+function matchArchiveUrl(input: string, at: number): CitationMatch {
+  ARCHIVE_RAW_URL_RE.lastIndex = at
+  if (!ARCHIVE_RAW_URL_RE.exec(input)) {
+    return (
+      input.length - at < ARCHIVE_URL_PREFIX.length &&
+      ARCHIVE_URL_PREFIX.startsWith(input.slice(at).toLowerCase())
+    )
+      ? 'partial'
+      : null
+  }
+  const end = ARCHIVE_RAW_URL_RE.lastIndex
+  const bodyLength = end - at - ARCHIVE_URL_PREFIX.length
+  return end === input.length && bodyLength < URL_BODY_MAX
+    ? 'partial'
+    : { kind: 'url', end }
+}
+
+function openableSuffix(output: string): string {
+  if (!output) return ''
+  let start = output.length
+
+  const citationFrom = Math.max(0, output.length - CITATION_BODY_MAX - 1)
+  for (let index = citationFrom; index < start; index += 1) {
+    if (output.charCodeAt(index) !== OPEN_BRACKET) continue
+    if (output.indexOf(']', index + 1) >= 0) continue
+    start = index
+    break
+  }
+
+  const linkFrom = Math.max(0, output.length - LINK_LOOKBEHIND)
+  const window = output.slice(linkFrom)
+  if (window.includes('](')) {
+    const link = LINK_OPEN_RE.exec(window)
+    if (link && linkFrom + link.index < start) {
+      const urlAt = linkFrom + link.index + link[0].length - link[1]!.length
+      if (archiveLinkTailOpen(output, urlAt)) start = linkFrom + link.index
+    }
+  }
+
+  const urlFrom = Math.max(0, output.length - ARCHIVE_URL_PREFIX.length + 1)
+  for (let index = urlFrom; index < start; index += 1) {
+    if (ARCHIVE_URL_PREFIX.startsWith(output.slice(index).toLowerCase())) {
+      start = index
+      break
+    }
+  }
+
+  return start < output.length ? output.slice(start) : ''
+}
+
+function nextCitationOpener(input: string, from: number): number {
+  for (let index = from; index < input.length; index += 1) {
+    const code = input.charCodeAt(index)
+    if (code === OPEN_BRACKET || code === UPPER_H || code === LOWER_H) return index
+  }
+  return -1
+}
+
+function resolveTruncatedCitation(
+  rest: string,
+  used: Set<number>,
+  sourceCount: number,
+): string | null {
+  if (rest.charCodeAt(0) === OPEN_BRACKET) {
+    const close = rest.indexOf(']')
+    if (close < 0) {
+      const body = rest.slice(1)
+      return NUMERIC_CITATION.test(body.trim()) ? '' : null
+    }
+
+    const tail = rest.slice(close + 1)
+    const truncatedUrl = tail.slice(1)
+    const isLink = truncatedUrl.length >= 'https://'.length
+    return (
+      renderCitation(rest.slice(1, close), isLink, used, sourceCount) +
+      (isLink ? '' : tail)
+    )
+  }
+  return rest.length >= 'https://'.length ? '' : rest
+}
+
+/**
+ * Shared scanner for streamed and batch answers. Failed matches advance only
+ * past their opener, while deletions pull back any suffix that could become a
+ * new citation or archive URL. This keeps output independent of chunk splits.
+ */
+function scanAudreySkillCitations(
+  input: string,
+  sources: CagSource[],
+  used: Set<number>,
+  awaitingMore: boolean,
+): { text: string; rest: string } {
+  let output = ''
+  let buffer = input
+  let cursor = 0
+
+  function takeOpenableSuffix(): string {
+    let carry = ''
+    while (output) {
+      const next = openableSuffix(output)
+      if (!next) break
+      carry = next + carry
+      output = output.slice(0, output.length - next.length)
+    }
+    return carry
+  }
+
+  while (cursor < buffer.length) {
+    const at = nextCitationOpener(buffer, cursor)
+    if (at < 0) {
+      output += buffer.slice(cursor)
+      break
+    }
+    output += buffer.slice(cursor, at)
+    cursor = at
+
+    const match =
+      buffer.charCodeAt(at) === OPEN_BRACKET
+        ? matchCitation(buffer, at)
+        : matchArchiveUrl(buffer, at)
+
+    if (match === 'partial') {
+      const rest = buffer.slice(at)
+      if (awaitingMore) {
+        const carry = takeOpenableSuffix()
+        return { text: output, rest: carry + rest }
+      }
+
+      const resolved = resolveTruncatedCitation(rest, used, sources.length)
+      if (resolved === null) {
+        output += buffer[at]!
+        cursor = at + 1
+        continue
+      }
+      output += resolved
+      buffer = resolved === '' ? takeOpenableSuffix() : ''
+      cursor = 0
+      continue
+    }
+
+    if (match === null) {
+      output += buffer[at]!
+      cursor = at + 1
+      continue
+    }
+
+    const rendered =
+      match.kind === 'citation'
+        ? renderCitation(match.body, match.link, used, sources.length)
+        : ''
+    if (rendered === '') {
+      const carry = takeOpenableSuffix()
+      if (carry) {
+        buffer = carry + buffer.slice(match.end)
+        cursor = 0
+        continue
+      }
+    }
+    output += rendered
+    cursor = match.end
+  }
+
+  return { text: output, rest: '' }
 }
 
 export function audreySkillCitationFootnotes(
   sources: CagSource[],
 ): TransformStream<string, string> {
   const used = new Set<number>()
-  let state: StrictCitationState = 'text'
-  let citation = ''
-  let urlCandidate = ''
-  let droppedNumericCitation = false
-  let suppressArchiveLinkCloseParen = false
-
-  function emitTextChar(
-    controller: TransformStreamDefaultController<string>,
-    char: string,
-  ) {
-    if (char === '[') {
-      state = 'citation'
-      citation = ''
-      return
-    }
-    if (char === 'h') {
-      state = 'urlCandidate'
-      urlCandidate = 'h'
-      return
-    }
-    if (droppedNumericCitation && char === '(') {
-      suppressArchiveLinkCloseParen = true
-      droppedNumericCitation = false
-      return
-    }
-    droppedNumericCitation = false
-    controller.enqueue(char)
-  }
-
-  function emitUrlCandidate(
-    controller: TransformStreamDefaultController<string>,
-    char: string,
-  ) {
-    const next = urlCandidate + char
-    if (ARCHIVE_URL_PREFIX.startsWith(next)) {
-      urlCandidate = next
-      if (next === ARCHIVE_URL_PREFIX) {
-        state = 'archiveUrl'
-        urlCandidate = ''
-      }
-      return
-    }
-    controller.enqueue(next)
-    state = 'text'
-    urlCandidate = ''
-    droppedNumericCitation = false
-  }
-
-  function consumeArchiveUrl(
-    controller: TransformStreamDefaultController<string>,
-    char: string,
-  ) {
-    if (!ARCHIVE_URL_DELIMITER.test(char)) return
-    state = 'text'
-    if (char === ')' && suppressArchiveLinkCloseParen) {
-      suppressArchiveLinkCloseParen = false
-      return
-    }
-    suppressArchiveLinkCloseParen = false
-    controller.enqueue(char)
-  }
+  let pending = ''
 
   return new TransformStream<string, string>({
     transform(chunk, controller) {
-      for (const char of chunk) {
-        if (state === 'text') {
-          emitTextChar(controller, char)
-          continue
-        }
-        if (state === 'citation') {
-          if (char === ']') {
-            droppedNumericCitation = emitStrictCitation(
-              controller,
-              citation,
-              used,
-              sources.length,
-            )
-            citation = ''
-            state = 'text'
-            continue
-          }
-          if (citation.length > 64) {
-            controller.enqueue(`[${citation}${char}`)
-            citation = ''
-            state = 'text'
-            droppedNumericCitation = false
-            continue
-          }
-          citation += char
-          continue
-        }
-        if (state === 'urlCandidate') {
-          emitUrlCandidate(controller, char)
-          continue
-        }
-        consumeArchiveUrl(controller, char)
-      }
+      const { text, rest } = scanAudreySkillCitations(
+        pending + chunk,
+        sources,
+        used,
+        true,
+      )
+      pending = rest
+      if (text) controller.enqueue(text)
     },
     flush(controller) {
-      if (state === 'citation') {
-        if (!/^\d+(?:\s*,\s*\d+)*$/.test(citation.trim())) {
-          controller.enqueue(`[${citation}`)
-        }
-      } else if (state === 'urlCandidate') {
-        if (
-          urlCandidate.length < 'https://'.length ||
-          !ARCHIVE_URL_PREFIX.startsWith(urlCandidate)
-        ) {
-          controller.enqueue(urlCandidate)
-        }
+      if (pending) {
+        const { text } = scanAudreySkillCitations(pending, sources, used, false)
+        pending = ''
+        if (text) controller.enqueue(text)
       }
       appendFootnotes(controller, used, sources)
     },
   })
-}
-
-function stripModelArchiveCitations(text: string): string {
-  return text
-    .replace(ARCHIVE_MARKDOWN_LINK, '')
-    .replace(ARCHIVE_MARKDOWN_LINK_TEXT, '$1')
-    .replace(ARCHIVE_RAW_URL, '')
 }
 
 export function renderAudreySkillMarkdown(
@@ -231,23 +349,13 @@ export function renderAudreySkillMarkdown(
   sources: CagSource[],
 ): string {
   const used = new Set<number>()
-  const cleaned = stripModelArchiveCitations(answer).replace(
-    CITATION_PATTERN,
-    (_match, raw: string) => {
-      const index = Number(raw)
-      if (Number.isInteger(index) && index >= 1 && index <= sources.length) {
-        used.add(index)
-        return `[^${index}]`
-      }
-      return ''
-    },
-  )
+  const { text } = scanAudreySkillCitations(answer, sources, used, false)
 
   const indexes = [...used].sort((a, b) => a - b)
-  if (indexes.length === 0) return cleaned.trim()
+  if (indexes.length === 0) return text.trim()
 
   const notes = indexes
     .map((index) => `[^${index}]: ${footnoteForSource(sources[index - 1]!)}`)
     .join('\n')
-  return `${cleaned.trim()}\n\n${notes}\n`
+  return `${text.trim()}\n\n${notes}\n`
 }

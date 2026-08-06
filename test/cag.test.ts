@@ -1115,6 +1115,15 @@ async function resolveAfterCooldown<T>(promise: Promise<T>, t: TestContext): Pro
 
 test('public CAG does not cache blank, short, or known-bad streamed answers', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 })
+  const originalFetch = globalThis.fetch
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+  globalThis.fetch = async (input: RequestInfo | URL) => {
+    const url = new URL(String(input))
+    assert.equal(url.pathname, '/api/section/123')
+    return Response.json({ section_content: '測試內容', display_name: '示範會議' })
+  }
   const badAnswers = [
     '   ',
     '太短',

@@ -152,6 +152,8 @@ export type NormalizedCagOptions = {
   vectorizeMinScore: number
   answerLanguage?: 'en'
   citationTransform?: (sources: CagSource[]) => TransformStream<string, string>
+  cagCache?: KVNamespace
+  skipSourceCache?: boolean
   sayitDb?: D1Database
   aiGateway?: AudreyAiGatewayConfig
 }
@@ -182,6 +184,10 @@ export function normalizeCagOptions(options?: CagOptions): NormalizedCagOptions 
     vectorizeMinScore: options?.vectorizeMinScore ?? DEFAULT_VECTORIZE_MIN_COSINE_SCORE,
     answerLanguage: options?.answerLanguage,
     citationTransform: options?.citationTransform,
+    // 路由都是先 normalize 再呼叫 generate/streamCagAnswer，這兩個欄位若不
+    // 跟著過來，來源 KV 快取在 HTTP 路由上會整個失效（webhook 路徑不受影響）。
+    cagCache: options?.cagCache,
+    skipSourceCache: options?.skipSourceCache,
     sayitDb: options?.sayitDb,
     aiGateway: options?.aiGateway,
   }

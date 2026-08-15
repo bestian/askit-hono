@@ -11,7 +11,8 @@
  * 不動任何他人 schema。建表由本腳本負責；runtime 只查不寫。
  *
  * 用法（從 repo 根目錄執行）：
- *   npm run index:bigram                  # 全量重建（DELETE + INSERT，冪等）
+ *   npm run index:bigram                  # 內容未變則跳過；有變才全量重建（DELETE + INSERT，冪等）
+ *   FORCE=1 npm run index:bigram          # 無視指紋，強制重建
  *   DRY_RUN=1 npm run index:bigram        # 唯讀：只印 sizing，不寫 D1
  *   BIGRAM_DF_MAX=100 npm run index:bigram # 調嚴 rare-key 門檻
  *   LOCAL=1 npm run index:bigram          # 用 --local D1
@@ -27,11 +28,14 @@
  *   LOCAL=1          對 D1 下 --local
  *   DRY_RUN=1        不建表 / 不寫 D1，只報告 sizing
  *   WRANGLER_USE_API_TOKEN=1  wrangler 子行程強制使用 CLOUDFLARE_API_TOKEN（CI 自動啟用）
+ *   META_TABLE       指紋表名（預設 askit_bigram_meta，必須 askit_ 前綴）
+ *   FORCE=1          無視內容指紋，強制整表重建
  *
  * 與建置 fuse/vectorize index 不同：**無 YEARS_BACK cutoff、無 MAX_SECTION_CHARS 上限**——
  * 全語料、全文是重點（正是 Vectorize / archive.tw 缺的覆蓋範圍）。
  */
 import { execSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { extractIndexKeys } from '../src/utils/bigramKeys'
@@ -55,6 +59,20 @@ const IMPORT_FILE_MAX_BYTES = Math.max(
 )
 // 對暫時性匯入失敗的重試次數（指數退避）。失敗的匯入會被 D1 回滾，重試是安全的。
 const IMPORT_RETRIES = Math.max(0, Number(process.env.IMPORT_RETRIES ?? '4'))
+// ── 冪等閘門：內容沒變就不要重寫整張表 ──────────────────────────────────────
+// 本腳本是 DELETE 全表 + 重新 INSERT 約 2,018,120 列（D1 連索引更新一起算「寫入
+// 列數」，所以實測約 400 萬列／次）。它由 refresh-cag-index.yml 的
+// `repository_dispatch: sayit-updated` 觸發（真的有變更時），另外還有一條每日
+// backstop cron 無條件跑。結果是：語料多數日子沒變，卻每天照樣重寫整表——
+// 2026-08-15 量測顯示這一項就是該 Cloudflare 帳單 D1 寫入的 97%
+// （22 天 8,249 萬列，約 $74／月）。
+// 對策：把 postings 算出正規化指紋，與上次存下的比對；相同就整個跳過寫入階段。
+// 讀取幾乎免費（前 250 億列免費），貴的是寫入，所以「照算、只是不寫」是對的取捨。
+const META_TABLE = process.env.META_TABLE ?? 'askit_bigram_meta'
+const META_REQUIRED_COLUMNS = ['key', 'value']
+const FINGERPRINT_KEY = 'postings_fingerprint'
+// FORCE=1 無視指紋，強制重建（改 schema、改 BIGRAM_DF_MAX 之外的輸出格式時用）。
+const FORCE = process.env.FORCE === '1'
 
 // 護欄常數（與 vectorize-sync 的 ensureProgressTable 同形）
 const REQUIRED_COLUMNS = ['bigram', 'section_id']
@@ -205,6 +223,61 @@ async function ensureBigramTable(outDir: string, dryRun: boolean): Promise<void>
   console.log(`[build-bigram-index] 已建立表 ${TABLE}`)
 }
 
+// 同 ensureBigramTable 的護欄形狀：查 sqlite_master → 存在就驗欄位（不符即中止，
+// 絕不寫他人表）→ 不存在才建。永不 DROP。只碰 askit_ 前綴的自有表。
+async function ensureMetaTable(outDir: string, dryRun: boolean): Promise<boolean> {
+  if (!TABLE_NAME_RE.test(META_TABLE)) {
+    throw new Error(`表名不合法：${META_TABLE}`)
+  }
+  const existing = d1Query(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name=${sqlString(META_TABLE)}`,
+  )
+  if (existing.length > 0) {
+    const cols = d1Query(`PRAGMA table_info(${sqlString(META_TABLE)})`)
+    const colNames = new Set(cols.map((c) => String(c.name)))
+    const missing = META_REQUIRED_COLUMNS.filter((c) => !colNames.has(c))
+    if (missing.length > 0) {
+      throw new Error(
+        `偵測到資料庫 ${D1_DATABASE} 已存在名為「${META_TABLE}」的表，` +
+          `但缺少必要欄位 [${missing.join(', ')}]（現有欄位：${[...colNames].join(', ')}）。` +
+          `為避免覆寫既有資料，已中止。請設定 META_TABLE 為其他名稱。`,
+      )
+    }
+    return true
+  }
+  if (dryRun) {
+    console.log(`[build-bigram-index] DRY_RUN：表 ${META_TABLE} 不存在，本次略過建立。`)
+    return false
+  }
+  const createPath = path.join(outDir, 'bigram-meta-create.sql')
+  await writeFile(
+    createPath,
+    `CREATE TABLE IF NOT EXISTS ${META_TABLE} (\n` +
+      `  key TEXT NOT NULL PRIMARY KEY,\n` +
+      `  value TEXT NOT NULL,\n` +
+      `  updated_at TEXT NOT NULL\n` +
+      `) WITHOUT ROWID;\n`,
+  )
+  d1ExecFile(createPath)
+  console.log(`[build-bigram-index] 已建立表 ${META_TABLE}`)
+  return true
+}
+
+// 正規化指紋：postings 的來源查詢沒有 ORDER BY，所以列序在不同次執行之間並不保證
+// 一致——不排序的話雜湊每次都不同，閘門就永遠不會命中。先排序再雜湊。
+// 預先把影響輸出的參數也放進 preimage，這樣改 BIGRAM_DF_MAX 或換表名都會自動失配。
+function postingsFingerprint(postings: Array<[string, number]>): string {
+  const lines = postings.map(([k, id]) => `${k}\u0000${id}`)
+  lines.sort()
+  const hash = createHash('sha256')
+  hash.update(`table=${TABLE}\ndf_max=${BIGRAM_DF_MAX}\ncount=${lines.length}\n`)
+  for (const line of lines) {
+    hash.update(line)
+    hash.update('\n')
+  }
+  return hash.digest('hex')
+}
+
 function runD1SectionsQuery(): BigramSectionRow[] {
   console.log(
     `[build-bigram-index] Querying D1 (${D1_FLAG}) database=${D1_DATABASE} for name LIKE '${SPEAKER_LIKE}'...`,
@@ -275,9 +348,45 @@ async function main(): Promise<void> {
     `[build-bigram-index] 萌典 df=${萌典df} ${萌典df > 0 && keep.has('萌典') ? '(retained)' : 萌典df > 0 ? '(GATED OUT — raise BIGRAM_DF_MAX)' : '(absent in corpus)'}`,
   )
 
+  // ── 冪等閘門 ────────────────────────────────────────────────────────────────
+  // 指紋相同 **且** 現有列數相符才跳過。單看指紋不夠：若有人手動清空或截斷了表，
+  // 指紋仍會命中，跳過就會留下一張空表。列數是那道便宜的完整性檢查。
+  const fingerprint = postingsFingerprint(postings)
+  console.log(`[build-bigram-index] fingerprint=${fingerprint.slice(0, 16)}… (${postings.length} postings)`)
+
+  const metaReady = await ensureMetaTable(outDir, DRY_RUN)
+  let storedFingerprint: string | null = null
+  let currentRowCount: number | null = null
+  if (metaReady) {
+    const metaRows = d1Query(
+      `SELECT value FROM ${META_TABLE} WHERE key=${sqlString(FINGERPRINT_KEY)}`,
+    )
+    storedFingerprint = metaRows.length > 0 ? String(metaRows[0].value) : null
+    const countRows = d1Query(`SELECT COUNT(*) AS n FROM ${TABLE}`)
+    currentRowCount = countRows.length > 0 ? Number(countRows[0].n) : null
+  }
+  const unchanged =
+    storedFingerprint === fingerprint && currentRowCount === postings.length
+
   if (DRY_RUN) {
-    console.log('[build-bigram-index] DRY_RUN=1 — 不寫 D1，不產生 SQL 檔。')
+    console.log(
+      `[build-bigram-index] DRY_RUN=1 — 不寫 D1，不產生 SQL 檔。` +
+        `（此次${unchanged ? '會' : '不會'}命中冪等閘門：stored=${storedFingerprint?.slice(0, 16) ?? 'none'}…, rows=${currentRowCount ?? 'unknown'}）`,
+    )
     return
+  }
+
+  if (unchanged && !FORCE) {
+    console.log(
+      `[build-bigram-index] 內容未變（指紋相符、列數 ${currentRowCount} 相符）——` +
+        `跳過整表重寫，省下約 ${(postings.length * 2).toLocaleString()} 個計費寫入列。` +
+        `需強制重建請設 FORCE=1。`,
+    )
+    console.log('[build-bigram-index] Done (no-op).')
+    return
+  }
+  if (FORCE && unchanged) {
+    console.log('[build-bigram-index] FORCE=1 — 指紋相符但仍強制重建。')
   }
 
   if (postings.length === 0) {
@@ -318,6 +427,20 @@ async function main(): Promise<void> {
   console.log(
     `[build-bigram-index] Applied ${totalParts} 分檔到 ${D1_DATABASE} (${D1_FLAG}).`,
   )
+
+  // 指紋只在全部分檔都成功匯入後才寫入。任何一檔失敗都會拋錯離開此處，
+  // 指紋維持舊值 → 下次執行必然失配、必然重建，不會把半套狀態誤記成完成。
+  if (metaReady) {
+    const metaPath = path.join(outDir, 'bigram-meta-upsert.sql')
+    await writeFile(
+      metaPath,
+      `INSERT INTO ${META_TABLE} (key, value, updated_at) VALUES (` +
+        `${sqlString(FINGERPRINT_KEY)},${sqlString(fingerprint)},${sqlString(new Date().toISOString())})\n` +
+        `ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at;\n`,
+    )
+    d1ExecFile(metaPath)
+    console.log(`[build-bigram-index] 已記錄指紋到 ${META_TABLE}（下次內容未變即跳過）。`)
+  }
   console.log('[build-bigram-index] Done.')
 }
 

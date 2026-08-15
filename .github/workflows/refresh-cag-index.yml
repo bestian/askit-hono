@@ -12,8 +12,15 @@ on:
     types:
       - sayit-updated
   schedule:
-    # Backstop in case the upstream transcript dispatch is missed.
-    - cron: "30 13 * * *"
+    # Backstop in case the upstream `sayit-updated` repository_dispatch is missed.
+    # WEEKLY, not daily. This step rebuilds askit_bigram_index by DELETE-all +
+    # re-INSERT of ~2.0M postings, which D1 bills as ~4M written rows (index
+    # updates count). Measured 2026-08-15: the daily run of this backstop was
+    # ~97% of the account's D1 write bill (82.5M rows in 22 days, ~$74/mo)
+    # while the corpus changes on only a handful of days. build-bigram-index.ts
+    # now also skips the rewrite when a content fingerprint is unchanged, so
+    # this schedule is belt-and-braces on top of that.
+    - cron: "30 13 * * 0"
 
 permissions:
   contents: read

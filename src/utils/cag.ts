@@ -140,22 +140,14 @@ export type CagStatus = {
   }
 }
 
-export type NormalizedCagOptions = {
+export type NormalizedCagOptions = CagOptions & {
   topK: number
   citableTopK: number
   maxCompletionTokens: number
   model: string
   archiveBaseUrl: string
-  answerInstruction?: string
   retriever: CagRetriever
-  vectorize?: VectorizeBinding
   vectorizeMinScore: number
-  answerLanguage?: 'en'
-  citationTransform?: (sources: CagSource[]) => TransformStream<string, string>
-  cagCache?: KVNamespace
-  skipSourceCache?: boolean
-  sayitDb?: D1Database
-  aiGateway?: AudreyAiGatewayConfig
 }
 
 function clampInteger(value: number, min: number, max: number): number {
@@ -169,6 +161,10 @@ export function normalizeCagOptions(options?: CagOptions): NormalizedCagOptions 
     ? topK
     : clampInteger(options.citableTopK, 1, topK)
   return {
+    // Preserve every non-normalized option automatically. Keeping NormalizedCagOptions
+    // as an intersection with CagOptions makes newly added optional fields flow through
+    // this boundary instead of requiring another error-prone whitelist update.
+    ...options,
     topK,
     citableTopK,
     maxCompletionTokens: clampInteger(
@@ -178,18 +174,8 @@ export function normalizeCagOptions(options?: CagOptions): NormalizedCagOptions 
     ),
     model: options?.model ?? DEFAULT_CAG_MODEL,
     archiveBaseUrl: normalizeArchiveBaseUrl(options?.archiveBaseUrl),
-    answerInstruction: options?.answerInstruction,
     retriever: options?.retriever ?? 'archive',
-    vectorize: options?.vectorize,
     vectorizeMinScore: options?.vectorizeMinScore ?? DEFAULT_VECTORIZE_MIN_COSINE_SCORE,
-    answerLanguage: options?.answerLanguage,
-    citationTransform: options?.citationTransform,
-    // 路由都是先 normalize 再呼叫 generate/streamCagAnswer，這兩個欄位若不
-    // 跟著過來，來源 KV 快取在 HTTP 路由上會整個失效（webhook 路徑不受影響）。
-    cagCache: options?.cagCache,
-    skipSourceCache: options?.skipSourceCache,
-    sayitDb: options?.sayitDb,
-    aiGateway: options?.aiGateway,
   }
 }
 
@@ -1155,8 +1141,8 @@ export async function generateCagAnswer(
     retriever: normalized.retriever,
     vectorize: normalized.vectorize,
     vectorizeMinScore: normalized.vectorizeMinScore,
-    cagCache: options?.cagCache,
-    skipSourceCache: options?.skipSourceCache,
+    cagCache: normalized.cagCache,
+    skipSourceCache: normalized.skipSourceCache,
     sayitDb: normalized.sayitDb,
   })
   if (sources.length === 0) return null
@@ -1175,7 +1161,7 @@ export async function generateCagAnswer(
     messages,
     normalized.maxCompletionTokens,
     false,
-    options?.aiGateway,
+    normalized.aiGateway,
   )
   const answer = (await aiResultToText(result)).trim()
   // 只回傳可引用來源，呼叫端據此顯示出處、引註編號 [1..K] 一一對應。
@@ -1194,8 +1180,8 @@ export async function streamCagAnswer(
     retriever: normalized.retriever,
     vectorize: normalized.vectorize,
     vectorizeMinScore: normalized.vectorizeMinScore,
-    cagCache: options?.cagCache,
-    skipSourceCache: options?.skipSourceCache,
+    cagCache: normalized.cagCache,
+    skipSourceCache: normalized.skipSourceCache,
     sayitDb: normalized.sayitDb,
   })
   if (sources.length === 0) {
@@ -1219,13 +1205,13 @@ export async function streamCagAnswer(
     messages,
     normalized.maxCompletionTokens,
     true,
-    options?.aiGateway,
+    normalized.aiGateway,
   )
 
   const citationTransform = normalized.citationTransform
     ? normalized.citationTransform(cited)
     : markdownCitationFootnotes(cited.map(footnoteForSource))
-  const textTransform = gatewayEventStreamToText(options?.aiGateway)
+  const textTransform = gatewayEventStreamToText(normalized.aiGateway)
   const body = aiResultToStream(stream)
     .pipeThrough(textTransform)
     .pipeThrough(citationTransform)

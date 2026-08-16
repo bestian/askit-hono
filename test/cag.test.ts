@@ -24,6 +24,7 @@ import {
   parseArchiveSectionId,
   retrieveCagSources,
   resolveCagSources,
+  type CagOptions,
 } from '../src/utils/cag'
 import {
   AUDREY_SKILL_FUGU_MODEL,
@@ -651,6 +652,131 @@ test('buildCagQueryVariants keeps short uppercase tokens like AI', () => {
 test('normalizeCagOptions defaults topK to tightened profile', () => {
   const options = normalizeCagOptions()
   assert.equal(options.topK, DEFAULT_TOP_K)
+})
+
+test('normalizeCagOptions does not drop any CagOptions field', () => {
+  // 路由都是先 normalize 再呼叫 generate/streamCagAnswer；欄位在 normalize
+  // 途中掉落會靜默失效（cagCache 曾因此讓來源 KV 快取在 HTTP 路由上全滅）。
+  // Required<CagOptions> 讓編輯器協助列齊欄位，runtime 斷言則驗證目前欄位。
+  const cagCache = { get: async () => null, put: async () => undefined }
+  const full: Required<CagOptions> = {
+    topK: 4,
+    citableTopK: 3,
+    maxCompletionTokens: 256,
+    model: DEFAULT_CAG_MODEL,
+    archiveBaseUrl: 'https://archive.tw',
+    answerInstruction: '指示',
+    retriever: 'archive',
+    vectorize: { query: async () => ({ matches: [] }) } as never,
+    vectorizeMinScore: 0.5,
+    cagCache: cagCache as unknown as KVNamespace,
+    skipSourceCache: true,
+    answerLanguage: 'en',
+    citationTransform: (s) => markdownCitationFootnotes(s.map(() => 'x')),
+    sayitDb: {} as never,
+    aiGateway: { kind: 'chat', config: {} as never },
+  }
+  const normalized = normalizeCagOptions(full)
+  for (const key of Object.keys(full) as Array<keyof CagOptions>) {
+    assert.notEqual(normalized[key], undefined, `normalize 掉了欄位：${key}`)
+  }
+  assert.equal(normalized.cagCache, cagCache)
+  assert.equal(normalized.skipSourceCache, true)
+})
+
+test('HTTP CAG route reuses and bypasses source KV after options normalization (issue #65)', async () => {
+  const originalFetch = globalThis.fetch
+  const sourceStore = new Map<string, string>()
+  const sourceCacheGets: string[] = []
+  const sourceCachePuts: string[] = []
+  const archiveRequests: string[] = []
+  const aiCalls: Record<string, unknown>[] = []
+  const waitUntilPromises: Promise<unknown>[] = []
+
+  globalThis.fetch = async (input: RequestInfo | URL) => {
+    const url = new URL(String(input))
+    archiveRequests.push(url.pathname)
+    if (url.pathname === '/api/search.json') {
+      return Response.json({
+        results: [{
+          title: '快取測試',
+          url: '/cache-demo#s123',
+          speaker: '唐鳳',
+          snippet: '來源快取測試內容',
+        }],
+      })
+    }
+    if (url.pathname === '/api/section/123') {
+      return Response.json({
+        filename: 'cache-demo',
+        section_id: 123,
+        section_content: '來源快取測試內容',
+        display_name: '快取測試',
+        name: '唐鳳',
+      })
+    }
+    return new Response('not found', { status: 404 })
+  }
+
+  const env = {
+    AI: {
+      run: async (_model: string, input: Record<string, unknown>) => {
+        aiCalls.push(input)
+        return { response: '來源快取回答 [1]' }
+      },
+    },
+    CAG_RETRIEVER: 'archive',
+    CAG_CACHE: {
+      async get(key: string) {
+        sourceCacheGets.push(key)
+        return sourceStore.get(key) ?? null
+      },
+      async put(key: string, value: string) {
+        sourceCachePuts.push(key)
+        sourceStore.set(key, value)
+      },
+    },
+  }
+  const executionCtx = {
+    waitUntil: (promise: Promise<unknown>) => {
+      waitUntilPromises.push(promise)
+    },
+    passThroughOnException: () => {},
+    props: {},
+  }
+
+  try {
+    const path = '/cag/%E4%BE%86%E6%BA%90%E5%BF%AB%E5%8F%96%E6%B8%AC%E8%A9%A6'
+    const first = await app.request(path, undefined, env, executionCtx)
+    assert.equal(first.status, 200)
+    assert.match(await first.text(), /來源快取回答/)
+
+    const archiveRequestsAfterMiss = archiveRequests.length
+    const second = await app.request(path, undefined, env, executionCtx)
+    assert.equal(second.status, 200)
+    assert.match(await second.text(), /來源快取回答/)
+
+    assert.equal(sourceCacheGets.length, 2)
+    assert.equal(sourceCachePuts.length, 1)
+    assert.equal(sourceStore.size, 1)
+    assert.ok(archiveRequestsAfterMiss > 0)
+    assert.equal(archiveRequests.length, archiveRequestsAfterMiss)
+
+    const getsBeforeRefresh = sourceCacheGets.length
+    const putsBeforeRefresh = sourceCachePuts.length
+    const archiveRequestsBeforeRefresh = archiveRequests.length
+    const refreshed = await app.request(`${path}?refresh=1`, undefined, env, executionCtx)
+    assert.equal(refreshed.status, 200)
+    assert.match(await refreshed.text(), /來源快取回答/)
+
+    assert.equal(sourceCacheGets.length, getsBeforeRefresh)
+    assert.equal(sourceCachePuts.length, putsBeforeRefresh)
+    assert.ok(archiveRequests.length > archiveRequestsBeforeRefresh)
+    assert.equal(aiCalls.length, 3, 'source cache must not become an answer cache')
+    await Promise.all(waitUntilPromises)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })
 
 test('buildCagMessages steers the answer language only when answerLanguage=en', () => {

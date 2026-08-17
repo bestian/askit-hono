@@ -31,6 +31,8 @@
     "abuse:db:init:local": "wrangler d1 execute askit-abuse-log --local --file db/abuse-log-schema.sql --yes",
     "abuse:report": "tsx --tsconfig scripts/tsconfig.json scripts/abuse-report.ts",
     "abuse:unban": "tsx --tsconfig scripts/tsconfig.json scripts/abuse-unban.ts",
+    "memories:extract": "tsx --tsconfig scripts/tsconfig.json scripts/extract-cag-memories.ts",
+    "memories:eval": "tsx --tsconfig scripts/tsconfig.json scripts/eval-cag-memories.ts",
     "eval:cag": "tsx --tsconfig scripts/tsconfig.json scripts/eval-cag-models.ts",
     "eval:cag:depth": "tsx --tsconfig scripts/tsconfig.json scripts/eval-cag-depth.ts",
     "skill:mine": "tsx --tsconfig scripts/tsconfig.json scripts/mine-audrey-voice.ts",

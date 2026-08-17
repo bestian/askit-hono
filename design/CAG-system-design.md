@@ -148,3 +148,5 @@ wrangler d1 execute sayit-database --remote
 | 即時性 | 依索引刷新（manifest 60s 偵測） | 完全即時 |
 
 詳見同目錄的 `CAG-system-design.svg` 架構圖。
+
+本地記憶體原型（平行 payload，不進 production `/cag`）：見 [cag-memories.md](cag-memories.md)。

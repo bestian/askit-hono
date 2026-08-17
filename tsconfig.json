@@ -14,5 +14,6 @@
     "jsx": "react-jsx",
     "jsxImportSource": "hono/jsx"
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/utils/cagMemories.ts", "src/utils/autoresearchFs.ts"]
 }

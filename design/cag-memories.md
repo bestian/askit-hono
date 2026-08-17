@@ -515,6 +515,36 @@ D1 writes are expensive; no D1 in this prototype. Public `/cag` unchanged.
 
     **This sharpens the strategic fork in step 15.** The claim index's one uncontested advantage is calibrated silence, and the frontier above shows that advantage is *structurally* what costs it recall. Sections need no abstention because they are the breadth layer. So the defensible architecture is the claim index as a **citation and abstention layer over section retrieval** — not a competing retriever whose recall is being tuned toward sections it will never match.
 
+20. **The LIVE product beats the claim index by 47.9 points on real audience questions.** Every prior comparison measured prototype arms against each other. This one measures the thing that is actually deployed. Production's retrieval layer searches archive.tw `GET /api/search.json`, which is public, so this cost nothing and touched no Cloudflare. Stratified sample of **140 of the 428** real questions, and the claim index is scored on **the same 140** so the comparison is exact.
+
+    | arm | empty | mean unique hits |
+    |---|---|---|
+    | live archive.tw retrieval | **40/140 = 0.286** | 9.01 |
+    | claim index (`recall`, keyword) | 107/140 = 0.764 | — |
+
+    **The live product serves a real audience question ~2.7× more often**, and **71.4%** of sampled questions yield a hydratable section with a real `#sNNN` anchor. `0/140` questions had no extractable query term, so term extraction is not the bottleneck for either arm.
+
+    **First attempt was a broken instrument and is reported as such.** Sending each whole question as `q` returned **428/428 empty** — a number that measures my query construction, not the product. Control probes settled it immediately: `開放政府`, `vTaiwan` and `口罩地圖` each return rich hits with section anchors, while a full question returns `{"results":[]}`. **archive.tw search is a substring matcher**, which is exactly why production has `buildQueryVariants` (`MAX_SEARCH_VARIANTS = 6`, plus a fallback query). The corrected probe extracts up to three content terms per question and unions the hits.
+
+    Two honest limits. This measures *retrieval breadth*, not answer quality. And it approximates production's variant extraction with `segmentQueryContentTerms` plus Latin terms rather than importing `cag.ts` (which pulls `@au/cf-ai-gateway` and cannot run under tsx); production additionally has the D1 bigram path and Vectorize, so its true coverage is **≥** what is measured here. Neither limit is near a 47.9-point gap.
+
+    **Incidental finding worth keeping:** production's retrieval quality depends entirely on query-term extraction, because its search layer is lexical. That is the *same* dependency the claim index has — the two systems share their fundamental weakness on natural phrasing, and only one of them also abstains.
+
+21. **The time arrow does not earn its keep either — the last untested property fails, measured.** The claim index carries `roomDate` on every memory, 29,265 links, and an explicit `later` walk; section retrieval has no notion of time. Every eval until now used topical questions, which is precisely where sections win, so this tests the one axis sections structurally lack. Ground truth is free because transcripts are dated, and no LLM is involved. 18 topic terms mined as real segmenter words spanning ≥3 distinct years across 4–15 rooms (`國防`, `智慧財產權`, `聯合國大會`, `永續發展`, `故宮博物院`, `電子郵件`…), questions of the form `唐鳳後來怎麼談<term>？` with `later: true`. Both arms share one denominator: room sets come from the actual transcript text of the same 105 files, and archive hits are deduped per filename exactly as production does.
+
+    | arm | scored | mean recency percentile | top hit is the latest room |
+    |---|---|---|---|
+    | claim index, `later` walk enabled | 16/18 | **0.143** | **1/18** |
+    | archive search | 17/18 | 0.961 | 17/18 |
+
+    **The claim index does not merely fail to prefer recent material — it anti-correlates with it**, returning something close to the earliest room containing the term. The likely mechanism is that initial ranking is still `keywordScore`, and the oldest rooms are the largest (`2015-11-05-聚會筆記` has 360 turns), so they dominate keyword matches and the later-walk cannot overcome that seed.
+
+    **State the caveat plainly:** archive's 0.961 is largely *free*, not earned — its search returns results in date-descending order, so recency comes from result ordering rather than any understanding of "later". That does not soften the conclusion, it sharpens it: **sections already get recency for nothing, so a time arrow is not a differentiator the claim index can sell.**
+
+    **Three instrument defects were found and none was reported as a finding**, which is the discipline working. (a) The first term list was function-word fragments (`最基本`, `的就是`) because I sorted candidates by frequency — the identical defect as the held-out set. (b) archive floods hits from a single document, which is exactly why production has `deduplicateByFilename`. (c) The recency percentile **saturated by construction**: any archive hit newer than the store's newest known room scored exactly 1.000, which `的合作` exposed (archive 2026-07-31 against a computed `latest` of 2026-05-14). The rebuilt probe then tripped this project's own `fixed-width-sliced` gate and **aborted rather than emit a verdict** — a false positive I had caused by selecting longest-first, fixed by sampling across term lengths.
+
+    **Standing conclusion for §7.** After steps 19–21 the claim index has no measured advantage left except calibrated silence, and step 19 showed that silence is structurally the same thing as its recall failure. Precision was circular, density loses, answers lose, breadth loses to the live product by 47.9 points, citation duplicates what sections already carry, and the time arrow anti-correlates. It works on curated fixtures and fails on every real distribution tested — which is the single sentence that summarises this entire section.
+
 ---
 
 ## 8. Non-goals

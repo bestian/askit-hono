@@ -188,3 +188,4 @@ LINE Flex 只排 2 欄出處，但只餵 2 筆給模型會浪費召回。因此�
 | `src/index.ts` | `CAG_RETRIEVER` / `?retriever=` / `VECTORIZE` binding 接線 |
 | `wrangler.jsonc` | `CAG_RETRIEVER` var、（註解中的）`VECTORIZE` binding |
 | `test/vectorize.test.ts` | 前綴、嵌入解析、metadata 映射、檢索去重/回退 |
+| `design/cag-memories.md` | 本地記憶體原型（qwen3-embedding:0.6b / JSONL；**不是** askit-audrey-tang） |

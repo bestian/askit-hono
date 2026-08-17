@@ -573,6 +573,42 @@ D1 writes are expensive; no D1 in this prototype. Public `/cag` unchanged.
 
     Japanese questions retrieve from a zh-TW corpus at all only because of shared Han characters under substring matching — worth knowing before treating `ja` numbers as a proxy for `zh`.
 
+23. **The D1 bigram rescue fires on essentially all traffic — CONFIRMED, and it inverts its own stated purpose.** `resolveCagSources` (`cag.ts:742-762`) gates the D1 query on `sources.length === 0 || !sources.some((s) => s.content.includes(cleanedPhrase))`, and the inline comment states the intent as running D1 only when a full term is missing rather than on every request (`省 CF 預算`). But `cleanedPhrase` is the **whole cleaned question**, and a whole sentence is essentially never a substring of a 175-char section.
+
+    | group | n sampled | mean `cleanedPhrase` chars | fire rate |
+    |---|---|---|---|
+    | natural (428 pool) | 36 | 96.5 | **36/36 = 1.000** |
+    | abstention set | 10 | 23.0 | 10/10 = 1.000 |
+    | zh harvested (in-corpus) | 15 | 63.8 | 13/15 = 0.867 |
+
+    So an extra `askit_bigram_index` query runs on ~100% of real question traffic, not the intended <5%. `scripts/measure-d1-rescue.ts` is checked in. The zh group's two non-fires are a **pool artifact and a useful positive control**: harvested questions are literally transcript lines, so the whole phrase *can* appear verbatim — proving the instrument detects a match when one exists. Sample sizes are small; on `36/36` the 95% lower bound is still ≈0.90, which is enough for "essentially all". Not fixed here — measurement only.
+
+24. **The obvious fix to step 22 is REFUTED. Its recall gain is saturation, not retrieval, and shipping it would trade honest silence for confident irrelevance.** A third union-only tier was implemented (`buildCagRetrievalTails` + a loop in `retrieveCagSources`, 5 tests) and it looked outstanding — until the hit counts were read as a distribution rather than a total.
+
+    | pool | baseline empty | with tier 3 | mean hits | regressions |
+    |---|---|---|---|---|
+    | non-English 428-pool (n=120) | 56/120 = 0.467 | **12/120 = 0.100** | 9.35 → 16.63 | 0 |
+    | zh audience, real (n=39) | 34/39 = 0.872 | **0/39 = 0.000** | 2.13 → 18.33 | 0 |
+    | zh harvested control (n=150) | 59/150 = 0.393 | **0/150 = 0.000** | 5.66 → 19.73 | 0 |
+
+    **`20` is the query `limit`.** Mean hits of 18.33 and 19.73 are pinned against the ceiling: the tail is not finding the right sections, it is matching almost every section. Attribution on the 34 real audience recoveries settles it:
+
+    | recovered by | count | share |
+    |---|---|---|
+    | tail of length ≥ 4 | **4** | 11.8% |
+    | tail of length 2–3 | **30** | **88.2%** |
+    | segmenter-*fragment* tail | 14 | 41.2% |
+
+    **Root cause, and it is a defect this project has already caught twice.** `buildCagQueryVariants` (`cag.ts:361-366`) slices Han runs into 2-character windows at stride 2, then again at offset 1. That produces `的快`, `速发`, `展分`, `常被`, `在台`, `我即` — the identical fixed-width-slicing failure that ruined the held-out ground truth at step 9 and that this repo's own `fixed-width-sliced` gate exists to block. Production's variant generator is a fixed-width slicer, so *any* fix that consumes its output inherits the defect. The tails that genuinely worked (`反向對齊`, `科技`, `未來`, `資料`) are exactly segmenter-shaped content words.
+
+    Two honest caveats on the arbiter. `Intl.Segmenter` classified `反向對齊` as a fragment because it splits `反向|對齊` — the same compound-splitting collision recorded at step 14 (`數位民主` → `數位`+`民主`), so the 41.2% fragment share *under*-counts real topics. Cutting the other way, the "word" list includes `面對`, `人類`, `因為`, `現在`, `開始`, `對於`, `究竟` — segmenter-word-like and topically empty. The length rule is the cleaner discriminator, and it says 88.2%.
+
+    **REVERTED.** `src/utils/cag.ts` and `test/cag.test.ts` are back at their committed state; production behaviour is unchanged. The step-22 defect is still real and still unfixed. The actual fix is upstream — replace fixed-width variant slicing with segmented content words — which needs `Intl.Segmenter` availability in the Workers runtime verified first (it is used today only in `cagMemories.ts`, which is excluded from the Worker build) and needs a judged answer-quality run, because empty-rate cannot see this failure at all.
+
+    **New harness failure class: SATURATION MASQUERADING AS RECALL.** My own measurement script printed `VERDICT: PASS` on 0/150 empty. Every red line held — zero regressions, guaranteed by union construction — and the change was still wrong. An empty-rate criterion is blind to a retriever that answers everything with the same generic hits, which is the precise inverse of the step-15 finding that the less the system understands a question, the more confident it becomes. Any future recall criterion MUST pair with a hit-concentration or per-hit-relevance check, and MUST treat mean hits near the query `limit` as a blocker rather than a win.
+
+    **Asset produced:** `local/cag-compare/zh-questions.json` (gitignored) — **2,354 real Chinese questions**, 2,315 harvested from the 105-file corpus (`inCorpus: true`, so an empty result is a definite miss) and 39 real audience questions from Luma and Eurasia. `scripts/build-zh-question-pool.ts` rebuilds it deterministically. This is the zh distribution step 22 said was the prerequisite, and it is what refuted the fix.
+
 ---
 
 ## 8. Non-goals

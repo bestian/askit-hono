@@ -119,6 +119,29 @@ A gate that cries wolf gets ignored, which returns you to unverified claims by a
 
 ---
 
+## 6c. Saturation masquerading as recall
+
+A recall criterion cannot see a retriever that answers *everything* with the same generic
+hits. Measured 2026-08-17 (`design/cag-memories.md` §7 step 24): a union-only third
+search tier took real Chinese audience questions from 34/39 empty to **0/39**, with zero
+regressions structurally guaranteed, and every preregistered red line held. It was still
+wrong. Mean hits went 2.13 → **18.33 against a query `limit` of 20**, and 88.2% of the
+recoveries came from a 2–3 character fixed-width slice such as `的快` or `常被`.
+
+Two rules follow, both mechanical:
+
+- **Mean hits at or near the query `limit` is a BLOCKER, not a win.** Saturation means the
+  query stopped discriminating.
+- **A recall metric MUST be paired with hit concentration or per-hit relevance.** Empty-rate
+  alone is blind to this failure, and it is the exact inverse of the step-15 finding that
+  the less the system understands a question, the more confident it becomes.
+
+The instrument that failed here was my own measurement script, which printed
+`VERDICT: PASS`. Passing every declared criterion is not evidence that the criteria were
+the right ones.
+
+---
+
 ## 7. Non-goals
 
 - Not a statistics package. No p-values, no confidence intervals, no multiple-comparison correction. Gates are mechanical predicates on shapes that already fooled us.

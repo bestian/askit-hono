@@ -526,7 +526,7 @@ D1 writes are expensive; no D1 in this prototype. Public `/cag` unchanged.
 
     **First attempt was a broken instrument and is reported as such.** Sending each whole question as `q` returned **428/428 empty** — a number that measures my query construction, not the product. Control probes settled it immediately: `開放政府`, `vTaiwan` and `口罩地圖` each return rich hits with section anchors, while a full question returns `{"results":[]}`. **archive.tw search is a substring matcher**, which is exactly why production has `buildQueryVariants` (`MAX_SEARCH_VARIANTS = 6`, plus a fallback query). The corrected probe extracts up to three content terms per question and unions the hits.
 
-    Two honest limits. This measures *retrieval breadth*, not answer quality. And it approximates production's variant extraction with `segmentQueryContentTerms` plus Latin terms rather than importing `cag.ts` (which pulls `@au/cf-ai-gateway` and cannot run under tsx); production additionally has the D1 bigram path and Vectorize, so its true coverage is **≥** what is measured here. Neither limit is near a 47.9-point gap.
+    Two honest limits. This measures *retrieval breadth*, not answer quality. And it approximates production's variant extraction with `segmentQueryContentTerms` plus Latin terms; production additionally has the D1 bigram path and Vectorize, so its true coverage on this axis is **≥** what is measured here. Neither limit is near a 47.9-point gap. **[CORRECTED by step 22]** The stated reason for approximating — that `cag.ts` "pulls `@au/cf-ai-gateway` and cannot run under tsx" — was **false**, carried unverified all session. `cag.ts` imports fine; only `stripQuestionDirectives` is private. Worse, the approximation was *better than what production ships*, so `0.286` flatters production. See step 22.
 
     **Incidental finding worth keeping:** production's retrieval quality depends entirely on query-term extraction, because its search layer is lexical. That is the *same* dependency the claim index has — the two systems share their fundamental weakness on natural phrasing, and only one of them also abstains.
 
@@ -544,6 +544,34 @@ D1 writes are expensive; no D1 in this prototype. Public `/cag` unchanged.
     **Three instrument defects were found and none was reported as a finding**, which is the discipline working. (a) The first term list was function-word fragments (`最基本`, `的就是`) because I sorted candidates by frequency — the identical defect as the held-out set. (b) archive floods hits from a single document, which is exactly why production has `deduplicateByFilename`. (c) The recency percentile **saturated by construction**: any archive hit newer than the store's newest known room scored exactly 1.000, which `的合作` exposed (archive 2026-07-31 against a computed `latest` of 2026-05-14). The rebuilt probe then tripped this project's own `fixed-width-sliced` gate and **aborted rather than emit a verdict** — a false positive I had caused by selecting longest-first, fixed by sampling across term lengths.
 
     **Standing conclusion for §7.** After steps 19–21 the claim index has no measured advantage left except calibrated silence, and step 19 showed that silence is structurally the same thing as its recall failure. Precision was circular, density loses, answers lose, breadth loses to the live product by 47.9 points, citation duplicates what sections already carry, and the time arrow anti-correlates. It works on curated fixtures and fails on every real distribution tested — which is the single sentence that summarises this entire section.
+
+22. **THE FIRST FINDING THAT IS ABOUT PRODUCTION, NOT THE PROTOTYPE: `buildCagRetrievalQueries` sends archive.tw two queries that a substring matcher can never satisfy.** Everything above measures the claim index. This measures the shipped product, using production's *own exported* builder — so it is not an approximation.
+
+    Reading `src/utils/cag.ts:382-399`: `primary = variants[0]`, `fallback = variants[1]`. For a non-Latin question `buildCagQueryVariants` puts the **whole stripped sentence** at `[0]` and that sentence minus a few characters at `[1]`. Since archive.tw search is a substring matcher (step 20), neither can match anything. The usable short content terms sit at `variants[2..5]` and are **never sent** — the `MAX_SEARCH_VARIANTS = 6` list is computed and then 4 of 6 entries are discarded, which is what the comment "replaces 6-way fan-out" did.
+
+    ```
+    Q: 在AI與兩極化塑造的混亂世界中，教育應守護什麼？
+      variants: ["在AI與兩極化塑造的混亂世界中 教育應守護什麼",
+                 "在AI與兩極化塑造的混亂世界中 教育應守護",
+                 "與兩極化塑造的混亂世界中","與兩","極化","塑造"]
+      queries : primary = variants[0], fallback = variants[1]   ← both unmatchable
+    ```
+
+    **The asymmetry is the proof.** The Latin branch at `cag.ts:388-394` *does* drop to a single token, with a comment saying whole-sentence queries are `幾乎必空`. That exact reasoning was never applied to the non-Latin branch. Measured live: **English 0/20 empty in every arm; non-English 56/120 = 0.467 empty.**
+
+    | arm | n | empty | mean hits |
+    |---|---|---|---|
+    | A — production as shipped | 120 | **56/120 = 0.467** | 9.35 |
+    | B — send the variant *tail* instead | 120 | 41/120 = 0.342 | 10.96 |
+    | A ∪ B — tail as a third tier | 120 | **34/120 = 0.283** | — |
+
+    B recovers 22 of A's 56 empties but **regresses 7 of A's 64 non-empties**, so it is *not* a drop-in swap. As a union — send the most distinctive single variant only when the first two tiers return `< MIN_ARCHIVE_HITS_BEFORE_FALLBACK` — it cannot regress by construction, costs at most one extra request on questions that were already failing, and takes empty from **0.467 → 0.283**.
+
+    **This corrects step 20.** That probe deliberately approximated production because `cag.ts` supposedly "cannot run under tsx"; the claim was never tested and is **false** (only `stripQuestionDirectives` is private). The approximation was *better* than what production ships, so step 20's `0.286` flatters the live product. The 47.9-point direction against the claim index is unaffected and if anything understated — but the absolute figure was measured on a query builder that is not deployed.
+
+    **DO NOT SHIP THIS YET, and the reason is the recurring defect of this whole project.** The sample is **95/120 Japanese** and only **n=2 Chinese**, because the 428-question pool comes from a Eurasia keynote and a DD2026 Slido. 鳳問 answers from a zh-TW corpus, so the distribution that matters is the one this pool does not contain. Shipping a zh-TW retrieval change on a Japanese-dominated sample would repeat the exact train-on-test error caught at steps 9–11 and 15. The prerequisite is a Chinese-question pool; the fix itself is ~10 lines and already measured.
+
+    Japanese questions retrieve from a zh-TW corpus at all only because of shared Han characters under substring matching — worth knowing before treating `ja` numbers as a proxy for `zh`.
 
 ---
 

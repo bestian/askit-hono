@@ -10,7 +10,12 @@ import {
 
 export type GatewayChatCompletionsConfig = {
   chatCompletionsUrl: string
-  upstreamAuthorization: string
+  /**
+   * Upstream provider credential (e.g. `Api-Key <baseten-key>`). Omit to let the
+   * gateway inject the provider key stored on the Cloudflare side. Sending this
+   * header overrides the stored key, so a stale value fails the upstream call.
+   */
+  upstreamAuthorization?: string
   gatewayAuthToken?: string
   /** Baseten model id in request body. */
   chatModel: string
@@ -36,9 +41,11 @@ function gatewayHeaders(
   stream: boolean,
 ): Record<string, string> {
   const headers: Record<string, string> = {
-    Authorization: config.upstreamAuthorization,
     'Content-Type': 'application/json',
     Accept: stream ? 'text/event-stream' : 'application/json',
+  }
+  if (config.upstreamAuthorization) {
+    headers.Authorization = config.upstreamAuthorization
   }
   if (config.gatewayAuthToken) {
     headers['cf-aig-authorization'] = `Bearer ${config.gatewayAuthToken}`

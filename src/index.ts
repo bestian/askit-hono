@@ -75,11 +75,15 @@ type Bindings = {
   // 未設定時預設 'vectorize'；無 VECTORIZE binding 時自動回退 archive。
   CAG_RETRIEVER?: string
   CAG_VECTORIZE_MIN_SCORE?: string
-  /** Model used by /au (Gemma default; glm-5.2, fugu, or nemotron-ultra via AI Gateway). */
+  /**
+   * Model used by /au. Gemma default; glm-5.2 and deepseek-v4-flash-0731 run on
+   * the Workers AI binding, fugu and nemotron-ultra go out via AI Gateway.
+   */
   AUDREY_MODEL?: string
   SAKANA_API_KEY?: string
-  BASETEN_API_KEY?: string
   BASETEN_MODEL?: string
+  // nemotron-ultra 的 Baseten 金鑰存在 Cloudflare 端（AI Gateway 供應商金鑰），
+  // 本 worker 只需要 AI Gateway run token。
   CF_AIG_TOKEN?: string
   CF_AI_GATEWAY_ACCOUNT_ID?: string
   CF_AI_GATEWAY_ID?: string

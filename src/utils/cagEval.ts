@@ -1,14 +1,30 @@
 export const CAG_MODEL_GEMMA = '@cf/google/gemma-4-26b-a4b-it'
+/** DeepSeek V4 Flash on the Workers AI binding; same 0731 build as ds4-server. */
+export const CAG_MODEL_DS4_FLASH = '@cf/deepseek-ai/deepseek-v4-flash-0731'
 
 export const CAG_EVAL_PASS_RATIO = 0.9
 
 export type CagModelPricing = {
   inputPerMillionUsd: number
   outputPerMillionUsd: number
+  /** Discounted prefix-cache input rate, when the platform publishes one. */
+  cachedInputPerMillionUsd?: number
 }
 
+// Rates verified 2026-08-22 against developers.cloudflare.com/workers-ai/platform/pricing
+// and baseten.co/library/nvidia-nemotron-ultra.
 export const CAG_MODEL_PRICING: Record<string, CagModelPricing> = {
   [CAG_MODEL_GEMMA]: { inputPerMillionUsd: 0.10, outputPerMillionUsd: 0.30 },
+  [CAG_MODEL_DS4_FLASH]: {
+    inputPerMillionUsd: 0.44,
+    outputPerMillionUsd: 1.32,
+    cachedInputPerMillionUsd: 0.014,
+  },
+  'nemotron-ultra': {
+    inputPerMillionUsd: 0.60,
+    outputPerMillionUsd: 2.40,
+    cachedInputPerMillionUsd: 0.12,
+  },
 }
 
 /** Typical CAG request token profile used for /cag/status cost estimates. */

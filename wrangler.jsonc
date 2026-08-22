@@ -48,9 +48,11 @@
     // 視窗設 "0" = 不限視窗、全期間累計。
     "ABUSE_BLACKLIST_THRESHOLD": "3",
     "ABUSE_COUNT_WINDOW_HOURS": "24",
-    // /au 預設模型：nemotron-ultra（Baseten via AI Gateway `baseten` provider）。
-    // wrangler secret put BASETEN_API_KEY；可選 CF_AIG_TOKEN、BASETEN_MODEL。
-    "AUDREY_MODEL": "nemotron-ultra"
+    // /au 預設模型：deepseek-v4-flash-0731，走 Workers AI binding（不經 AI
+    // Gateway，因此這條路徑不需要 CF_AIG_TOKEN，也沒有外部供應商看得到問題）。
+    // 改回 "nemotron-ultra"（Baseten via AI Gateway）或 "fugu" 即可切換；
+    // 兩者都需要 wrangler secret put CF_AIG_TOKEN（Baseten 金鑰存在 CF 端）。
+    "AUDREY_MODEL": "@cf/deepseek-ai/deepseek-v4-flash-0731"
   },
 
   // CPU 上限：避免單次請求異常消耗 Worker CPU；AI/網路等待不計入 CPU time。

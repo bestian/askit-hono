@@ -11,10 +11,12 @@ export function buildBasetenChatCompletionsUrl(accountId = DEFAULT_CF_AI_GATEWAY
 }
 function gatewayHeaders(config, stream) {
     const headers = {
-        Authorization: config.upstreamAuthorization,
         'Content-Type': 'application/json',
         Accept: stream ? 'text/event-stream' : 'application/json',
     };
+    if (config.upstreamAuthorization) {
+        headers.Authorization = config.upstreamAuthorization;
+    }
     if (config.gatewayAuthToken) {
         headers['cf-aig-authorization'] = `Bearer ${config.gatewayAuthToken}`;
     }

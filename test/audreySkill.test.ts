@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   AUDREY_SKILL_DEFAULT_MODEL,
+  AUDREY_SKILL_DS4_FLASH_MODEL,
   AUDREY_SKILL_FUGU_MODEL,
   AUDREY_SKILL_NEMOTRON_ULTRA_MODEL,
   AUDREY_SKILL_GLM_52_MODEL,
@@ -11,6 +12,7 @@ import {
   renderAudreySkillMarkdown,
   resolveAudreySkillModel,
 } from '../src/utils/audreySkill'
+import { estimateCagRequestCostUsd } from '../src/utils/cagEval'
 import type { CagSource } from '../src/utils/cag'
 
 const sources: CagSource[] = [
@@ -72,6 +74,36 @@ test('resolveAudreySkillModel only allows supported /au models including fugu', 
   assert.equal(resolveAudreySkillModel(AUDREY_SKILL_GLM_52_MODEL), AUDREY_SKILL_GLM_52_MODEL)
   assert.equal(resolveAudreySkillModel(AUDREY_SKILL_FUGU_MODEL), AUDREY_SKILL_FUGU_MODEL)
   assert.equal(resolveAudreySkillModel('@cf/attacker/expensive-model'), AUDREY_SKILL_DEFAULT_MODEL)
+})
+
+// DS4 Flash runs on the Workers AI binding, so /au needs no gateway token on
+// this path; a near-miss id must still fall back rather than reach ai.run.
+test('resolveAudreySkillModel allows deepseek-v4-flash-0731 but not lookalikes', () => {
+  assert.equal(
+    resolveAudreySkillModel(AUDREY_SKILL_DS4_FLASH_MODEL),
+    AUDREY_SKILL_DS4_FLASH_MODEL,
+  )
+  assert.equal(AUDREY_SKILL_DS4_FLASH_MODEL, '@cf/deepseek-ai/deepseek-v4-flash-0731')
+  assert.equal(
+    resolveAudreySkillModel('@cf/deepseek-ai/deepseek-v4-pro-0813'),
+    AUDREY_SKILL_DEFAULT_MODEL,
+  )
+  assert.equal(
+    resolveAudreySkillModel('deepseek-v4-flash'),
+    AUDREY_SKILL_DEFAULT_MODEL,
+  )
+})
+
+// /au/status reported estimatedCostPerRequestUsd: null before DS4 and nemotron
+// had pricing rows; keep the cost estimate observable for both.
+test('estimateCagRequestCostUsd covers the /au models', () => {
+  const ds4 = estimateCagRequestCostUsd(AUDREY_SKILL_DS4_FLASH_MODEL)
+  const nemotron = estimateCagRequestCostUsd(AUDREY_SKILL_NEMOTRON_ULTRA_MODEL)
+  assert.ok(ds4 !== null && nemotron !== null)
+  assert.ok(Math.abs(ds4 - 0.002376) < 1e-9, `ds4 estimate was ${ds4}`)
+  assert.ok(Math.abs(nemotron - 0.00342) < 1e-9, `nemotron estimate was ${nemotron}`)
+  // DS4 on the Workers AI binding is the cheaper of the two /au gateway options.
+  assert.ok(ds4 < nemotron)
 })
 
 test('renderAudreySkillMarkdown rewrites valid runtime citations and strips fabricated citations', () => {

@@ -36,10 +36,12 @@ CAG_RETRIEVER=vectorize
 # REST embedding. GitHub Actions has no OAuth and passes the token to wrangler.
 # To force wrangler to use the token locally: WRANGLER_USE_API_TOKEN=1
 # /au Baseten Nemotron Ultra (Cloudflare AI Gateway baseten provider)
+# The Baseten key is stored on the Cloudflare side as an AI Gateway provider
+# key, so no Baseten token is needed here; CF_AIG_TOKEN is the only secret.
+# Do not set an upstream Baseten key: it would override the stored one.
 # AUDREY_MODEL=nemotron-ultra
-# BASETEN_API_KEY=
 # BASETEN_MODEL=nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B
-# CF_AIG_TOKEN=   # AI Gateway Run token (required for gateway route; already on worker for Fugu)
+# CF_AIG_TOKEN=   # AI Gateway Run token (required: gateway is authenticated)
 # /au Fugu (custom-sakana provider) — optional alternative
 # AUDREY_MODEL=fugu
 # SAKANA_API_KEY=
